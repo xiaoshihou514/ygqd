@@ -1,11 +1,19 @@
-<script setup lang="ts"></script>
+<script setup lang="ts">
+import { RouterView } from 'vue-router'
+import NavHeader from '@/components/NavHeader.vue'
+</script>
 
 <template>
-  <h1>You did it!</h1>
-  <p>
-    Visit <a href="https://vuejs.org/" target="_blank" rel="noopener">vuejs.org</a> to read the
-    documentation
-  </p>
+  <NavHeader />
+  <main class="main-content">
+    <RouterView v-slot="{ Component }">
+      <transition name="page" mode="out-in">
+        <component :is="Component" />
+      </transition>
+    </RouterView>
+  </main>
 </template>
 
-<style scoped></style>
+<style>
+@import '@/styles/global.css';
+</style>

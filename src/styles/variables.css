@@ -1,0 +1,116 @@
+/* ============================================
+   Design Tokens — Apple-inspired color system
+   Reference: DESIGN.md
+   ============================================ */
+
+:root {
+  /* ---- Brand & Accent ---- */
+  --color-primary: #0066cc;
+  --color-primary-focus: #0071e3;
+  --color-primary-on-dark: #2997ff;
+  --color-on-primary: #ffffff;
+
+  /* ---- Surface ---- */
+  --color-canvas: #ffffff;
+  --color-canvas-parchment: #f5f5f7;
+  --color-surface-pearl: #fafafc;
+  --color-surface-tile-1: #272729;
+  --color-surface-tile-2: #2a2a2c;
+  --color-surface-tile-3: #252527;
+  --color-surface-black: #000000;
+  --color-surface-chip-translucent: #d2d2d7;
+
+  /* ---- Text & Ink ---- */
+  --color-ink: #1d1d1f;
+  --color-body: #1d1d1f;
+  --color-body-on-dark: #ffffff;
+  --color-body-muted: #cccccc;
+  --color-ink-muted-80: #333333;
+  --color-ink-muted-48: #7a7a7a;
+
+  /* ---- Hairlines & Borders ---- */
+  --color-divider-soft: #f0f0f0;
+  --color-hairline: #e0e0e0;
+
+  /* ---- Semantic Aliases (project-specific) ---- */
+  --color-bg: var(--color-canvas-parchment);
+  --color-card-bg: var(--color-canvas);
+  --color-text-primary: var(--color-ink);
+  --color-text-secondary: var(--color-ink-muted-80);
+  --color-text-muted: var(--color-ink-muted-48);
+  --color-accent: var(--color-primary);
+  --color-accent-hover: var(--color-primary-focus);
+  --color-navbar-bg: var(--color-surface-black);
+  --color-navbar-text: var(--color-body-on-dark);
+  --color-tag-bg: var(--color-divider-soft);
+  --color-tag-text: var(--color-ink-muted-48);
+  --color-border: var(--color-hairline);
+  --color-like: #ff4757;
+
+  /* ---- Typography ---- */
+  --font-family-display: 'SF Pro Display', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-body: 'SF Pro Text', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family: var(--font-family-body);
+
+  --font-size-hero: 56px;
+  --font-size-display-lg: 40px;
+  --font-size-display-md: 34px;
+  --font-size-lead: 28px;
+  --font-size-lead-airy: 24px;
+  --font-size-tagline: 21px;
+  --font-size-body: 17px;
+  --font-size-caption: 14px;
+  --font-size-fine-print: 12px;
+  --font-size-micro: 10px;
+
+  --font-weight-light: 300;
+  --font-weight-regular: 400;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.07;
+  --line-height-display: 1.1;
+  --line-height-heading: 1.19;
+  --line-height-body: 1.47;
+  --line-height-relaxed: 2.41;
+
+  --letter-spacing-tight: -0.28px;
+  --letter-spacing-body: -0.374px;
+  --letter-spacing-caption: -0.224px;
+
+  /* ---- Spacing ---- */
+  --spacing-xxs: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 17px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+  --spacing-section: 80px;
+
+  /* ---- Radius ---- */
+  --radius-none: 0px;
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 11px;
+  --radius-lg: 18px;
+  --radius-pill: 9999px;
+  --radius-full: 9999px;
+
+  /* ---- Legacy Radius Aliases ---- */
+  --radius-card: var(--radius-lg);
+
+  /* ---- Shadows ---- */
+  --shadow-product: 3px 5px 30px rgba(0, 0, 0, 0.22);
+  --shadow-card: none;
+  --shadow-card-hover: var(--shadow-product);
+  --shadow-nav: none;
+
+  /* ---- Layout ---- */
+  --max-width: 1440px;
+  --nav-height: 44px;
+  --sub-nav-height: 52px;
+
+  /* ---- Transitions ---- */
+  --transition-press: transform 0.15s ease;
+}
