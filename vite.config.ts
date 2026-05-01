@@ -7,6 +7,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 import { parseHomepage, parseListPage, parseSearchResults } from './src/server/parser'
+import type { SearchResult } from './src/server/parser'
 import type { ComicItem, HomeSection } from './src/types'
 
 const NIACG_HOST = 'www.niacg.com'
@@ -292,13 +293,35 @@ export default defineConfig({
               searchBody.set('tempid', '1')
               searchBody.set('Submit', '')
 
-              const resp = await tlsRequest(
+              const firstResp = await tlsRequest(
                 'POST',
                 '/e/search/index.php',
                 undefined,
                 searchBody.toString(),
               )
-              const result = parseSearchResults(resp.body)
+              const firstResult = parseSearchResults(firstResp.body)
+              const allItems: ComicItem[] = [...firstResult.items]
+              const cookies = firstResp.setCookies
+
+              if (firstResult.pageUrlTemplate && firstResult.pagination.total > 0) {
+                const pageCount = firstResult.pagination.total + 1
+                for (let p = 2; p <= pageCount; p++) {
+                  const pageUrl = firstResult.pageUrlTemplate.replace('{}', String(p))
+                  try {
+                    const pageResp = await tlsRequest('GET', pageUrl, undefined, undefined, 5, cookies)
+                    const pageResult = parseSearchResults(pageResp.body)
+                    allItems.push(...pageResult.items)
+                  } catch {
+                    // skip failed pages
+                  }
+                }
+              }
+
+              const result: SearchResult = {
+                items: allItems,
+                pagination: { current: 0, total: 0, hasNext: false, hasPrev: false },
+                pageUrlTemplate: null,
+              }
               rewriteThumbnailsInItems(result.items)
               res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify({ code: 0, data: result }))

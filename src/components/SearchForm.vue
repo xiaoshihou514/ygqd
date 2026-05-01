@@ -3,7 +3,7 @@ import { reactive } from 'vue'
 import type { SearchParams } from '@/types'
 
 const emit = defineEmits<{
-  search: [params: SearchParams]
+  search: [params: SearchParams, minLikes: number, sortOrder: string]
 }>()
 
 const CATEGORIES = [
@@ -25,10 +25,18 @@ const SCOPE_OPTIONS = [
   { value: 'tags', label: '标签' },
 ] as const
 
+const SORT_OPTIONS = [
+  { value: 'default', label: '默认排序' },
+  { value: 'likes_desc', label: '星标降序' },
+  { value: 'likes_asc', label: '星标升序' },
+] as const
+
 const form = reactive({
   keyword: '',
   classid: 9,
   show: 'title,text,keyboard,ftitle',
+  minLikes: 0,
+  sortOrder: 'default',
 })
 
 function handleSubmit() {
@@ -38,7 +46,7 @@ function handleSubmit() {
     classid: form.classid,
     show: form.show,
     tempid: '1',
-  })
+  }, form.minLikes, form.sortOrder)
 }
 </script>
 
@@ -93,6 +101,33 @@ function handleSubmit() {
               {{ scope.label }}
             </button>
           </div>
+        </div>
+
+        <div class="option-group">
+          <span class="option-label">排序</span>
+          <div class="option-tags">
+            <button
+              v-for="s in SORT_OPTIONS"
+              :key="s.value"
+              type="button"
+              class="option-tag"
+              :class="{ active: form.sortOrder === s.value }"
+              @click="form.sortOrder = s.value"
+            >
+              {{ s.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="option-group">
+          <span class="option-label">星标</span>
+          <input
+            v-model.number="form.minLikes"
+            type="number"
+            class="filter-input"
+            placeholder="最低星标数"
+            min="0"
+          />
         </div>
       </div>
     </form>
@@ -196,5 +231,26 @@ function handleSubmit() {
   background: var(--color-primary);
   color: var(--color-on-primary);
   border-color: var(--color-primary);
+}
+
+.filter-input {
+  height: 30px;
+  width: 120px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-fine-print);
+  outline: none;
+  transition: border-color 0.2s;
+  color: var(--color-text-primary);
+  background: var(--color-canvas);
+}
+
+.filter-input:focus {
+  border-color: var(--color-primary);
+}
+
+.filter-input::placeholder {
+  color: var(--color-text-muted);
 }
 </style>

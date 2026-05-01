@@ -1,4 +1,5 @@
 import type { ComicItem, HomeSection, PaginationInfo, SearchParams } from '../types'
+import type { SearchResult } from '../server/parser'
 
 interface ApiResponse<T> {
   code: number
@@ -30,14 +31,14 @@ export function fetchCategoryList(
 
 export function searchComics(
   params: SearchParams,
-): Promise<{ items: ComicItem[] }> {
+): Promise<SearchResult> {
   const body = new URLSearchParams()
   body.set('classid', String(params.classid))
   body.set('keyword', params.keyword)
   body.set('show', params.show || 'title,text,keyboard,ftitle')
   body.set('tempid', params.tempid || '1')
 
-  return request<{ items: ComicItem[] }>('/api/search', {
+  return request<SearchResult>('/api/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),

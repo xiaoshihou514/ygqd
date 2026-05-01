@@ -27,7 +27,7 @@ function extractItem(el: HTMLElement): ComicItem | null {
   if (!match) return null
 
   const categoryId = Number(match[1])
-  const id = match[2]
+  const id = match[2]!
 
   const imgEl = el.querySelector('img')
   const rawThumbnail =
@@ -172,7 +172,13 @@ function extractPagination(root: ReturnType<typeof parse>): PaginationInfo {
   }
 }
 
-export function parseSearchResults(html: string): { items: ComicItem[] } {
+export interface SearchResult {
+  items: ComicItem[]
+  pagination: PaginationInfo
+  pageUrlTemplate: string | null
+}
+
+export function parseSearchResults(html: string): SearchResult {
   const root = parse(html)
   const items: ComicItem[] = []
 
@@ -191,5 +197,40 @@ export function parseSearchResults(html: string): { items: ComicItem[] } {
     }
   }
 
-  return { items }
+  const { pagination, pageUrlTemplate } = extractSearchPagination(root)
+
+  return { items, pagination, pageUrlTemplate }
+}
+
+function extractSearchPagination(root: ReturnType<typeof parse>): {
+  pagination: PaginationInfo
+  pageUrlTemplate: string | null
+} {
+  const pageLinks = root.querySelectorAll('.pagination a')
+  const urls = pageLinks.map((a) => a.getAttribute('href') || '').filter(Boolean)
+
+  const pageNums = urls
+    .map((u) => {
+      const m = u.match(/[?&]page=(\d+)/i)
+      return m ? Number(m[1]) : NaN
+    })
+    .filter((n) => !isNaN(n))
+
+  const total = pageNums.length > 0 ? Math.max(...pageNums) : 1
+  const current = 1
+
+  let pageUrlTemplate: string | null = null
+  if (urls.length > 0) {
+    pageUrlTemplate = urls[0]!.replace(/page=\d+/i, 'page={}')
+  }
+
+  return {
+    pagination: {
+      current: current - 1,
+      total: total - 1,
+      hasNext: current < total,
+      hasPrev: current > 1,
+    },
+    pageUrlTemplate,
+  }
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { fetchCategoryList } from '@/services/api'
 import type { ComicItem } from '@/types'
+import { parseLikes } from '@/utils/likes'
 import ComicGrid from '@/components/ComicGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -12,6 +13,12 @@ const loading = ref(true)
 const loadingMore = ref(false)
 const error = ref('')
 const hasNext = ref(true)
+const minLikes = ref(0)
+
+const filteredItems = computed(() => {
+  if (minLikes.value <= 0) return items.value
+  return items.value.filter((item) => parseLikes(item.likes) >= minLikes.value)
+})
 
 let sentinel: HTMLElement | null = null
 let observer: IntersectionObserver | null = null
@@ -98,10 +105,19 @@ onUnmounted(() => {
       <template v-else>
         <div class="page-header">
           <h1 class="page-title">漫画列表</h1>
-          <span class="page-count">共 {{ items.length }} 部</span>
+          <span class="page-count">共 {{ filteredItems.length }} 部</span>
+          <div class="filter-group">
+            <input
+              v-model.number="minLikes"
+              type="number"
+              class="filter-input"
+              placeholder="最低星标数"
+              min="0"
+            />
+          </div>
         </div>
 
-        <ComicGrid :items="items" />
+        <ComicGrid :items="filteredItems" />
 
         <div v-if="loadingMore" class="loading-more">
           <LoadingSpinner message="正在加载更多..." />
@@ -150,6 +166,7 @@ onUnmounted(() => {
   align-items: baseline;
   gap: var(--spacing-sm);
   margin-bottom: var(--spacing-lg);
+  flex-wrap: wrap;
 }
 
 .page-title {
@@ -200,5 +217,30 @@ onUnmounted(() => {
 
 .retry-btn:hover {
   background: var(--color-primary-focus);
+}
+
+.filter-group {
+  margin-left: auto;
+}
+
+.filter-input {
+  height: 36px;
+  width: 140px;
+  padding: 0 var(--spacing-md);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-fine-print);
+  outline: none;
+  transition: border-color 0.2s;
+  color: var(--color-text-primary);
+  background: var(--color-canvas);
+}
+
+.filter-input:focus {
+  border-color: var(--color-primary);
+}
+
+.filter-input::placeholder {
+  color: var(--color-text-muted);
 }
 </style>
