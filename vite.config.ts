@@ -305,14 +305,20 @@ export default defineConfig({
 
               if (firstResult.pageUrlTemplate && firstResult.pagination.total > 0) {
                 const pageCount = firstResult.pagination.total + 1
-                for (let p = 2; p <= pageCount; p++) {
-                  const pageUrl = firstResult.pageUrlTemplate.replace('{}', String(p))
-                  try {
-                    const pageResp = await tlsRequest('GET', pageUrl, undefined, undefined, 5, cookies)
-                    const pageResult = parseSearchResults(pageResp.body)
-                    allItems.push(...pageResult.items)
-                  } catch {
-                    // skip failed pages
+                const CONCURRENCY = 32
+                for (let i = 2; i <= pageCount; i += CONCURRENCY) {
+                  const batch = []
+                  for (let j = i; j < i + CONCURRENCY && j <= pageCount; j++) {
+                    const pageUrl = firstResult.pageUrlTemplate.replace('{}', String(j))
+                    batch.push(
+                      tlsRequest('GET', pageUrl, undefined, undefined, 5, cookies)
+                        .then((resp) => parseSearchResults(resp.body))
+                        .catch(() => null)
+                    )
+                  }
+                  const results = await Promise.all(batch)
+                  for (const r of results) {
+                    if (r) allItems.push(...r.items)
                   }
                 }
               }
