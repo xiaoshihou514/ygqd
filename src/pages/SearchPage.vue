@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams } from '@/types'
 import { parseLikes } from '@/utils/likes'
 import SearchForm from '@/components/SearchForm.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
-import Pagination from '@/components/Pagination.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
@@ -18,7 +17,7 @@ const hasSearched = ref(false)
 const lastKeyword = ref('')
 const minLikes = ref(0)
 const sortOrder = ref('default')
-const currentPage = ref(0)
+const visibleCount = ref(PAGE_SIZE)
 
 const processedItems = computed(() => {
   let result = items.value
@@ -33,23 +32,40 @@ const processedItems = computed(() => {
   return result
 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(processedItems.value.length / PAGE_SIZE)))
+const visibleItems = computed(() => processedItems.value.slice(0, visibleCount.value))
 
-const paginatedItems = computed(() => {
-  const start = currentPage.value * PAGE_SIZE
-  return processedItems.value.slice(start, start + PAGE_SIZE)
-})
-
-const paginationInfo = computed(() => ({
-  current: currentPage.value,
-  total: totalPages.value - 1,
-  hasNext: currentPage.value < totalPages.value - 1,
-  hasPrev: currentPage.value > 0,
-}))
+const hasMore = computed(() => visibleCount.value < processedItems.value.length)
 
 watch([minLikes, sortOrder], () => {
-  currentPage.value = 0
+  visibleCount.value = PAGE_SIZE
 })
+
+let sentinel: HTMLElement | null = null
+let observer: IntersectionObserver | null = null
+
+function loadMore() {
+  if (!hasMore.value) return
+  visibleCount.value = Math.min(visibleCount.value + PAGE_SIZE, processedItems.value.length)
+  nextTick(() => {
+    setupObserver()
+  })
+}
+
+function setupObserver() {
+  if (observer) {
+    observer.disconnect()
+  }
+  sentinel = document.querySelector('.scroll-sentinel')
+  if (!sentinel || !hasMore.value) return
+
+  observer = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting) {
+      loadMore()
+    }
+  }, { rootMargin: '200px' })
+
+  observer.observe(sentinel)
+}
 
 async function handleSearch(params: SearchParams, likesFilter: number, order: string) {
   loading.value = true
@@ -58,7 +74,7 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
   lastKeyword.value = params.keyword
   minLikes.value = likesFilter
   sortOrder.value = order
-  currentPage.value = 0
+  visibleCount.value = PAGE_SIZE
   try {
     const result = await searchComics(params)
     items.value = result.items
@@ -67,13 +83,17 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
     items.value = []
   } finally {
     loading.value = false
+    await nextTick()
+    setupObserver()
   }
 }
 
-function handlePageChange(page: number) {
-  currentPage.value = page
-  window.scrollTo({ top: 0, behavior: 'smooth' })
-}
+onUnmounted(() => {
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
+})
 
 const resultTitle = computed(() => {
   if (!hasSearched.value) return ''
@@ -109,16 +129,16 @@ const resultTitle = computed(() => {
             <span class="result-count">共 {{ processedItems.length }} 条结果</span>
           </div>
 
-          <ComicGrid v-if="paginatedItems.length > 0" :items="paginatedItems" />
+          <ComicGrid v-if="visibleItems.length > 0" :items="visibleItems" />
 
-          <Pagination
-            v-if="processedItems.length > PAGE_SIZE"
-            v-bind="paginationInfo"
-            @change="handlePageChange"
-          />
+          <div v-if="hasMore" class="scroll-sentinel" />
+
+          <div v-if="!hasMore && processedItems.length > PAGE_SIZE" class="no-more">
+            <span>已加载全部 {{ processedItems.length }} 条结果</span>
+          </div>
 
           <EmptyState
-            v-else-if="processedItems.length === 0"
+            v-if="processedItems.length === 0"
             title="未找到相关内容"
             message="请尝试更换关键词或调整搜索范围"
           />
@@ -163,6 +183,17 @@ const resultTitle = computed(() => {
 
 .result-count {
   font-size: var(--font-size-fine-print);
+  color: var(--color-text-muted);
+}
+
+.scroll-sentinel {
+  height: 1px;
+}
+
+.no-more {
+  text-align: center;
+  padding: var(--spacing-lg) 0;
+  font-size: var(--font-size-caption);
   color: var(--color-text-muted);
 }
 </style>
