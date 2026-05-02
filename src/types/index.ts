@@ -9,6 +9,20 @@ export interface ComicItem {
   link: string
 }
 
+export interface ComicDetail {
+  id: string
+  title: string
+  thumbnail: string
+  category: string
+  categoryId: number
+  author: string
+  works: string[]
+  characters: string[]
+  tags: string[]
+  likes: string
+  images: string[]
+}
+
 export interface PaginationInfo {
   current: number
   total: number

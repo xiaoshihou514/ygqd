@@ -11,10 +11,8 @@ const imgError = ref(false)
 </script>
 
 <template>
-  <a
-    :href="`https://www.niacg.com${item.link}`"
-    target="_blank"
-    rel="noopener noreferrer"
+  <router-link
+    :to="`/comic/${item.categoryId}/${item.id}`"
     class="comic-card"
   >
     <div class="card-image">
@@ -51,7 +49,7 @@ const imgError = ref(false)
         </span>
       </div>
     </div>
-  </a>
+  </router-link>
 </template>
 
 <style scoped>

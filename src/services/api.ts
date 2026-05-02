@@ -1,4 +1,4 @@
-import type { ComicItem, HomeSection, PaginationInfo, SearchParams } from '../types'
+import type { ComicItem, ComicDetail, HomeSection, PaginationInfo, SearchParams } from '../types'
 import type { SearchResult } from '../server/parser'
 
 interface ApiResponse<T> {
@@ -43,4 +43,11 @@ export function searchComics(
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
   })
+}
+
+export function fetchComicDetail(
+  categoryId: number,
+  id: string,
+): Promise<ComicDetail> {
+  return request<ComicDetail>(`/api/comic?cat=${categoryId}&id=${id}`)
 }

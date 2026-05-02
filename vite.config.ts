@@ -6,9 +6,10 @@ import { get as httpGet } from 'node:http'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
-import { parseHomepage, parseListPage, parseSearchResults } from './src/server/parser'
+import { parseHomepage, parseListPage, parseSearchResults, parseComicDetail, parseComicImages } from './src/server/parser'
+import { parse } from 'node-html-parser'
 import type { SearchResult } from './src/server/parser'
-import type { ComicItem, HomeSection } from './src/types'
+import type { ComicItem, HomeSection, ComicDetail } from './src/types'
 
 const NIACG_HOST = 'www.niacg.com'
 const NIACG_BASE = `https://${NIACG_HOST}`
@@ -94,6 +95,24 @@ function proxyImage(imageUrl: string): Promise<{ mime: string; data: Buffer }> {
       reject(new Error('Image proxy timeout'))
     })
   })
+}
+
+function extractTagSearchMaxPage(html: string, keyword: string): number {
+  const root = parse(html)
+  const pageLinks = root.querySelectorAll('.pagination a')
+  const urls = pageLinks.map((a) => a.getAttribute('href') || '').filter(Boolean)
+
+  const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(`tags-${escapedKeyword}-(\\d+)\\.html`)
+
+  const pageNums = urls
+    .map((u) => {
+      const m = u.match(regex)
+      return m ? Number(m[1]) : NaN
+    })
+    .filter((n) => !isNaN(n))
+
+  return pageNums.length > 0 ? Math.max(...pageNums) : 0
 }
 
 function tlsRequest(
@@ -286,10 +305,58 @@ export default defineConfig({
               const reqBody = Buffer.concat(chunks).toString()
               const params = new URLSearchParams(reqBody)
 
+              const keyword = params.get('keyword') || ''
+              const show = params.get('show') || 'title,text,keyboard,ftitle'
+
+              if (show === 'tags') {
+                const encodedKeyword = encodeURIComponent(keyword)
+                const firstResp = await tlsRequest('GET', `/tags-${encodedKeyword}-0.html`)
+                let firstResult = parseSearchResults(firstResp.body)
+                if (firstResult.items.length === 0) {
+                  firstResult = { items: parseListPage(firstResp.body).items, pagination: firstResult.pagination, pageUrlTemplate: null }
+                }
+                const allItems: ComicItem[] = [...firstResult.items]
+
+                const maxPage = extractTagSearchMaxPage(firstResp.body, keyword)
+                if (maxPage > 0) {
+                  const CONCURRENCY = 32
+                  for (let i = 1; i <= maxPage; i += CONCURRENCY) {
+                    const batch = []
+                    for (let j = i; j < i + CONCURRENCY && j <= maxPage; j++) {
+                      batch.push(
+                        tlsRequest('GET', `/tags-${encodedKeyword}-${j}.html`, undefined, undefined, 5)
+                          .then((resp) => {
+                            let result = parseSearchResults(resp.body)
+                            if (result.items.length === 0) {
+                              result = { items: parseListPage(resp.body).items, pagination: result.pagination, pageUrlTemplate: null }
+                            }
+                            return result
+                          })
+                          .catch(() => null)
+                      )
+                    }
+                    const results = await Promise.all(batch)
+                    for (const r of results) {
+                      if (r) allItems.push(...r.items)
+                    }
+                  }
+                }
+
+                const result: SearchResult = {
+                  items: allItems,
+                  pagination: { current: 0, total: 0, hasNext: false, hasPrev: false },
+                  pageUrlTemplate: null,
+                }
+                rewriteThumbnailsInItems(result.items)
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ code: 0, data: result }))
+                return
+              }
+
               const searchBody = new URLSearchParams()
               searchBody.set('classid', params.get('classid') || '9')
-              searchBody.set('keyboard', params.get('keyword') || '')
-              searchBody.set('show', params.get('show') || 'title,text,keyboard,ftitle')
+              searchBody.set('keyboard', keyword)
+              searchBody.set('show', show)
               searchBody.set('tempid', '1')
               searchBody.set('Submit', '')
 
@@ -331,6 +398,36 @@ export default defineConfig({
               rewriteThumbnailsInItems(result.items)
               res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify({ code: 0, data: result }))
+            } catch (e) {
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ code: -1, message: (e as Error).message }))
+            }
+            return
+          }
+
+          if (url.startsWith('/api/comic')) {
+            try {
+              const urlObj = new URL(url, 'http://localhost')
+              const cat = urlObj.searchParams.get('cat') || '3'
+              const id = urlObj.searchParams.get('id')
+              if (!id) {
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ code: -1, message: 'Missing id parameter' }))
+                return
+              }
+
+              const detailResp = await tlsRequest('GET', `/moehome-${cat}-${id}.html`)
+              const detail = parseComicDetail(detailResp.body, Number(cat), id)
+              if (detail.thumbnail) {
+                detail.thumbnail = proxyThumbnail(detail.thumbnail)
+              }
+
+              const imagesResp = await tlsRequest('GET', `/moeupup-${cat}-${id}.html`)
+              const images = parseComicImages(imagesResp.body)
+              detail.images = images.map(proxyThumbnail)
+
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ code: 0, data: detail }))
             } catch (e) {
               res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify({ code: -1, message: (e as Error).message }))

@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { reactive } from 'vue'
+import { reactive, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import type { SearchParams } from '@/types'
 
 const emit = defineEmits<{
   search: [params: SearchParams, minLikes: number, sortOrder: string]
 }>()
+
+const route = useRoute()
 
 const CATEGORIES = [
   { id: 9, label: 'A漫' },
@@ -48,6 +51,17 @@ function handleSubmit() {
     tempid: '1',
   }, form.minLikes, form.sortOrder)
 }
+
+onMounted(() => {
+  const keyword = route.query.keyword as string | undefined
+  if (keyword) {
+    form.keyword = keyword
+  }
+  const show = route.query.show as string | undefined
+  if (show) {
+    form.show = show
+  }
+})
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 import { parse, type HTMLElement } from 'node-html-parser'
-import type { ComicItem, PaginationInfo, HomeSection } from '../types'
+import type { ComicItem, PaginationInfo, HomeSection, ComicDetail } from '../types'
 
 const NIACG_BASE = 'https://www.niacg.com'
 
@@ -233,4 +233,88 @@ function extractSearchPagination(root: ReturnType<typeof parse>): {
     },
     pageUrlTemplate,
   }
+}
+
+export function parseComicDetail(html: string, categoryId: number, id: string): ComicDetail {
+  const root = parse(html)
+
+  const titleEl = root.querySelector('h1') || root.querySelector('.panel-title')
+  const title = titleEl?.textContent?.trim() || ''
+
+  const coverImg = root.querySelector('#album_photo_cover img')
+  const rawThumbnail =
+    (coverImg?.getAttribute('data-src') as string | undefined) ||
+    (coverImg?.getAttribute('data-original') as string | undefined) ||
+    (coverImg?.getAttribute('src') as string | undefined) ||
+    ''
+  const thumbnail = resolveUrl(rawThumbnail)
+
+  const authorSpan = root.querySelector('.tag-block [data-type="author"]')
+  const authorEls = authorSpan?.querySelectorAll('a.btn') || []
+  const authorName = authorEls.map((a) => a.textContent.trim()).filter(Boolean).join(', ')
+
+  const workSpan = root.querySelector('.tag-block [data-type="works"]')
+  const workEls = workSpan?.querySelectorAll('a.btn') || []
+  const works: string[] = []
+  for (const el of workEls) {
+    const text = el.textContent.trim()
+    if (text) works.push(text)
+  }
+
+  const charSpan = root.querySelector('.tag-block [data-type="actor"]')
+  const charEls = charSpan?.querySelectorAll('a.btn') || []
+  const characters: string[] = []
+  for (const el of charEls) {
+    const text = el.textContent.trim()
+    if (text) characters.push(text)
+  }
+
+  const tagSpan = root.querySelector('.tag-block [data-type="tags"]')
+  const tagBtnEls = tagSpan?.querySelectorAll('a.btn') || []
+  const tags: string[] = []
+  for (const el of tagBtnEls) {
+    const text = el.textContent.trim()
+    if (text) tags.push(text)
+  }
+
+  const likesEl = root.querySelector('#diggnum') || root.querySelector('[id^="albim_likes_"]')
+  const likes = likesEl?.textContent?.trim() || ''
+
+  const catEl = root.querySelector('.label-category, .label-sub')
+  const category = catEl?.textContent?.trim() || CATEGORY_MAP[String(categoryId)] || ''
+
+  return {
+    id,
+    title: title.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"'),
+    thumbnail,
+    category,
+    categoryId,
+    author: authorName,
+    works,
+    characters,
+    tags,
+    likes,
+    images: [],
+  }
+}
+
+export function parseComicImages(html: string): string[] {
+  const root = parse(html)
+  const imgEls = root.querySelectorAll('img.comic_img')
+  const images: string[] = []
+  const seen = new Set<string>()
+
+  for (const el of imgEls) {
+    const url =
+      (el.getAttribute('data-src') as string | undefined) ||
+      (el.getAttribute('data-original') as string | undefined) ||
+      (el.getAttribute('src') as string | undefined) ||
+      ''
+    if (url && !seen.has(url) && (url.includes('boom') || url.includes('xunge') || url.includes('hen'))) {
+      seen.add(url)
+      images.push(resolveUrl(url))
+    }
+  }
+
+  return images
 }

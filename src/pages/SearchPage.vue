@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams } from '@/types'
 import { parseLikes } from '@/utils/likes'
@@ -9,6 +10,8 @@ import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
 const PAGE_SIZE = 20
+
+const route = useRoute()
 
 const items = ref<ComicItem[]>([])
 const loading = ref(false)
@@ -87,6 +90,18 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
     setupObserver()
   }
 }
+
+onMounted(() => {
+  const keyword = route.query.keyword as string | undefined
+  if (keyword) {
+    const show = (route.query.show as string) || 'title,text,keyboard,ftitle'
+    handleSearch(
+      { keyword, classid: 9, show, tempid: '1' },
+      0,
+      'default',
+    )
+  }
+})
 
 onUnmounted(() => {
   if (observer) {
