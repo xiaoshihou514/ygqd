@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams } from '@/types'
 import { parseLikes } from '@/utils/likes'
@@ -12,6 +12,7 @@ import LoadingSpinner from '@/components/LoadingSpinner.vue'
 const PAGE_SIZE = 20
 
 const route = useRoute()
+const router = useRouter()
 
 const items = ref<ComicItem[]>([])
 const loading = ref(false)
@@ -115,6 +116,11 @@ const resultTitle = computed(() => {
   if (loading.value) return '搜索中...'
   return `"${lastKeyword.value}" 的搜索结果`
 })
+
+function goToSplit() {
+  sessionStorage.setItem('split_items', JSON.stringify(processedItems.value))
+  router.push({ name: 'split' })
+}
 </script>
 
 <template>
@@ -142,6 +148,12 @@ const resultTitle = computed(() => {
           <div class="search-result-header">
             <h2 class="result-title">{{ resultTitle }}</h2>
             <span class="result-count">共 {{ processedItems.length }} 条结果</span>
+            <button v-if="processedItems.length > 0" class="split-btn" @click="goToSplit">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              按作品分组
+            </button>
           </div>
 
           <ComicGrid v-if="visibleItems.length > 0" :items="visibleItems" />
@@ -199,6 +211,27 @@ const resultTitle = computed(() => {
 .result-count {
   font-size: var(--font-size-fine-print);
   color: var(--color-text-muted);
+}
+
+.split-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacing-xs) var(--spacing-md);
+  margin-left: auto;
+  color: var(--color-primary);
+  font-size: var(--font-size-fine-print);
+  font-weight: var(--font-weight-semibold);
+  background: transparent;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.split-btn:hover {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .scroll-sentinel {

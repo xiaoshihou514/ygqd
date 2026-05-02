@@ -2,18 +2,27 @@
 import { ref } from 'vue'
 import type { ComicItem } from '@/types'
 
-defineProps<{
+const props = defineProps<{
   item: ComicItem
 }>()
 
 const TAG_LIMIT = 4
 const imgError = ref(false)
+
+function handleClick() {
+  const url = `/comic/${props.item.categoryId}/${props.item.id}`
+  window.open(url, '_blank', 'noopener,noreferrer')
+  window.focus()
+}
 </script>
 
 <template>
-  <router-link
-    :to="`/comic/${item.categoryId}/${item.id}`"
+  <a
+    :href="`/comic/${item.categoryId}/${item.id}`"
+    target="_blank"
+    rel="noopener noreferrer"
     class="comic-card"
+    @click.prevent="handleClick"
   >
     <div class="card-image">
       <img
@@ -49,12 +58,14 @@ const imgError = ref(false)
         </span>
       </div>
     </div>
-  </router-link>
+  </a>
 </template>
 
 <style scoped>
 .comic-card {
   display: block;
+  text-decoration: none;
+  color: inherit;
   background: var(--color-card-bg);
   border-radius: var(--radius-lg);
   overflow: hidden;

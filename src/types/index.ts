@@ -48,3 +48,24 @@ export interface CategoryOption {
   id: number
   label: string
 }
+
+export interface ParsedTitle {
+  author: string
+  workName: string
+  chapters: number[]
+  hasExtra: boolean
+  isComplete: boolean
+  rawTitle: string
+  item: ComicItem
+}
+
+export interface SplitGroup {
+  author: string
+  workName: string
+  items: ComicItem[]
+  knownChapters: number[]
+  missingChapters: number[]
+  hasExtra: boolean
+  isComplete: boolean
+  isStandalone: boolean
+}

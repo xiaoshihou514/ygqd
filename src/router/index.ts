@@ -18,6 +18,11 @@ const router = createRouter({
       name: 'comic-detail',
       component: () => import('@/pages/ComicDetailPage.vue'),
     },
+    {
+      path: '/split',
+      name: 'split',
+      component: () => import('@/pages/SplitPage.vue'),
+    },
   ],
 })
 
