@@ -24,7 +24,6 @@ class BackendService : Service() {
             private set
 
         var isRunning = false
-            private set
     }
 
     private var server: EmbeddedServer<*, *>? = null
