@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-and-push:
-    name: Build Vue + Android APK + Desktop & Push Release
+    name: Build Vue + Android APK & Push Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,19 +68,6 @@ jobs:
           echo "=== Web assets in APK ==="
           unzip -l "$APK" | grep -E 'assets/web/' || echo "WARNING: No web assets found!"
 
-      - name: Build Desktop Distribution
-        working-directory: kotlin-backend
-        run: ./gradlew :server-desktop:installDist
-
-      - name: Package Desktop as tar.gz
-        run: |
-          tar czf desktop-dist.tar.gz -C kotlin-backend/server-desktop/build/install server-desktop
-
-      - name: Verify Desktop package
-        run: |
-          echo "Desktop package size: $(du -h desktop-dist.tar.gz | cut -f1)"
-          tar tzf desktop-dist.tar.gz | grep -E 'web/index.html' || echo "WARNING: No web/index.html in desktop dist!"
-
       - name: Get short SHA
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
@@ -99,10 +86,8 @@ jobs:
 
             ### Assets
             - `server-android.apk` — Android APK
-            - `desktop-dist.tar.gz` — Desktop executable (Linux)
           files: |
             kotlin-backend/server-android/build/outputs/apk/release/*.apk
-            desktop-dist.tar.gz
           prerelease: true
           make_latest: true
           generate_release_notes: false

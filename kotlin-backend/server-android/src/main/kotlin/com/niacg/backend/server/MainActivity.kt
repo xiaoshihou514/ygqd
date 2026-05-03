@@ -2,17 +2,14 @@ package com.niacg.backend.server
 
 import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.view.View
-import android.view.ViewGroup
-import android.view.WindowInsetsController
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.app.Activity
+import android.view.ViewGroup
 
 class MainActivity : Activity() {
 
@@ -22,8 +19,6 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        setupEdgeToEdge()
 
         webView = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -36,7 +31,7 @@ class MainActivity : Activity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    injectStatusBarHeight(view)
+                    injectAndroidEnv(view)
                 }
 
                 override fun onReceivedError(
@@ -68,39 +63,15 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun setupEdgeToEdge() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.setDecorFitsSystemWindows(false)
-            window.statusBarColor = Color.TRANSPARENT
-            window.navigationBarColor = Color.TRANSPARENT
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-            )
-            @Suppress("DEPRECATION")
-            window.statusBarColor = Color.TRANSPARENT
-        }
-    }
-
-    private fun getStatusBarHeight(): Int {
-        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
-        return if (id > 0) resources.getDimensionPixelSize(id) else 0
-    }
-
     private fun isSystemDark(): Boolean {
         val flags = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         return flags == Configuration.UI_MODE_NIGHT_YES
     }
 
-    private fun injectStatusBarHeight(view: WebView?) {
-        val sbh = getStatusBarHeight()
+    private fun injectAndroidEnv(view: WebView?) {
         val dark = isSystemDark()
         view?.evaluateJavascript("""
             (function(){
-                document.documentElement.style.setProperty('--status-bar-height','${sbh}px');
                 window.__ANDROID_DARK_MODE__ = $dark;
                 window.dispatchEvent(new CustomEvent('android-ready'));
             })()
