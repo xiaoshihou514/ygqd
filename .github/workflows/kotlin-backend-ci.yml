@@ -1,0 +1,104 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'kotlin-backend/**'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'kotlin-backend/**'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test Core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kotlin-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Tests
+        run: ./gradlew :core:test
+
+  build-desktop:
+    name: Build Desktop Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kotlin-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile Desktop Server
+        run: ./gradlew :server-desktop:compileKotlin
+
+      - name: Assemble Distribution
+        run: ./gradlew :server-desktop:installDist
+
+      - name: Upload Desktop Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-desktop-dist
+          path: kotlin-backend/server-desktop/build/install/
+
+  build-android:
+    name: Build Android Library
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kotlin-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 35
+          build-tools: '35.0.0'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Create local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Compile Android Library
+        run: ./gradlew :server-android:compileReleaseKotlin
+
+      - name: Assemble Android AAR
+        run: ./gradlew :server-android:assembleRelease
+
+      - name: Upload Android AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-android-aar
+          path: kotlin-backend/server-android/build/outputs/aar/

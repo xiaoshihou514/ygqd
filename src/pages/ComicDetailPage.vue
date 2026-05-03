@@ -79,7 +79,7 @@ function goBack() {
   router.back()
 }
 
-function searchByScope(keyword: string, show: string) {
+function searchByScope(keyword: string, show: string = 'title,text,keyboard,ftitle') {
   router.push({ name: 'search', query: { keyword, show } })
 }
 </script>

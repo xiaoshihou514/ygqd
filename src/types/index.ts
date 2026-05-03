@@ -69,3 +69,9 @@ export interface SplitGroup {
   isComplete: boolean
   isStandalone: boolean
 }
+
+export interface SearchResult {
+  items: ComicItem[]
+  pagination: PaginationInfo
+  pageUrlTemplate: string | null
+}

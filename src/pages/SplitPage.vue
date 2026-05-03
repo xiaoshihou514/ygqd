@@ -41,15 +41,15 @@ function goBack() {
 function formatChapters(chapters: number[]): string {
   if (chapters.length === 0) return '单篇'
   const ranges: string[] = []
-  let start = chapters[0]
-  let end = chapters[0]
+  let start = chapters[0]!
+  let end = chapters[0]!
   for (let i = 1; i < chapters.length; i++) {
-    if (chapters[i] === end + 1) {
-      end = chapters[i]
+    if (chapters[i]! === end + 1) {
+      end = chapters[i]!
     } else {
       ranges.push(start === end ? `${start}` : `${start}-${end}`)
-      start = chapters[i]
-      end = chapters[i]
+      start = chapters[i]!
+      end = chapters[i]!
     }
   }
   ranges.push(start === end ? `${start}` : `${start}-${end}`)

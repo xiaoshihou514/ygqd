@@ -1,5 +1,4 @@
-import type { ComicItem, ComicDetail, HomeSection, PaginationInfo, SearchParams } from '../types'
-import type { SearchResult } from '../server/parser'
+import type { ComicItem, ComicDetail, HomeSection, PaginationInfo, SearchParams, SearchResult } from '../types'
 
 interface ApiResponse<T> {
   code: number

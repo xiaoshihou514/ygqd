@@ -1,0 +1,35 @@
+plugins {
+    id("com.android.library")
+    kotlin("android")
+    kotlin("plugin.serialization")
+}
+
+android {
+    namespace = "com.niacg.backend.server"
+    compileSdk = 35
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    implementation(project(":core"))
+    implementation("io.ktor:ktor-server-core:3.0.2")
+    implementation("io.ktor:ktor-server-cio:3.0.2")
+    implementation("io.ktor:ktor-server-content-negotiation:3.0.2")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.2")
+    implementation("io.ktor:ktor-server-cors:3.0.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}
