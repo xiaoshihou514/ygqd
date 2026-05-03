@@ -27,7 +27,7 @@ private fun locateWebDir(): File? {
 
 private fun findRelativeToJar(): File? {
     return try {
-        val jarUrl = Main::class.java.protectionDomain.codeSource.location
+        val jarUrl = JvmTlsClient::class.java.protectionDomain.codeSource.location
         if (jarUrl?.protocol == "file") {
             File(jarUrl.toURI()).parentFile?.let { parent ->
                 File(parent, "web")
