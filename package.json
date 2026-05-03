@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "backend": "cd kotlin-backend && ./gradlew :server-desktop:run",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
-    "type-check": "vue-tsc --build"
+    "type-check": "vue-tsc --build",
+    "lint": "eslint . --fix",
+    "format": "prettier --write src/",
+    "backend": "cd kotlin-backend && ./gradlew :server-desktop:run",
+    "android": "vite build && cd kotlin-backend && ./gradlew :server-android:assembleDebug",
+    "desktop": "vite build && cd kotlin-backend && ./gradlew :server-desktop:installDist"
   },
   "dependencies": {
     "node-html-parser": "^7.1.0",

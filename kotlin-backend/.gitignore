@@ -9,3 +9,4 @@ local.properties
 .DS_Store
 *.log
 server-android/src/main/assets/web/
+server-desktop/build/web/

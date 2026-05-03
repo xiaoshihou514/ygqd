@@ -1,4 +1,4 @@
-name: Push APK to Release
+name: Push Release
 
 on:
   push:
@@ -13,12 +13,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: push-apk-${{ github.ref }}
+  group: push-release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-and-push:
-    name: Build Vue + Android APK & Push Release
+    name: Build Vue + Android APK + Desktop & Push Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,14 +41,15 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Setup Android SDK
+        if: success()
         uses: android-actions/setup-android@v3
         with:
           api-level: 35
           build-tools: '35.0.0'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
 
       - name: Create local.properties
         working-directory: kotlin-backend
@@ -66,26 +67,43 @@ jobs:
           echo ""
           echo "=== Web assets in APK ==="
           unzip -l "$APK" | grep -E 'assets/web/' || echo "WARNING: No web assets found!"
-          echo ""
-          echo "=== HTML files ==="
-          unzip -l "$APK" | grep '\.html$' || echo "WARNING: No HTML files found!"
+
+      - name: Build Desktop Distribution
+        working-directory: kotlin-backend
+        run: ./gradlew :server-desktop:installDist
+
+      - name: Package Desktop as tar.gz
+        run: |
+          cd kotlin-backend/server-desktop/build/install
+          tar czf ../../../desktop-dist.tar.gz server-desktop
+
+      - name: Verify Desktop package
+        run: |
+          echo "Desktop package size: $(du -h desktop-dist.tar.gz | cut -f1)"
+          tar tzf desktop-dist.tar.gz | grep -E 'web/index.html' || echo "WARNING: No web/index.html in desktop dist!"
 
       - name: Get short SHA
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Push APK to GitHub Release
+      - name: Push to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: "Latest Build (${{ steps.sha.outputs.short }})"
           body: |
-            Automated APK build from commit `${{ github.sha }}`
+            Automated build from commit `${{ github.sha }}`
 
             **Branch:** ${{ github.ref_name }}
             **Commit:** ${{ github.event.head_commit.message }}
             **Timestamp:** ${{ github.event.head_commit.timestamp }}
-          files: kotlin-backend/server-android/build/outputs/apk/debug/*.apk
+
+            ### Assets
+            - `server-android.apk` — Android APK
+            - `desktop-dist.tar.gz` — Desktop executable (Linux)
+          files: |
+            kotlin-backend/server-android/build/outputs/apk/debug/*.apk
+            desktop-dist.tar.gz
           prerelease: true
           make_latest: true
           generate_release_notes: false

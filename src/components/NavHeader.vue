@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from 'vue-router'
+import { useTheme } from '@/composables/useTheme'
 
 const route = useRoute()
+const { current, toggleTheme, nextLabel } = useTheme()
 
 const navItems = [
   { label: '推荐', to: '/' },
@@ -27,6 +29,9 @@ const navItems = [
           {{ item.label }}
         </RouterLink>
       </nav>
+      <button class="theme-btn" @click="toggleTheme" :title="'Theme: ' + current">
+        {{ nextLabel }}
+      </button>
     </div>
   </header>
 </template>
@@ -97,5 +102,24 @@ const navItems = [
 .nav-link.active {
   color: var(--color-navbar-text);
   background: var(--color-accent);
+}
+
+.theme-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-navbar-text);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.theme-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 </style>
