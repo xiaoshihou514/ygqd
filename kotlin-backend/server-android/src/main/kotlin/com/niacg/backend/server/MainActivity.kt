@@ -4,6 +4,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -16,6 +18,8 @@ class MainActivity : Activity() {
     private var webView: WebView? = null
     private var statusText: TextView? = null
     private var toggleBtn: Button? = null
+    private var retryCount = 0
+    private val maxRetries = 20
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,7 +34,7 @@ class MainActivity : Activity() {
         }
 
         statusText = TextView(this).apply {
-            text = if (BackendService.isRunning) "● Running" else "○ Stopped"
+            text = if (BackendService.isRunning) "● Running" else "○ Starting..."
             textSize = 14f
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
@@ -56,20 +60,42 @@ class MainActivity : Activity() {
             )
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            webViewClient = WebViewClient()
-            loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
+            settings.allowFileAccess = false
+            webViewClient = object : WebViewClient() {
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    error: WebResourceError?
+                ) {
+                    if (request?.isForMainFrame == true && retryCount < maxRetries) {
+                        retryCount++
+                        view?.postDelayed({
+                            if (BackendService.isRunning) {
+                                view?.loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
+                            }
+                        }, 1000)
+                    }
+                }
+            }
         }
         rootLayout.addView(webView)
 
         setContentView(rootLayout)
+
+        ensureServerAndLoad()
     }
 
-    private fun toggleServer() {
+    override fun onResume() {
+        super.onResume()
+        if (BackendService.isRunning && webView?.url == null) {
+            loadWebView()
+        }
+    }
+
+    private fun ensureServerAndLoad() {
         if (BackendService.isRunning) {
-            stopService(Intent(this, BackendService::class.java))
-            BackendService.isRunning = false
-            statusText?.text = "○ Stopped"
-            toggleBtn?.text = "Start"
+            updateStatusUI()
+            loadWebView()
         } else {
             val intent = Intent(this, BackendService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -77,12 +103,51 @@ class MainActivity : Activity() {
             } else {
                 startService(intent)
             }
-            statusText?.text = "● Running"
+            statusText?.text = "● Starting..."
             toggleBtn?.text = "Stop"
+            scheduleServerPoll()
+        }
+    }
 
-            webView?.postDelayed({
-                webView?.loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
-            }, 500)
+    private fun scheduleServerPoll() {
+        webView?.postDelayed({
+            if (BackendService.isRunning) {
+                updateStatusUI()
+                loadWebView()
+            } else if (retryCount < maxRetries) {
+                retryCount++
+                scheduleServerPoll()
+            }
+        }, 500)
+    }
+
+    private fun updateStatusUI() {
+        statusText?.text = if (BackendService.isRunning) "● Running" else "○ Stopped"
+        toggleBtn?.text = if (BackendService.isRunning) "Stop" else "Start"
+    }
+
+    private fun loadWebView() {
+        retryCount = 0
+        webView?.loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
+    }
+
+    private fun toggleServer() {
+        if (BackendService.isRunning) {
+            stopService(Intent(this, BackendService::class.java))
+            BackendService.isRunning = false
+            webView?.loadUrl("about:blank")
+            updateStatusUI()
+        } else {
+            retryCount = 0
+            statusText?.text = "● Starting..."
+            toggleBtn?.text = "Stop"
+            val intent = Intent(this, BackendService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            scheduleServerPoll()
         }
     }
 

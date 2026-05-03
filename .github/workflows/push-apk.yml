@@ -58,6 +58,18 @@ jobs:
         working-directory: kotlin-backend
         run: ./gradlew :server-android:assembleDebug
 
+      - name: Verify APK contains Vue frontend
+        run: |
+          APK=$(ls kotlin-backend/server-android/build/outputs/apk/debug/*.apk | head -1)
+          echo "Checking APK: $APK"
+          echo "APK size: $(du -h "$APK" | cut -f1)"
+          echo ""
+          echo "=== Web assets in APK ==="
+          unzip -l "$APK" | grep -E 'assets/web/' || echo "WARNING: No web assets found!"
+          echo ""
+          echo "=== HTML files ==="
+          unzip -l "$APK" | grep '\.html$' || echo "WARNING: No HTML files found!"
+
       - name: Get short SHA
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT

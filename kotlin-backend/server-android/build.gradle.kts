@@ -6,9 +6,12 @@ plugins {
 
 val copyVueDist = tasks.register<Copy>("copyVueDist") {
     val vueDistDir = file("${rootProject.projectDir}/../dist")
-    if (vueDistDir.exists()) {
-        from(vueDistDir)
-        into(file("src/main/assets/web"))
+    from(vueDistDir)
+    into(file("src/main/assets/web"))
+    doFirst {
+        check(vueDistDir.exists()) {
+            "Vue dist directory not found: $vueDistDir. Run 'npm run build-only' first."
+        }
     }
 }
 
