@@ -69,10 +69,10 @@ npm run build-only
 # 2. 构建 Android APK（Gradle 会自动将 dist/ 复制到 assets）
 cd kotlin-backend
 echo "sdk.dir=$ANDROID_HOME" > local.properties
-./gradlew :server-android:assembleRelease
+./gradlew :server-android:assembleDebug
 
 # APK 产出路径：
-# kotlin-backend/server-android/build/outputs/apk/release/
+# kotlin-backend/server-android/build/outputs/apk/debug/
 ```
 
 ### CI 自动构建

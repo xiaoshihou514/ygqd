@@ -28,6 +28,15 @@ android {
         versionName = "1.0.0"
     }
 
+    buildTypes {
+        debug {
+            isDebuggable = true
+        }
+        release {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -43,7 +52,7 @@ kotlin {
 dependencies {
     implementation(project(":core"))
     implementation("io.ktor:ktor-server-core:3.0.2")
-    implementation("io.ktor:ktor-server-cio:3.0.2")
+    implementation("io.ktor:ktor-server-netty:3.0.2")
     implementation("io.ktor:ktor-server-content-negotiation:3.0.2")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.2")
     implementation("io.ktor:ktor-server-cors:3.0.2")

@@ -9,9 +9,9 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import com.niacg.backend.service.AndroidHttpClient
-import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
 import java.io.File
 
 class BackendService : Service() {
@@ -92,7 +92,7 @@ class BackendService : Service() {
     private fun startServer(port: Int, webDir: File?) {
         val httpClient = AndroidHttpClient()
 
-        server = embeddedServer(CIO, port = port, host = "0.0.0.0") {
+        server = embeddedServer(Netty, port = port, host = "0.0.0.0") {
             module(httpClient, webDir)
         }.start(wait = false)
 
