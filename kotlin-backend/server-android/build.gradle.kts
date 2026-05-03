@@ -4,6 +4,18 @@ plugins {
     kotlin("plugin.serialization")
 }
 
+val copyVueDist = tasks.register<Copy>("copyVueDist") {
+    val vueDistDir = file("${rootProject.projectDir}/../dist")
+    if (vueDistDir.exists()) {
+        from(vueDistDir)
+        into(file("src/main/assets/web"))
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(copyVueDist)
+}
+
 android {
     namespace = "com.niacg.backend.server"
     compileSdk = 35

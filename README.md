@@ -1,42 +1,88 @@
 # niacg
 
-This template should help get you started developing with Vue 3 in Vite.
+漫画浏览应用，Vue 3 前端 + Kotlin/Ktor 后端，支持 Web 和 Android 双平台。
 
-## Recommended IDE Setup
+## 项目结构
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+```
+niacg/
+├── src/                          # Vue 3 前端源码
+│   ├── pages/                    # 页面组件
+│   ├── services/                 # API 调用层
+│   ├── router/                   # Vue Router
+│   └── types/                    # TypeScript 类型
+├── kotlin-backend/               # Kotlin 后端
+│   ├── core/                     # 核心业务逻辑、模型、解析器
+│   ├── server-desktop/           # 桌面端 Ktor 服务
+│   └── server-android/           # Android 端 Ktor 服务 + APK
+├── .github/workflows/            # GitHub Actions
+│   ├── push-apk.yml              # 构建 APK 并推送到 Release
+│   └── kotlin-backend-ci.yml     # CI：测试、桌面端构建、Android 构建
+└── dist/                         # Vue 构建产物（npm run build-only）
+```
 
-## Recommended Browser Setup
+## 架构
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+- **前端**：Vue 3 + TypeScript + Vite，API 调用使用相对路径 `/api/*`
+- **后端**：Kotlin/Ktor，提供 RESTful API，代理/解析 niacg 网站内容
+- **Android**：WebView 内嵌 Vue 前端，Ktor 后端以前台服务运行在同一 APK 中
 
-## Type Support for `.vue` Imports in TS
-
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
+## 前端开发
 
 ```sh
+# 安装依赖
 npm install
-```
 
-### Compile and Hot-Reload for Development
-
-```sh
+# 启动开发服务器（默认代理到 localhost:8080）
 npm run dev
+
+# 自定义后端地址
+KOTLIN_BACKEND=http://192.168.1.100:8080 npm run dev
+
+# 构建生产版本
+npm run build
+
+# 类型检查
+npm run type-check
 ```
 
-### Type-Check, Compile and Minify for Production
+## 后端开发
 
 ```sh
-npm run build
+# 桌面端运行后端
+cd kotlin-backend && ./gradlew :server-desktop:run
+
+# 或通过 npm 脚本
+npm run backend
 ```
+
+## Android APK 构建
+
+APK 包含 Kotlin 后端和 Vue 前端，打包在同一个 APK 中，无需独立服务器。
+
+### 本地构建
+
+```sh
+# 1. 先构建 Vue 前端
+npm run build-only
+
+# 2. 构建 Android APK（Gradle 会自动将 dist/ 复制到 assets）
+cd kotlin-backend
+echo "sdk.dir=$ANDROID_HOME" > local.properties
+./gradlew :server-android:assembleRelease
+
+# APK 产出路径：
+# kotlin-backend/server-android/build/outputs/apk/release/
+```
+
+### CI 自动构建
+
+推送代码到 main 分支时，`.github/workflows/push-apk.yml` 会自动：
+1. 构建 Vue 前端
+2. 构建 Android APK
+3. 将 APK 推送到 GitHub Release（`latest` tag）
+
+## IDE 推荐
+
+- [VS Code](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)
+- 建议禁用 Vetur

@@ -3,66 +3,94 @@ package com.niacg.backend.server
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.ViewGroup
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.app.Activity
 
 class MainActivity : Activity() {
 
+    private var webView: WebView? = null
+    private var statusText: TextView? = null
+    private var toggleBtn: Button? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val layout = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(48, 48, 48, 48)
+        val rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
 
-        layout.addView(TextView(this).apply {
-            text = "Niacg Kotlin Backend"
-            textSize = 20f
-        })
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(16, 16, 16, 8)
+        }
 
-        layout.addView(TextView(this).apply {
-            text = "API → http://localhost:${BackendService.DEFAULT_PORT}/api/"
-            textSize = 14f
-            setPadding(0, 16, 0, 0)
-        })
-
-        layout.addView(TextView(this).apply {
-            text = "Endpoints: /home, /list, /search, /comic, /image, /split"
-            textSize = 12f
-            setPadding(0, 8, 0, 0)
-        })
-
-        val statusText = TextView(this).apply {
+        statusText = TextView(this).apply {
             text = if (BackendService.isRunning) "● Running" else "○ Stopped"
-            textSize = 16f
-            setPadding(0, 24, 0, 0)
+            textSize = 14f
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        layout.addView(statusText)
+        toolbar.addView(statusText)
 
-        val toggleBtn = Button(this).apply {
-            text = if (BackendService.isRunning) "Stop Server" else "Start Server"
+        toggleBtn = Button(this).apply {
+            text = if (BackendService.isRunning) "Stop" else "Start"
+            textSize = 12f
+            setPadding(24, 8, 24, 8)
             setOnClickListener {
-                if (BackendService.isRunning) {
-                    stopService(Intent(this@MainActivity, BackendService::class.java))
-                    BackendService.isRunning = false
-                    statusText.text = "○ Stopped"
-                    text = "Start Server"
-                } else {
-                    val intent = Intent(this@MainActivity, BackendService::class.java)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent)
-                    } else {
-                        startService(intent)
-                    }
-                    statusText.text = "● Running"
-                    text = "Stop Server"
-                }
+                toggleServer()
             }
         }
-        layout.addView(toggleBtn)
+        toolbar.addView(toggleBtn)
 
-        setContentView(layout)
+        rootLayout.addView(toolbar)
+
+        webView = WebView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            webViewClient = WebViewClient()
+            loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
+        }
+        rootLayout.addView(webView)
+
+        setContentView(rootLayout)
+    }
+
+    private fun toggleServer() {
+        if (BackendService.isRunning) {
+            stopService(Intent(this, BackendService::class.java))
+            BackendService.isRunning = false
+            statusText?.text = "○ Stopped"
+            toggleBtn?.text = "Start"
+        } else {
+            val intent = Intent(this, BackendService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            statusText?.text = "● Running"
+            toggleBtn?.text = "Stop"
+
+            webView?.postDelayed({
+                webView?.loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
+            }, 500)
+        }
+    }
+
+    override fun onBackPressed() {
+        if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            super.onBackPressed()
+        }
     }
 }

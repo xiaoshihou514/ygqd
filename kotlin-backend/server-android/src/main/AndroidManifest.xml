@@ -8,8 +8,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="Niacg Backend"
-        android:supportsRtl="true">
+        android:label="Niacg"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name="com.niacg.backend.server.MainActivity"

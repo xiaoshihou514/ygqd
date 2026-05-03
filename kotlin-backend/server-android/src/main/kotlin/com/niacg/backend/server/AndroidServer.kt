@@ -12,6 +12,7 @@ import com.niacg.backend.service.AndroidHttpClient
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
+import java.io.File
 
 class BackendService : Service() {
 
@@ -19,6 +20,7 @@ class BackendService : Service() {
         const val CHANNEL_ID = "niacg_backend_channel"
         const val NOTIFICATION_ID = 1001
         const val DEFAULT_PORT = 8080
+        const val WEB_ASSETS_DIR = "web"
 
         var serverInstance: EmbeddedServer<*, *>? = null
             private set
@@ -40,7 +42,8 @@ class BackendService : Service() {
         val port = intent?.getIntExtra("port", DEFAULT_PORT) ?: DEFAULT_PORT
 
         if (!isRunning) {
-            startServer(port)
+            val webDir = prepareWebAssets()
+            startServer(port, webDir)
         }
 
         return START_STICKY
@@ -53,11 +56,44 @@ class BackendService : Service() {
         super.onDestroy()
     }
 
-    private fun startServer(port: Int) {
+    private fun prepareWebAssets(): File? {
+        return try {
+            val webDir = File(filesDir, WEB_ASSETS_DIR)
+            if (!webDir.exists()) {
+                webDir.mkdirs()
+                copyAssets(assets, WEB_ASSETS_DIR, webDir)
+            }
+            webDir
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun copyAssets(am: android.content.res.AssetManager, path: String, target: File) {
+        val list = am.list(path) ?: return
+        for (name in list) {
+            val childPath = if (path.isEmpty()) name else "$path/$name"
+            val childTarget = File(target, name)
+
+            val subList = am.list(childPath)
+            if (subList != null && subList.isNotEmpty()) {
+                childTarget.mkdirs()
+                copyAssets(am, childPath, childTarget)
+            } else {
+                am.open(childPath).use { input ->
+                    childTarget.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun startServer(port: Int, webDir: File?) {
         val httpClient = AndroidHttpClient()
 
         server = embeddedServer(CIO, port = port, host = "0.0.0.0") {
-            module(httpClient)
+            module(httpClient, webDir)
         }.start(wait = false)
 
         serverInstance = server
