@@ -12,7 +12,7 @@
     "lint": "eslint . --fix",
     "format": "prettier --write src/",
     "backend": "cd kotlin-backend && ./gradlew :server-desktop:run",
-    "android": "vite build && cd kotlin-backend && ./gradlew :server-android:assembleDebug",
+    "android": "vite build && cd kotlin-backend && ./gradlew :server-android:assembleRelease",
     "desktop": "vite build && cd kotlin-backend && ./gradlew :server-desktop:installDist"
   },
   "dependencies": {

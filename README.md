@@ -86,10 +86,10 @@ npm run android
 npm run build-only
 cd kotlin-backend
 echo "sdk.dir=$ANDROID_HOME" > local.properties
-./gradlew :server-android:assembleDebug
+./gradlew :server-android:assembleRelease
 
 # APK 产出路径：
-# kotlin-backend/server-android/build/outputs/apk/debug/
+# kotlin-backend/server-android/build/outputs/apk/release/
 ```
 
 ## CI 自动构建

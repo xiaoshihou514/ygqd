@@ -118,15 +118,15 @@ jobs:
 
       - name: Compile Android App
         working-directory: kotlin-backend
-        run: ./gradlew :server-android:compileDebugKotlin
+        run: ./gradlew :server-android:compileReleaseKotlin
 
       - name: Assemble Android APK
         working-directory: kotlin-backend
-        run: ./gradlew :server-android:assembleDebug
+        run: ./gradlew :server-android:assembleRelease
 
       - name: Verify APK contains Vue frontend
         run: |
-          APK=$(ls kotlin-backend/server-android/build/outputs/apk/debug/*.apk | head -1)
+          APK=$(ls kotlin-backend/server-android/build/outputs/apk/release/*.apk | head -1)
           echo "Checking APK: $APK"
           echo "APK size: $(du -h "$APK" | cut -f1)"
           echo ""
@@ -140,4 +140,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: server-android-apk
-          path: kotlin-backend/server-android/build/outputs/apk/debug/*.apk
+          path: kotlin-backend/server-android/build/outputs/apk/release/*.apk
