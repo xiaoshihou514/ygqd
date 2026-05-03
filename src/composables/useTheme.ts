@@ -8,14 +8,17 @@ export function useTheme() {
   const stored = localStorage.getItem(THEME_KEY) as Theme | null
   const current = ref<Theme>(stored || 'system')
 
-  function applyTheme(theme: Theme) {
-    const isDark =
-      theme === 'dark' ||
-      (theme === 'system' &&
-        window.matchMedia('(prefers-color-scheme: dark)').matches)
+  function isSystemDark(): boolean {
+    const androidDark = (window as any).__ANDROID_DARK_MODE__
+    if (typeof androidDark === 'boolean') return androidDark
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  }
 
-    document.documentElement.classList.toggle('dark', isDark)
-    document.documentElement.classList.toggle('light', !isDark)
+  function applyTheme(theme: Theme) {
+    const dark =
+      theme === 'dark' || (theme === 'system' && isSystemDark())
+    document.documentElement.classList.toggle('dark', dark)
+    document.documentElement.classList.toggle('light', !dark)
   }
 
   function setTheme(theme: Theme) {
@@ -49,6 +52,9 @@ export function useTheme() {
           applyTheme('system')
         }
       })
+    window.addEventListener('android-ready', () => {
+      applyTheme(current.value)
+    })
   })
 
   return { current, setTheme, toggleTheme, nextLabel }

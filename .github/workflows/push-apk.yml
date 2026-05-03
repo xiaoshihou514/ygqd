@@ -74,8 +74,7 @@ jobs:
 
       - name: Package Desktop as tar.gz
         run: |
-          cd kotlin-backend/server-desktop/build/install
-          tar czf ../../../desktop-dist.tar.gz server-desktop
+          tar czf desktop-dist.tar.gz -C kotlin-backend/server-desktop/build/install server-desktop
 
       - name: Verify Desktop package
         run: |
