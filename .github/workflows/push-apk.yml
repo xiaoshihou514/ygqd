@@ -1,4 +1,4 @@
-name: Push AAR to Release
+name: Push APK to Release
 
 on:
   push:
@@ -8,12 +8,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: push-aar-${{ github.ref }}
+  group: push-apk-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-and-push:
-    name: Build Android AAR & Push Release
+    name: Build Android APK & Push Release
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -39,24 +39,25 @@ jobs:
       - name: Create local.properties
         run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      - name: Assemble Android AAR
+      - name: Assemble Android APK
         run: ./gradlew :server-android:assembleRelease
 
       - name: Get short SHA
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Push AAR to GitHub Release
+      - name: Push APK to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: "Latest Build (${{ steps.sha.outputs.short }})"
           body: |
-            Automated AAR build from commit `${{ github.sha }}`
+            Automated APK build from commit `${{ github.sha }}`
 
             **Branch:** ${{ github.ref_name }}
             **Commit:** ${{ github.event.head_commit.message }}
             **Timestamp:** ${{ github.event.head_commit.timestamp }}
-          files: kotlin-backend/server-android/build/outputs/aar/*-release.aar
+          files: kotlin-backend/server-android/build/outputs/apk/release/*.apk
           prerelease: true
           make_latest: true
+          generate_release_notes: false

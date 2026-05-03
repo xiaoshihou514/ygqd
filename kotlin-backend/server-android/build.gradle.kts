@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.library")
+    id("com.android.application")
     kotlin("android")
     kotlin("plugin.serialization")
 }
@@ -9,7 +9,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
+        applicationId = "com.niacg.backend.server"
         minSdk = 26
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     compileOptions {

@@ -2,13 +2,9 @@ name: Build & Test
 
 on:
   push:
-    branches: [main, master]
-    paths:
-      - 'kotlin-backend/**'
+    branches: [main]
   pull_request:
-    branches: [main, master]
-    paths:
-      - 'kotlin-backend/**'
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -64,7 +60,7 @@ jobs:
           path: kotlin-backend/server-desktop/build/install/
 
   build-android:
-    name: Build Android Library
+    name: Build Android App
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -91,14 +87,14 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      - name: Compile Android Library
+      - name: Compile Android App
         run: ./gradlew :server-android:compileReleaseKotlin
 
-      - name: Assemble Android AAR
+      - name: Assemble Android APK
         run: ./gradlew :server-android:assembleRelease
 
-      - name: Upload Android AAR
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: server-android-aar
-          path: kotlin-backend/server-android/build/outputs/aar/
+          name: server-android-apk
+          path: kotlin-backend/server-android/build/outputs/apk/release/*.apk
