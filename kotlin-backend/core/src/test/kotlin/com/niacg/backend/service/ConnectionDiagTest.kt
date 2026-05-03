@@ -3,7 +3,9 @@ package com.niacg.backend.service
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Tag
 
+@Tag("integration")
 class ConnectionDiagTest {
 
     @Test

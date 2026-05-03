@@ -4,7 +4,9 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Tag
 
+@Tag("integration")
 class NiacgIntegrationTest {
 
     private val client = JvmTlsClient()

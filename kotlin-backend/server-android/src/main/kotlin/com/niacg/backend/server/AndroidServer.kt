@@ -9,9 +9,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import com.niacg.backend.service.AndroidHttpClient
-import com.niacg.backend.service.HttpClient
 import io.ktor.server.cio.CIO
-import io.ktor.server.engine.ApplicationEngine
+import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 
 class BackendService : Service() {
@@ -21,14 +20,14 @@ class BackendService : Service() {
         const val NOTIFICATION_ID = 1001
         const val DEFAULT_PORT = 8080
 
-        var serverInstance: ApplicationEngine? = null
+        var serverInstance: EmbeddedServer<*, *>? = null
             private set
 
         var isRunning = false
             private set
     }
 
-    private var server: ApplicationEngine? = null
+    private var server: EmbeddedServer<*, *>? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -59,7 +58,7 @@ class BackendService : Service() {
         val httpClient = AndroidHttpClient()
 
         server = embeddedServer(CIO, port = port, host = "0.0.0.0") {
-            com.niacg.backend.server.module(httpClient)
+            module(httpClient)
         }.start(wait = false)
 
         serverInstance = server
