@@ -80,7 +80,7 @@ onMounted(() => {
             <circle cx="11" cy="11" r="8" />
             <path d="M21 21l-4.35-4.35" />
           </svg>
-          搜索
+          <span>搜索</span>
         </button>
       </div>
 
@@ -193,10 +193,21 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   transition: background 0.2s;
+  white-space: nowrap;
 }
 
 .search-btn:hover {
   background: var(--color-primary-focus);
+}
+
+@media (max-width: 480px) {
+  .search-btn {
+    padding: 0 12px;
+  }
+
+  .search-btn span {
+    display: none;
+  }
 }
 
 .search-options {

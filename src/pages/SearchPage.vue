@@ -230,6 +230,8 @@ function goToSplit() {
   border-radius: var(--radius-pill);
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .split-btn:hover {
