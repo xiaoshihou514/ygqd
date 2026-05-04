@@ -63,15 +63,22 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun getStatusBarHeight(): Int {
+        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id) else 0
+    }
+
     private fun isSystemDark(): Boolean {
         val flags = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         return flags == Configuration.UI_MODE_NIGHT_YES
     }
 
     private fun injectAndroidEnv(view: WebView?) {
+        val sbh = getStatusBarHeight()
         val dark = isSystemDark()
         view?.evaluateJavascript("""
             (function(){
+                document.documentElement.style.setProperty('--status-bar-height','${sbh}px');
                 window.__ANDROID_DARK_MODE__ = $dark;
                 window.dispatchEvent(new CustomEvent('android-ready'));
             })()

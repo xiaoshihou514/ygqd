@@ -39,7 +39,7 @@ const navItems = [
 <style scoped>
 .nav-header {
   position: fixed;
-  top: 0;
+  top: var(--status-bar-height, 0px);
   left: 0;
   right: 0;
   height: var(--nav-height);
