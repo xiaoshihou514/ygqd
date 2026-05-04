@@ -1,24 +1,33 @@
 <script setup lang="ts">
+import { ref, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useTheme } from '@/composables/useTheme'
 
 const route = useRoute()
 const { current, toggleTheme, nextLabel } = useTheme()
+const isAndroid = ref(false)
 
 const navItems = [
   { label: '推荐', to: '/' },
   { label: '搜索', to: '/search' },
 ]
+
+onMounted(() => {
+  isAndroid.value = typeof (window as any).__ANDROID_DARK_MODE__ === 'boolean'
+  window.addEventListener('android-ready', () => {
+    isAndroid.value = true
+  })
+})
 </script>
 
 <template>
   <header class="nav-header">
-    <div class="nav-inner">
+    <div class="nav-inner" :class="{ android: isAndroid }">
       <RouterLink to="/" class="nav-logo">
         <span class="logo-icon">N</span>
         <span class="logo-text">iACG</span>
       </RouterLink>
-      <nav class="nav-links">
+      <nav class="nav-links" :class="{ android: isAndroid }">
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
@@ -58,6 +67,10 @@ const navItems = [
   justify-content: space-between;
 }
 
+.nav-inner.android {
+  justify-content: flex-start;
+}
+
 .nav-logo {
   display: flex;
   align-items: center;
@@ -83,6 +96,10 @@ const navItems = [
 .nav-links {
   display: flex;
   gap: 4px;
+}
+
+.nav-links.android {
+  margin-left: auto;
 }
 
 .nav-link {
@@ -121,13 +138,5 @@ const navItems = [
 
 .theme-btn:hover {
   background: rgba(255, 255, 255, 0.2);
-}
-
-:global(html.android) .nav-inner {
-  justify-content: flex-start;
-}
-
-:global(html.android) .nav-links {
-  margin-left: auto;
 }
 </style>
