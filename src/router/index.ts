@@ -23,6 +23,11 @@ const router = createRouter({
       name: 'split',
       component: () => import('@/pages/SplitPage.vue'),
     },
+    {
+      path: '/settings/blacklist',
+      name: 'tag-blacklist',
+      component: () => import('@/pages/TagBlacklistPage.vue'),
+    },
   ],
 })
 

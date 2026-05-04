@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchComicDetail } from '@/services/api'
 import type { ComicDetail } from '@/types'
+import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -15,6 +16,7 @@ const detail = ref<ComicDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
 const visibleCount = ref(PAGE_SIZE)
+const { add, has } = useTagBlacklist()
 
 const visibleImages = computed(() => {
   if (!detail.value) return []
@@ -136,48 +138,106 @@ export default { inheritAttrs: false }
             <div v-if="detail.author" class="detail-tag-row">
               <span class="tag-label">作者</span>
               <div class="detail-tags">
-                <button class="detail-tag" @click="searchByScope(detail.author)">
-                  {{ detail.author }}
-                </button>
+                <span class="detail-tag-wrap">
+                  <button class="detail-tag detail-tag-link" @click="searchByScope(detail.author)">
+                    {{ detail.author }}
+                  </button>
+                  <button
+                    v-if="!has(detail.author)"
+                    class="detail-tag-ban"
+                    :title="`拉黑作者标签: ${detail.author}`"
+                    @click="add(detail.author)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M4.93 4.93l14.14 14.14" />
+                    </svg>
+                  </button>
+                </span>
               </div>
             </div>
             <div v-if="detail.works.length > 0" class="detail-tag-row">
               <span class="tag-label">作品</span>
               <div class="detail-tags">
-                <button
+                <span
                   v-for="work in detail.works"
                   :key="work"
-                  class="detail-tag"
-                  @click="searchByScope(work, 'title,text')"
+                  class="detail-tag-wrap"
                 >
-                  {{ work }}
-                </button>
+                  <button
+                    class="detail-tag detail-tag-link"
+                    @click="searchByScope(work, 'title,text')"
+                  >
+                    {{ work }}
+                  </button>
+                  <button
+                    v-if="!has(work)"
+                    class="detail-tag-ban"
+                    :title="`拉黑作品标签: ${work}`"
+                    @click="add(work)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M4.93 4.93l14.14 14.14" />
+                    </svg>
+                  </button>
+                </span>
               </div>
             </div>
             <div v-if="detail.characters.length > 0" class="detail-tag-row">
               <span class="tag-label">人物</span>
               <div class="detail-tags">
-                <button
+                <span
                   v-for="char in detail.characters"
                   :key="char"
-                  class="detail-tag"
-                  @click="searchByScope(char, 'title,text,keyboard,ftitle')"
+                  class="detail-tag-wrap"
                 >
-                  {{ char }}
-                </button>
+                  <button
+                    class="detail-tag detail-tag-link"
+                    @click="searchByScope(char, 'title,text,keyboard,ftitle')"
+                  >
+                    {{ char }}
+                  </button>
+                  <button
+                    v-if="!has(char)"
+                    class="detail-tag-ban"
+                    :title="`拉黑人物标签: ${char}`"
+                    @click="add(char)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M4.93 4.93l14.14 14.14" />
+                    </svg>
+                  </button>
+                </span>
               </div>
             </div>
             <div v-if="detail.tags.length > 0" class="detail-tag-row">
               <span class="tag-label">标签</span>
               <div class="detail-tags">
-                <button
+                <span
                   v-for="tag in detail.tags"
                   :key="tag"
-                  class="detail-tag"
-                  @click="searchByScope(tag, 'tags')"
+                  class="detail-tag-wrap"
                 >
-                  {{ tag }}
-                </button>
+                  <button
+                    class="detail-tag detail-tag-link"
+                    @click="searchByScope(tag, 'tags')"
+                  >
+                    {{ tag }}
+                  </button>
+                  <button
+                    v-if="!has(tag)"
+                    class="detail-tag-ban"
+                    :title="`拉黑标签: ${tag}`"
+                    @click="add(tag)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M4.93 4.93l14.14 14.14" />
+                    </svg>
+                  </button>
+                </span>
               </div>
             </div>
             <div class="detail-count">
@@ -358,9 +418,45 @@ export default { inheritAttrs: false }
   transition: all 0.2s;
 }
 
-.detail-tag:hover {
+.detail-tag-link {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.detail-tag-link:hover {
   background: var(--color-primary);
   color: var(--color-on-primary);
+}
+
+.detail-tag-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.detail-tag-wrap:has(.detail-tag-ban) .detail-tag-link {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.detail-tag-ban {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  background: var(--color-tag-bg);
+  color: var(--color-text-muted);
+  border: none;
+  border-left: 1px solid var(--color-divider-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.detail-tag-ban:hover {
+  background: var(--color-error);
+  color: var(--color-on-error);
 }
 
 .detail-count {

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams } from '@/types'
 import { parseLikes } from '@/utils/likes'
+import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import SearchForm from '@/components/SearchForm.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -22,6 +23,7 @@ const lastKeyword = ref('')
 const minLikes = ref(0)
 const sortOrder = ref('default')
 const visibleCount = ref(PAGE_SIZE)
+const { filterItems } = useTagBlacklist()
 
 const processedItems = computed(() => {
   let result = items.value
@@ -33,6 +35,7 @@ const processedItems = computed(() => {
   } else if (sortOrder.value === 'likes_asc') {
     result = [...result].sort((a, b) => parseLikes(a.likes) - parseLikes(b.likes))
   }
+  result = filterItems(result)
   return result
 })
 

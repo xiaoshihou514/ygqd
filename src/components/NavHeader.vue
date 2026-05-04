@@ -10,10 +10,11 @@ const isAndroid = ref(false)
 const navItems = [
   { label: '推荐', to: '/' },
   { label: '搜索', to: '/search' },
+  { label: '黑名单', to: '/settings/blacklist' },
 ]
 
 onMounted(() => {
-  isAndroid.value = typeof (window as any).__ANDROID_DARK_MODE__ === 'boolean'
+  isAndroid.value = /android/i.test(navigator.userAgent)
   window.addEventListener('android-ready', () => {
     isAndroid.value = true
   })

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { fetchCategoryList } from '@/services/api'
 import type { ComicItem } from '@/types'
 import { parseLikes } from '@/utils/likes'
+import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import ComicGrid from '@/components/ComicGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -14,10 +15,15 @@ const loadingMore = ref(false)
 const error = ref('')
 const hasNext = ref(true)
 const minLikes = ref(0)
+const { filterItems } = useTagBlacklist()
 
 const filteredItems = computed(() => {
-  if (minLikes.value <= 0) return items.value
-  return items.value.filter((item) => parseLikes(item.likes) >= minLikes.value)
+  let result = items.value
+  if (minLikes.value > 0) {
+    result = result.filter((item) => parseLikes(item.likes) >= minLikes.value)
+  }
+  result = filterItems(result)
+  return result
 })
 
 let sentinel: HTMLElement | null = null
