@@ -85,6 +85,7 @@ class MainActivity : Activity() {
         val dark = isSystemDark()
         view?.evaluateJavascript("""
             (function(){
+                document.documentElement.classList.add('android');
                 window.__ANDROID_DARK_MODE__ = $dark;
                 window.dispatchEvent(new CustomEvent('android-ready'));
             })()

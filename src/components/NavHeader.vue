@@ -122,4 +122,12 @@ const navItems = [
 .theme-btn:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+:global(html.android) .nav-inner {
+  justify-content: flex-start;
+}
+
+:global(html.android) .nav-links {
+  margin-left: auto;
+}
 </style>
