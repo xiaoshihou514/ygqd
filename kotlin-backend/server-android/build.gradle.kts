@@ -23,6 +23,22 @@ android {
     namespace = "com.niacg.backend.server"
     compileSdk = 35
 
+    val keystoreFile = rootProject.file("../release.keystore")
+    val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: "niacg123456"
+    val keyAlias = System.getenv("KEY_ALIAS") ?: "niacg"
+    val keyPassword = System.getenv("KEY_PASSWORD") ?: "niacg123456"
+
+    signingConfigs {
+        create("release") {
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = keystorePassword
+                keyAlias = keyAlias
+                keyPassword = keyPassword
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.niacg.backend.server"
         minSdk = 26
@@ -37,7 +53,11 @@ android {
         }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystoreFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

@@ -75,6 +75,6 @@ select {
 }
 
 .main-content {
-  padding-top: calc(var(--status-bar-height, 0px) + var(--nav-height) + var(--spacing-sm));
+  padding-top: calc(var(--nav-height) + var(--spacing-sm));
   min-height: 100vh;
 }

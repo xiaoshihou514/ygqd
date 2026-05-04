@@ -2,8 +2,10 @@ package com.niacg.backend.server
 
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -19,6 +21,8 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        setupStatusBar()
 
         webView = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -63,9 +67,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun getStatusBarHeight(): Int {
-        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
-        return if (id > 0) resources.getDimensionPixelSize(id) else 0
+    private fun setupStatusBar() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            window.statusBarColor = Color.parseColor("#000000")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+        }
     }
 
     private fun isSystemDark(): Boolean {
@@ -74,11 +82,9 @@ class MainActivity : Activity() {
     }
 
     private fun injectAndroidEnv(view: WebView?) {
-        val sbh = getStatusBarHeight()
         val dark = isSystemDark()
         view?.evaluateJavascript("""
             (function(){
-                document.documentElement.style.setProperty('--status-bar-height','${sbh}px');
                 window.__ANDROID_DARK_MODE__ = $dark;
                 window.dispatchEvent(new CustomEvent('android-ready'));
             })()
