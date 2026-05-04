@@ -1,34 +1,25 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useTheme } from '@/composables/useTheme'
 
 const route = useRoute()
 const { current, toggleTheme, nextLabel } = useTheme()
-const isAndroid = ref(false)
 
 const navItems = [
   { label: '推荐', to: '/' },
   { label: '搜索', to: '/search' },
   { label: '黑名单', to: '/settings/blacklist' },
 ]
-
-onMounted(() => {
-  isAndroid.value = /android/i.test(navigator.userAgent)
-  window.addEventListener('android-ready', () => {
-    isAndroid.value = true
-  })
-})
 </script>
 
 <template>
   <header class="nav-header">
-    <div class="nav-inner" :class="{ android: isAndroid }">
+    <div class="nav-inner">
       <RouterLink to="/" class="nav-logo">
         <span class="logo-icon">N</span>
         <span class="logo-text">iACG</span>
       </RouterLink>
-      <nav class="nav-links" :class="{ android: isAndroid }">
+      <nav class="nav-links">
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
@@ -65,11 +56,6 @@ onMounted(() => {
   height: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-}
-
-.nav-inner.android {
-  justify-content: flex-start;
 }
 
 .nav-logo {
@@ -97,9 +83,6 @@ onMounted(() => {
 .nav-links {
   display: flex;
   gap: 4px;
-}
-
-.nav-links.android {
   margin-left: auto;
 }
 
