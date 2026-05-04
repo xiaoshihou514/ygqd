@@ -24,17 +24,17 @@ android {
     compileSdk = 35
 
     val keystoreFile = rootProject.file("../release.keystore")
-    val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: "niacg123456"
-    val keyAlias = System.getenv("KEY_ALIAS") ?: "niacg"
-    val keyPassword = System.getenv("KEY_PASSWORD") ?: "niacg123456"
+    val storePass = System.getenv("KEYSTORE_PASSWORD") ?: "niacg123456"
+    val aliasName = System.getenv("KEY_ALIAS") ?: "niacg"
+    val keyPass = System.getenv("KEY_PASSWORD") ?: "niacg123456"
 
     signingConfigs {
         create("release") {
             if (keystoreFile.exists()) {
                 storeFile = keystoreFile
-                storePassword = keystorePassword
-                keyAlias = keyAlias
-                keyPassword = keyPassword
+                storePassword = storePass
+                keyAlias = aliasName
+                keyPassword = keyPass
             }
         }
     }
