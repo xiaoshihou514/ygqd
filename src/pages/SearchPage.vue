@@ -5,6 +5,7 @@ import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams } from '@/types'
 import { parseLikes } from '@/utils/likes'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
+import { useUserAgent } from '@/composables/useUserAgent'
 import SearchForm from '@/components/SearchForm.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -24,6 +25,7 @@ const minLikes = ref(0)
 const sortOrder = ref('default')
 const visibleCount = ref(PAGE_SIZE)
 const { filterItems } = useTagBlacklist()
+const { isAndroid } = useUserAgent()
 
 const processedItems = computed(() => {
   let result = items.value
@@ -150,12 +152,12 @@ function goToSplit() {
         <div v-else>
           <div class="search-result-header">
             <h2 class="result-title">{{ resultTitle }}</h2>
-            <span class="result-count">共 {{ processedItems.length }} 条结果</span>
+            <span v-if="!isAndroid" class="result-count">共 {{ processedItems.length }} 条结果</span>
             <button v-if="processedItems.length > 0" class="split-btn" @click="goToSplit">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M4 6h16M4 12h16M4 18h16" />
               </svg>
-              按作品分组
+              <span v-if="!isAndroid">按作品分组</span>
             </button>
           </div>
 

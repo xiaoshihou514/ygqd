@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useUserAgent } from '@/composables/useUserAgent'
 import type { SearchParams } from '@/types'
 
 const emit = defineEmits<{
@@ -8,6 +9,7 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+const { isAndroid } = useUserAgent()
 
 const CATEGORIES = [
   { id: 9, label: 'A漫' },
@@ -80,7 +82,7 @@ onMounted(() => {
             <circle cx="11" cy="11" r="8" />
             <path d="M21 21l-4.35-4.35" />
           </svg>
-          <span>搜索</span>
+          <span v-if="!isAndroid">搜索</span>
         </button>
       </div>
 
