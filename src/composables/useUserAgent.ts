@@ -1,8 +1,14 @@
-import { computed } from 'vue'
 import isMobileLib from 'is-mobile'
 
-export function useUserAgent() {
-  const isAndroid = computed(() => isMobileLib())
+let _isAndroid = false
 
-  return { isAndroid }
+if (typeof navigator !== 'undefined') {
+  _isAndroid =
+    isMobileLib() ||
+    /android/i.test(navigator.userAgent) ||
+    (navigator as any).userAgentData?.platform === 'Android'
+}
+
+export function useUserAgent() {
+  return { isAndroid: _isAndroid }
 }
