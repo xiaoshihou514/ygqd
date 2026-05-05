@@ -99,5 +99,4 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: ygqd
           path: kotlin-backend/server-android/build/outputs/apk/release/*.apk
