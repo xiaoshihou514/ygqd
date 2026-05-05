@@ -16,6 +16,7 @@
     "desktop": "vite build && cd kotlin-backend && ./gradlew :server-desktop:installDist"
   },
   "dependencies": {
+    "is-mobile": "^5.0.0",
     "node-html-parser": "^7.1.0",
     "vue": "^3.5.32",
     "vue-router": "^4.6.4"
