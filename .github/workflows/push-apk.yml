@@ -71,6 +71,7 @@ jobs:
       - name: Verify APK contains Vue frontend
         run: |
           APK=$(ls kotlin-backend/server-android/build/outputs/apk/release/*.apk | head -1)
+          mv $APK kotlin-backend/server-android/build/outputs/apk/release/ygqd.apk
           echo "Checking APK: $APK"
           echo "APK size: $(du -h "$APK" | cut -f1)"
           echo ""
@@ -92,9 +93,6 @@ jobs:
             **Branch:** ${{ github.ref_name }}
             **Commit:** ${{ github.event.head_commit.message }}
             **Timestamp:** ${{ github.event.head_commit.timestamp }}
-
-            ### Assets
-            - `server-android.apk` — Android APK
           files: |
             kotlin-backend/server-android/build/outputs/apk/release/*.apk
           prerelease: true
