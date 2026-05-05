@@ -202,6 +202,7 @@ function goToSplit() {
   margin-bottom: var(--spacing-md);
   padding-bottom: var(--spacing-sm);
   border-bottom: 1px solid var(--color-hairline);
+  flex-wrap: wrap;
 }
 
 .result-title {
@@ -237,6 +238,19 @@ function goToSplit() {
 .split-btn:hover {
   background: var(--color-primary);
   color: var(--color-on-primary);
+}
+
+@media (max-width: 480px) {
+  .search-result-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xs);
+  }
+
+  .split-btn {
+    margin-left: 0;
+    margin-top: var(--spacing-xs);
+  }
 }
 
 .scroll-sentinel {
