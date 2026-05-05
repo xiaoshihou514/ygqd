@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { reactive, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { useUserAgent } from '@/composables/useUserAgent'
 import type { SearchParams } from '@/types'
 
 const emit = defineEmits<{
@@ -9,7 +8,6 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
-const { isAndroid } = useUserAgent()
 
 const CATEGORIES = [
   { id: 9, label: 'A漫' },
@@ -77,12 +75,11 @@ onMounted(() => {
           placeholder="输入关键词搜索..."
           autocomplete="off"
         />
-        <button type="submit" class="search-btn" title="搜索">
+        <button type="submit" class="search-btn">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8" />
             <path d="M21 21l-4.35-4.35" />
           </svg>
-          <span v-if="!isAndroid">搜索</span>
         </button>
       </div>
 
