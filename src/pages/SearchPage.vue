@@ -98,6 +98,9 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
 }
 
 onMounted(() => {
+  if (isAndroid) {
+    alert('检测到安卓平台')
+  }
   const keyword = route.query.keyword as string | undefined
   if (keyword) {
     const show = (route.query.show as string) || 'title,text,keyboard,ftitle'
