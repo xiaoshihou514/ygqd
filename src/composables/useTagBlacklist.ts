@@ -1,58 +1,59 @@
 import { ref, computed } from 'vue'
-import type { ComicItem } from '@/types'
 
 const BLACKLIST_KEY = 'niacg-tag-blacklist'
 
-const blacklist = ref<Set<string>>(new Set())
+const blacklist = ref<string[]>([])
 
-function loadFromStorage(): Set<string> {
+function loadFromStorage(): string[] {
   try {
     const raw = localStorage.getItem(BLACKLIST_KEY)
-    if (!raw) return new Set()
-    const arr: string[] = JSON.parse(raw)
-    if (!Array.isArray(arr)) return new Set()
-    return new Set(arr.filter((t) => typeof t === 'string' && t.length > 0))
+    if (!raw) return []
+    const arr: unknown = JSON.parse(raw)
+    if (!Array.isArray(arr)) return []
+    return arr.filter((t): t is string => typeof t === 'string' && t.length > 0)
   } catch {
-    return new Set()
+    return []
   }
 }
 
 function saveToStorage() {
-  localStorage.setItem(BLACKLIST_KEY, JSON.stringify([...blacklist.value]))
+  localStorage.setItem(BLACKLIST_KEY, JSON.stringify(blacklist.value))
 }
 
 blacklist.value = loadFromStorage()
 
 const tagList = computed(() => [...blacklist.value].sort())
 
-const count = computed(() => blacklist.value.size)
+const count = computed(() => blacklist.value.length)
 
 function add(tag: string) {
   const trimmed = tag.trim()
   if (!trimmed) return
-  blacklist.value = new Set([...blacklist.value, trimmed])
+  if (blacklist.value.includes(trimmed)) return
+  blacklist.value = [...blacklist.value, trimmed]
   saveToStorage()
 }
 
 function remove(tag: string) {
   const trimmed = tag.trim()
-  if (!blacklist.value.has(trimmed)) return
-  const next = new Set(blacklist.value)
-  next.delete(trimmed)
+  const idx = blacklist.value.indexOf(trimmed)
+  if (idx === -1) return
+  const next = [...blacklist.value]
+  next.splice(idx, 1)
   blacklist.value = next
   saveToStorage()
 }
 
 function has(tag: string): boolean {
-  return blacklist.value.has(tag.trim())
+  return blacklist.value.includes(tag.trim())
 }
 
 function hasAny(tags: string[]): boolean {
-  return tags.some((tag) => blacklist.value.has(tag))
+  return tags.some((tag) => blacklist.value.includes(tag))
 }
 
 function filterItems<T extends { tags: string[] }>(items: T[]): T[] {
-  if (blacklist.value.size === 0) return items
+  if (blacklist.value.length === 0) return items
   return items.filter((item) => !hasAny(item.tags))
 }
 
