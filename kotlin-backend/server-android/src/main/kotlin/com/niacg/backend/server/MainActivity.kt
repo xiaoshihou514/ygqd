@@ -18,6 +18,7 @@ class MainActivity : Activity() {
     private var webView: WebView? = null
     private var retryCount = 0
     private val maxRetries = 20
+    private var initialHistoryCleared = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,6 +37,14 @@ class MainActivity : Activity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    // Clear retry loadUrl() junk once, after the first successful server
+                    // load, so only Vue Router pushState entries remain in WebView history.
+                    // onPageFinished can fire for pushState navigations in some WebView
+                    // versions, so the one-time flag prevents wiping SPA history entries.
+                    if (!initialHistoryCleared && BackendService.isRunning) {
+                        view?.clearHistory()
+                        initialHistoryCleared = true
+                    }
                     injectAndroidEnv(view)
                 }
 
