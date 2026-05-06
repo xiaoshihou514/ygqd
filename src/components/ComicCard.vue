@@ -11,9 +11,11 @@ const router = useRouter()
 const TAG_LIMIT = 4
 const imgError = ref(false)
 
+const isAndroid = typeof (window as any).__ANDROID_BRIDGE__ !== 'undefined'
+
 function handleClick() {
   const url = `/comic/${props.item.categoryId}/${props.item.id}`
-  if (document.documentElement.classList.contains('android')) {
+  if (isAndroid) {
     router.push(url)
   } else {
     window.open(url, '_blank', 'noopener,noreferrer')
