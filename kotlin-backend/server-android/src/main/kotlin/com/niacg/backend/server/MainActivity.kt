@@ -1,26 +1,30 @@
 package com.niacg.backend.server
 
+import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.app.Activity
-import android.view.ViewGroup
 
 class MainActivity : Activity() {
 
     private var webView: WebView? = null
     private var retryCount = 0
     private val maxRetries = 20
+    private var baseUrl: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        baseUrl = "http://localhost:${BackendService.DEFAULT_PORT}"
 
         setupStatusBar()
 
@@ -38,6 +42,28 @@ class MainActivity : Activity() {
                     injectAndroidEnv(view)
                 }
 
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    val url = request?.url ?: return false
+                    if (handleInternalNavigation(url)) {
+                        return true
+                    }
+                    return false
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    url: String?
+                ): Boolean {
+                    if (url != null && handleInternalNavigation(Uri.parse(url))) {
+                        return true
+                    }
+                    return false
+                }
+
                 override fun onReceivedError(
                     view: WebView?,
                     request: WebResourceRequest?,
@@ -47,7 +73,7 @@ class MainActivity : Activity() {
                         retryCount++
                         view?.postDelayed({
                             if (BackendService.isRunning) {
-                                view?.loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
+                                view?.loadUrl("$baseUrl/")
                             }
                         }, 1000)
                     }
@@ -57,6 +83,26 @@ class MainActivity : Activity() {
         setContentView(webView)
 
         ensureServerAndLoad()
+    }
+
+    private fun handleInternalNavigation(uri: Uri): Boolean {
+        val host = uri.host ?: return false
+        val scheme = uri.scheme ?: return false
+
+        if (scheme == "http" || scheme == "https") {
+            if (host == "localhost" || host == "127.0.0.1") {
+                val path = uri.path ?: "/"
+                val query = uri.query
+                val routePath = if (query != null) "$path?$query" else path
+
+                webView?.evaluateJavascript(
+                    "window.__VUE_ROUTER__ && window.__VUE_ROUTER__.push('$routePath')",
+                    null
+                )
+                return true
+            }
+        }
+        return false
     }
 
     override fun onDestroy() {
@@ -119,14 +165,13 @@ class MainActivity : Activity() {
 
     private fun loadWebView() {
         retryCount = 0
-        webView?.loadUrl("http://localhost:${BackendService.DEFAULT_PORT}/")
+        webView?.loadUrl("$baseUrl/")
     }
 
     override fun onBackPressed() {
-        if (webView?.canGoBack() == true) {
-            webView?.goBack()
-        } else {
-            super.onBackPressed()
-        }
+        webView?.evaluateJavascript(
+            "window.__VUE_ROUTER__ && window.__VUE_ROUTER__.back()",
+            null
+        )
     }
 }

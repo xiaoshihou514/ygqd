@@ -84,6 +84,65 @@ function teardownObserver() {
   }
 }
 
+const SESSION_KEY = 'search_page_state'
+
+function saveSearchState() {
+  if (!hasSearched.value || loading.value) return
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      items: items.value,
+      lastKeyword: lastKeyword.value,
+      minLikes: minLikes.value,
+      sortOrder: sortOrder.value,
+      visibleCount: visibleCount.value,
+      hasSearched: hasSearched.value,
+      scrollY: window.scrollY,
+    }))
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function restoreSearchState(): boolean {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY)
+    if (!raw) return false
+    const state = JSON.parse(raw)
+    items.value = state.items ?? []
+    lastKeyword.value = state.lastKeyword ?? ''
+    minLikes.value = state.minLikes ?? 0
+    sortOrder.value = state.sortOrder ?? 'default'
+    visibleCount.value = state.visibleCount ?? PAGE_SIZE
+    hasSearched.value = state.hasSearched ?? false
+    return true
+  } catch {
+    return false
+  }
+}
+
+function restoreScrollPosition() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY)
+    if (!raw) return
+    const state = JSON.parse(raw)
+    if (typeof state.scrollY === 'number') {
+      nextTick(() => {
+        window.scrollTo(0, state.scrollY)
+      })
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function clearSavedState() {
+  try {
+    sessionStorage.removeItem(SESSION_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 async function handleSearch(params: SearchParams, likesFilter: number, order: string) {
   loading.value = true
   error.value = ''
@@ -118,25 +177,45 @@ function searchFromQuery() {
 }
 
 onMounted(() => {
-  searchFromQuery()
+  const keyword = route.query.keyword as string | undefined
+  if (keyword) {
+    const saved = restoreSearchState()
+    if (saved && lastKeyword.value === keyword) {
+      restoreScrollPosition()
+    } else {
+      clearSavedState()
+      searchFromQuery()
+    }
+  } else if (restoreSearchState()) {
+    restoreScrollPosition()
+    nextTick(() => {
+      setupObserver()
+    })
+  } else {
+    searchFromQuery()
+  }
 })
 
 onActivated(() => {
   const currentKeyword = route.query.keyword as string | undefined
   if (currentKeyword && currentKeyword !== lastKeyword.value) {
+    clearSavedState()
     searchFromQuery()
     return
   }
+  restoreScrollPosition()
   nextTick(() => {
     setupObserver()
   })
 })
 
 onDeactivated(() => {
+  saveSearchState()
   teardownObserver()
 })
 
 onUnmounted(() => {
+  saveSearchState()
   teardownObserver()
 })
 
