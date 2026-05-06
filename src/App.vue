@@ -8,7 +8,7 @@ import NavHeader from '@/components/NavHeader.vue'
   <main class="main-content">
     <RouterView v-slot="{ Component }">
       <transition name="page" mode="out-in">
-        <keep-alive include="SearchPage">
+        <keep-alive include="SearchPage,ComicDetailPage">
           <component :is="Component" />
         </keep-alive>
       </transition>

@@ -96,6 +96,8 @@ function saveSearchState() {
       sortOrder: sortOrder.value,
       visibleCount: visibleCount.value,
       hasSearched: hasSearched.value,
+      classid: (route.query.classid as string) || '9',
+      show: (route.query.show as string) || 'title,text,keyboard,ftitle',
       scrollY: window.scrollY,
     }))
   } catch {
@@ -130,6 +132,26 @@ function restoreScrollPosition() {
         window.scrollTo(0, state.scrollY)
       })
     }
+  } catch {
+    // ignore
+  }
+}
+
+function restoreRouteQuery() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY)
+    if (!raw) return
+    const state = JSON.parse(raw)
+    const keyword = state.lastKeyword ?? ''
+    if (!keyword) return
+    router.replace({
+      name: 'search',
+      query: {
+        keyword,
+        classid: state.classid ?? '9',
+        show: state.show ?? 'title,text,keyboard,ftitle',
+      },
+    })
   } catch {
     // ignore
   }
@@ -205,6 +227,9 @@ onActivated(() => {
     clearSavedState()
     searchFromQuery()
     return
+  }
+  if (!currentKeyword && lastKeyword.value) {
+    restoreRouteQuery()
   }
   restoreScrollPosition()
   nextTick(() => {

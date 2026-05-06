@@ -88,7 +88,10 @@ function searchByScope(keyword: string, show: string = 'title,text,keyboard,ftit
 
 <script lang="ts">
 import { computed, nextTick } from 'vue'
-export default { inheritAttrs: false }
+export default {
+  name: 'ComicDetailPage',
+  inheritAttrs: false,
+}
 </script>
 
 <template>
