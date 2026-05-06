@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams } from '@/types'
@@ -9,6 +9,8 @@ import SearchForm from '@/components/SearchForm.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+
+defineOptions({ name: 'SearchPage' })
 
 const PAGE_SIZE = 20
 
@@ -61,6 +63,7 @@ function loadMore() {
 function setupObserver() {
   if (observer) {
     observer.disconnect()
+    observer = null
   }
   sentinel = document.querySelector('.scroll-sentinel')
   if (!sentinel || !hasMore.value) return
@@ -72,6 +75,13 @@ function setupObserver() {
   }, { rootMargin: '200px' })
 
   observer.observe(sentinel)
+}
+
+function teardownObserver() {
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
 }
 
 async function handleSearch(params: SearchParams, likesFilter: number, order: string) {
@@ -95,7 +105,7 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
   }
 }
 
-onMounted(() => {
+function searchFromQuery() {
   const keyword = route.query.keyword as string | undefined
   if (keyword) {
     const show = (route.query.show as string) || 'title,text,keyboard,ftitle'
@@ -105,13 +115,29 @@ onMounted(() => {
       'default',
     )
   }
+}
+
+onMounted(() => {
+  searchFromQuery()
+})
+
+onActivated(() => {
+  const currentKeyword = route.query.keyword as string | undefined
+  if (currentKeyword && currentKeyword !== lastKeyword.value) {
+    searchFromQuery()
+    return
+  }
+  nextTick(() => {
+    setupObserver()
+  })
+})
+
+onDeactivated(() => {
+  teardownObserver()
 })
 
 onUnmounted(() => {
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
+  teardownObserver()
 })
 
 const resultTitle = computed(() => {
