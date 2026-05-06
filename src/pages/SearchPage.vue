@@ -182,6 +182,9 @@ onMounted(() => {
     const saved = restoreSearchState()
     if (saved && lastKeyword.value === keyword) {
       restoreScrollPosition()
+      nextTick(() => {
+        setupObserver()
+      })
     } else {
       clearSavedState()
       searchFromQuery()
