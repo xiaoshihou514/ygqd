@@ -11,7 +11,7 @@ const router = useRouter()
 const TAG_LIMIT = 4
 const imgError = ref(false)
 
-const isAndroid = typeof (window as any).__ANDROID_BRIDGE__ !== 'undefined'
+const isAndroid = typeof (window as any).AndroidBridge !== 'undefined'
 
 function handleClick() {
   const url = `/comic/${props.item.categoryId}/${props.item.id}`
