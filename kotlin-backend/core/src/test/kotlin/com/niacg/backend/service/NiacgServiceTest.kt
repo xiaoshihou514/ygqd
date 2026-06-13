@@ -73,25 +73,15 @@ class NiacgServiceTest {
     }
 
     @Test
-    fun `searchByTags with multipage results`() = runTest {
+    fun `searchByTags returns page 0 items when called without page param`() = runTest {
         val page0 = loadResource("tagsearch_multipage_0.html")
-        val page1 = loadResource("tagsearch_multipage_1.html")
 
         val client = object : HttpClient {
-            var page0Calls = 0
-            var page1Calls = 0
+            var callCount = 0
 
             override suspend fun get(path: String, cookies: List<String>): HttpClientResponse {
-                val body = when {
-                    path.contains("tags-testkeyword-0") -> {
-                        page0Calls++; page0
-                    }
-                    path.contains("tags-testkeyword-1") -> {
-                        page1Calls++; page1
-                    }
-                    else -> throw IllegalStateException("Unexpected path: $path")
-                }
-                return HttpClientResponse(200, body, emptyMap(), emptyList())
+                callCount++
+                return HttpClientResponse(200, page0, emptyMap(), emptyList())
             }
 
             override suspend fun post(path: String, body: String, cookies: List<String>): HttpClientResponse {
@@ -105,13 +95,22 @@ class NiacgServiceTest {
 
         val service = NiacgService(client)
         val result = service.searchByTags("testkeyword")
-        assertEquals(4, result.items.size)
-        assertEquals(1, client.page0Calls)
-        assertEquals(1, client.page1Calls)
+        assertEquals(2, result.items.size)
+        assertEquals(1, client.callCount)
     }
 
     @Test
-    fun `searchByEngine makes post request and aggregates results`() = runTest {
+    fun `searchByTags different pages have separate cache keys`() = runTest {
+        mockHttpClient.tagSearchBody = loadResource("tagsearch.html")
+
+        service.searchByTags("testkeyword", page = 0)
+        service.searchByTags("testkeyword", page = 1)
+
+        assertEquals(2, mockHttpClient.tagSearchCallCount)
+    }
+
+    @Test
+    fun `searchByEngine returns page 0 results`() = runTest {
         mockHttpClient.searchBody = loadResource("search.html")
 
         val result = service.searchByEngine(1, "test", "title,text")
@@ -121,21 +120,42 @@ class NiacgServiceTest {
     }
 
     @Test
-    fun `searchByEngine caches results`() = runTest {
+    fun `searchByEngine returns pagination info`() = runTest {
         mockHttpClient.searchBody = loadResource("search.html")
 
-        service.searchByEngine(1, "test", "title")
-        service.searchByEngine(1, "test", "title")
+        val result = service.searchByEngine(1, "test", "title,text")
+
+        assertEquals(0, result.pagination.current)
+        assertTrue(result.pagination.total >= 0)
+    }
+
+    @Test
+    fun `searchByEngine caches results per page`() = runTest {
+        mockHttpClient.searchBody = loadResource("search.html")
+
+        service.searchByEngine(1, "test", "title", page = 0)
+        service.searchByEngine(1, "test", "title", page = 0)
 
         assertEquals(1, mockHttpClient.searchCallCount)
+    }
+
+    @Test
+    fun `searchByEngine page 0 has pagination info`() = runTest {
+        mockHttpClient.searchBody = loadResource("search_multipage.html")
+
+        val result = service.searchByEngine(1, "test", "title", page = 0)
+
+        assertEquals(0, result.pagination.current)
+        assertTrue(result.pagination.total > 0)
+        assertTrue(result.pagination.hasNext)
     }
 
     @Test
     fun `searchByEngine different params have separate cache keys`() = runTest {
         mockHttpClient.searchBody = loadResource("search.html")
 
-        service.searchByEngine(1, "test", "title")
-        service.searchByEngine(1, "other", "title")
+        service.searchByEngine(1, "test", "title", page = 0)
+        service.searchByEngine(1, "other", "title", page = 0)
 
         assertEquals(2, mockHttpClient.searchCallCount)
     }
@@ -144,10 +164,30 @@ class NiacgServiceTest {
     fun `searchByEngine different classid has separate cache`() = runTest {
         mockHttpClient.searchBody = loadResource("search.html")
 
-        service.searchByEngine(1, "test", "title")
-        service.searchByEngine(2, "test", "title")
+        service.searchByEngine(1, "test", "title", page = 0)
+        service.searchByEngine(2, "test", "title", page = 0)
 
         assertEquals(2, mockHttpClient.searchCallCount)
+    }
+
+    @Test
+    fun `searchByEngine cacheBuster creates separate cache entry`() = runTest {
+        mockHttpClient.searchBody = loadResource("search.html")
+
+        service.searchByEngine(1, "test", "title", page = 0, cacheBuster = "v1")
+        service.searchByEngine(1, "test", "title", page = 0, cacheBuster = "v2")
+
+        assertEquals(2, mockHttpClient.searchCallCount)
+    }
+
+    @Test
+    fun `searchByTags cacheBuster creates separate cache entry`() = runTest {
+        mockHttpClient.tagSearchBody = loadResource("tagsearch.html")
+
+        service.searchByTags("testkeyword", page = 0, cacheBuster = "v1")
+        service.searchByTags("testkeyword", page = 0, cacheBuster = "v2")
+
+        assertEquals(2, mockHttpClient.tagSearchCallCount)
     }
 
     @Test

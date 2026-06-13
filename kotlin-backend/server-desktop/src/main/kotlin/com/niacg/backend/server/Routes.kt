@@ -48,11 +48,16 @@ fun Route.apiRoutes(service: NiacgService) {
                 val keyword = params["keyword"] ?: ""
                 val show = params["show"] ?: "title,text,keyboard,ftitle"
                 val classid = params["classid"]?.toIntOrNull() ?: 9
+                val page = params["page"]?.toIntOrNull() ?: 0
+                val cacheBuster = params["_t"] ?: ""
 
                 val result = if (show == "tags") {
-                    service.searchByTags(keyword)
+                    service.searchByTags(keyword, page, cacheBuster)
                 } else {
-                    service.searchByEngine(classid = classid, keyword = keyword, show = show)
+                    service.searchByEngine(
+                        classid = classid, keyword = keyword, show = show,
+                        page = page, cacheBuster = cacheBuster
+                    )
                 }
 
                 result.copy(items = rewriteThumbnailsInItems(result.items, service))

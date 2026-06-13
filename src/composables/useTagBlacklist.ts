@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 const BLACKLIST_KEY = 'niacg-tag-blacklist'
 
 const blacklist = ref<string[]>([])
+const _version = ref(0)
 
 function loadFromStorage(): string[] {
   try {
@@ -26,12 +27,17 @@ const tagList = computed(() => [...blacklist.value].sort())
 
 const count = computed(() => blacklist.value.length)
 
+function bumpVersion() {
+  _version.value++
+}
+
 function add(tag: string) {
   const trimmed = tag.trim()
   if (!trimmed) return
   if (blacklist.value.includes(trimmed)) return
   blacklist.value = [...blacklist.value, trimmed]
   saveToStorage()
+  bumpVersion()
 }
 
 function remove(tag: string) {
@@ -42,6 +48,7 @@ function remove(tag: string) {
   next.splice(idx, 1)
   blacklist.value = next
   saveToStorage()
+  bumpVersion()
 }
 
 function has(tag: string): boolean {
@@ -72,6 +79,7 @@ export function useTagBlacklist() {
   return {
     tagList,
     count,
+    version: _version,
     add,
     remove,
     has,

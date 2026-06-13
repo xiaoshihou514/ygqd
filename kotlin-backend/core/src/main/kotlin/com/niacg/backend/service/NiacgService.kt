@@ -3,23 +3,15 @@ package com.niacg.backend.service
 import com.niacg.backend.cache.CacheManager
 import com.niacg.backend.models.CategoryListResult
 import com.niacg.backend.models.ComicDetail
-import com.niacg.backend.models.ComicItem
 import com.niacg.backend.models.HomeSection
 import com.niacg.backend.models.PaginationInfo
 import com.niacg.backend.models.SearchResult
 import com.niacg.backend.parser.HtmlParser
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 
 class NiacgService(
     private val httpClient: HttpClient,
     private val cache: CacheManager = CacheManager()
 ) {
-
-    companion object {
-        private const val CONCURRENCY = 32
-    }
 
     suspend fun fetchHomepage(): List<HomeSection> {
         val key = "homepage"
@@ -47,105 +39,101 @@ class NiacgService(
         return data
     }
 
-    suspend fun searchByTags(keyword: String): SearchResult {
-        val key = "search-tags-$keyword"
-        val cached = cache.get(key)
+    suspend fun searchByTags(
+        keyword: String,
+        page: Int = 0,
+        cacheBuster: String = ""
+    ): SearchResult {
+        val cacheKey = buildString {
+            append("search-tags-$keyword-$page")
+            if (cacheBuster.isNotBlank()) append("-$cacheBuster")
+        }
+        val cached = cache.get(cacheKey)
         if (cached != null) {
             @Suppress("UNCHECKED_CAST")
             return cached as SearchResult
         }
-        val data = coroutineScope {
-            val encodedKeyword = java.net.URLEncoder.encode(keyword, "UTF-8")
-            val firstResponse = httpClient.get("/tags-$encodedKeyword-0.html")
-
-            var firstResult = HtmlParser.parseSearchResults(firstResponse.body)
-            if (firstResult.items.isEmpty()) {
-                firstResult = HtmlParser.parseListAsSearchResult(firstResponse.body)
-            }
-
-            val allItems = mutableListOf<ComicItem>()
-            allItems.addAll(firstResult.items)
-
-            val maxPage = HtmlParser.extractTagSearchMaxPage(firstResponse.body, keyword)
-            if (maxPage > 0) {
-                var i = 1
-                while (i <= maxPage) {
-                    val batch = (i until minOf(i + CONCURRENCY, maxPage + 1)).map { j ->
-                        async {
-                            runCatching {
-                                val resp = httpClient.get("/tags-$encodedKeyword-$j.html")
-                                var result = HtmlParser.parseSearchResults(resp.body)
-                                if (result.items.isEmpty()) {
-                                    result = HtmlParser.parseListAsSearchResult(resp.body)
-                                }
-                                result.items
-                            }.getOrElse { emptyList() }
-                        }
-                    }
-                    batch.awaitAll().forEach { allItems.addAll(it) }
-                    i += CONCURRENCY
-                }
-            }
-
-            SearchResult(
-                items = allItems,
-                pagination = PaginationInfo(0, 0, false, false)
-            )
+        val encodedKeyword = java.net.URLEncoder.encode(keyword, "UTF-8")
+        val response = httpClient.get("/tags-$encodedKeyword-$page.html")
+        var result = HtmlParser.parseSearchResults(response.body)
+        if (result.items.isEmpty()) {
+            result = HtmlParser.parseListAsSearchResult(response.body)
         }
-        cache.put(key, data)
+        val maxPage = HtmlParser.extractTagSearchMaxPage(response.body, keyword)
+        val totalPages = maxPage + 1
+        val data = SearchResult(
+            items = result.items,
+            pagination = PaginationInfo(
+                current = page,
+                total = totalPages,
+                hasNext = page + 1 < totalPages,
+                hasPrev = page > 0
+            )
+        )
+        cache.put(cacheKey, data)
         return data
     }
 
     suspend fun searchByEngine(
         classid: Int,
         keyword: String,
-        show: String = "title,text,keyboard,ftitle"
+        show: String = "title,text,keyboard,ftitle",
+        page: Int = 0,
+        cacheBuster: String = ""
     ): SearchResult {
-        val key = "search-$classid-$keyword-$show"
-        val cached = cache.get(key)
+        val cacheKey = buildString {
+            append("search-$classid-$keyword-$show-$page")
+            if (cacheBuster.isNotBlank()) append("-$cacheBuster")
+        }
+        val cached = cache.get(cacheKey)
         if (cached != null) {
             @Suppress("UNCHECKED_CAST")
             return cached as SearchResult
         }
-        val data = coroutineScope {
-            val searchBody = buildString {
-                append("classid=$classid")
-                append("&keyboard=${java.net.URLEncoder.encode(keyword, "UTF-8")}")
-                append("&show=${java.net.URLEncoder.encode(show, "UTF-8")}")
-                append("&tempid=1")
-                append("&Submit=")
-            }
+        val searchBody = buildString {
+            append("classid=$classid")
+            append("&keyboard=${java.net.URLEncoder.encode(keyword, "UTF-8")}")
+            append("&show=${java.net.URLEncoder.encode(show, "UTF-8")}")
+            append("&tempid=1")
+            append("&Submit=")
+        }
 
-            val firstResponse = httpClient.post("/e/search/index.php", searchBody)
-            val firstResult = HtmlParser.parseSearchResults(firstResponse.body)
-            val allItems = mutableListOf<ComicItem>()
-            allItems.addAll(firstResult.items)
-            val cookies = firstResponse.setCookies
+        val firstResponse = httpClient.post("/e/search/index.php", searchBody)
+        val firstResult = HtmlParser.parseSearchResults(firstResponse.body)
 
-            if (firstResult.pageUrlTemplate != null && firstResult.pagination.total > 0) {
-                val pageCount = firstResult.pagination.total + 1
-                var i = 2
-                while (i <= pageCount) {
-                    val batch = (i until minOf(i + CONCURRENCY, pageCount + 1)).map { j ->
-                        async {
-                            runCatching {
-                                val pageUrl = firstResult.pageUrlTemplate!!.replace("{}", j.toString())
-                                val resp = httpClient.get(pageUrl, cookies)
-                                HtmlParser.parseSearchResults(resp.body).items
-                            }.getOrElse { emptyList() }
-                        }
-                    }
-                    batch.awaitAll().forEach { allItems.addAll(it) }
-                    i += CONCURRENCY
-                }
-            }
-
+        val data = if (page == 0) {
+            val pageCount = firstResult.pagination.total + 1
             SearchResult(
-                items = allItems,
-                pagination = PaginationInfo(0, 0, false, false)
+                items = firstResult.items,
+                pagination = PaginationInfo(
+                    current = 0,
+                    total = pageCount,
+                    hasNext = pageCount > 1,
+                    hasPrev = false
+                ),
+                pageUrlTemplate = firstResult.pageUrlTemplate
+            )
+        } else {
+            val pageUrlTemplate = firstResult.pageUrlTemplate
+            if (pageUrlTemplate.isNullOrBlank()) {
+                throw IllegalStateException("No pagination template available for page $page")
+            }
+            val cookies = firstResponse.setCookies
+            val pageUrl = pageUrlTemplate.replace("{}", (page + 1).toString())
+            val pageResponse = httpClient.get(pageUrl, cookies)
+            val pageResult = HtmlParser.parseSearchResults(pageResponse.body)
+            val totalPages = firstResult.pagination.total + 1
+            SearchResult(
+                items = pageResult.items,
+                pagination = PaginationInfo(
+                    current = page,
+                    total = totalPages,
+                    hasNext = page + 1 < totalPages,
+                    hasPrev = page > 0
+                )
             )
         }
-        cache.put(key, data)
+        cache.put(cacheKey, data)
         return data
     }
 

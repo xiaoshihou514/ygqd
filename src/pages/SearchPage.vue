@@ -19,13 +19,17 @@ const router = useRouter()
 
 const items = ref<ComicItem[]>([])
 const loading = ref(false)
+const loadingMore = ref(false)
 const error = ref('')
 const hasSearched = ref(false)
 const lastKeyword = ref('')
 const minLikes = ref(0)
 const sortOrder = ref('default')
 const visibleCount = ref(PAGE_SIZE)
-const { filterItems } = useTagBlacklist()
+const currentPage = ref(0)
+const hasNextPage = ref(false)
+const lastParams = ref<SearchParams | null>(null)
+const { filterItems, version: blacklistVersion } = useTagBlacklist()
 
 const processedItems = computed(() => {
   let result = items.value
@@ -43,30 +47,41 @@ const processedItems = computed(() => {
 
 const visibleItems = computed(() => processedItems.value.slice(0, visibleCount.value))
 
-const hasMore = computed(() => visibleCount.value < processedItems.value.length)
-
-watch([minLikes, sortOrder], () => {
-  visibleCount.value = PAGE_SIZE
-})
+const hasMoreLocal = computed(() => visibleCount.value < processedItems.value.length)
 
 let sentinel: HTMLElement | null = null
 let observer: IntersectionObserver | null = null
 
-function loadMore() {
-  if (!hasMore.value) return
-  visibleCount.value = Math.min(visibleCount.value + PAGE_SIZE, processedItems.value.length)
-  nextTick(() => {
+async function loadMore() {
+  if (loadingMore.value) return
+  if (hasMoreLocal.value) {
+    visibleCount.value = Math.min(visibleCount.value + PAGE_SIZE, processedItems.value.length)
+    await nextTick()
     setupObserver()
-  })
+    return
+  }
+  if (!hasNextPage.value || !lastParams.value) return
+  loadingMore.value = true
+  const nextPage = currentPage.value + 1
+  try {
+    const result = await searchComics(lastParams.value, nextPage)
+    items.value = [...items.value, ...result.items]
+    currentPage.value = nextPage
+    hasNextPage.value = result.pagination.hasNext
+  } catch {
+    // silently ignore page load failure
+  } finally {
+    loadingMore.value = false
+    await nextTick()
+    setupObserver()
+  }
 }
 
 function setupObserver() {
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
+  teardownObserver()
   sentinel = document.querySelector('.scroll-sentinel')
-  if (!sentinel || !hasMore.value) return
+  if (!sentinel) return
+  if (!hasMoreLocal.value && !hasNextPage.value) return
 
   observer = new IntersectionObserver((entries) => {
     if (entries[0]?.isIntersecting) {
@@ -84,6 +99,40 @@ function teardownObserver() {
   }
 }
 
+watch([minLikes, sortOrder], () => {
+  visibleCount.value = PAGE_SIZE
+})
+
+let prevBlacklistVersion = blacklistVersion.value
+watch(blacklistVersion, (newVer) => {
+  if (newVer !== prevBlacklistVersion && hasSearched.value && lastParams.value) {
+    prevBlacklistVersion = newVer
+    reSearchWithCacheBuster()
+  }
+})
+
+async function reSearchWithCacheBuster() {
+  if (!lastParams.value) return
+  error.value = ''
+  currentPage.value = 0
+  hasNextPage.value = false
+  visibleCount.value = PAGE_SIZE
+  loadingMore.value = true
+  const buster = String(Date.now())
+  try {
+    const result = await searchComics(lastParams.value, 0, buster)
+    items.value = result.items
+    hasNextPage.value = result.pagination.hasNext
+  } catch (e) {
+    error.value = (e as Error).message
+    items.value = []
+  } finally {
+    loadingMore.value = false
+    await nextTick()
+    setupObserver()
+  }
+}
+
 const SESSION_KEY = 'search_page_state'
 
 function saveSearchState() {
@@ -95,6 +144,8 @@ function saveSearchState() {
       minLikes: minLikes.value,
       sortOrder: sortOrder.value,
       visibleCount: visibleCount.value,
+      currentPage: currentPage.value,
+      hasNextPage: hasNextPage.value,
       hasSearched: hasSearched.value,
       classid: (route.query.classid as string) || '9',
       show: (route.query.show as string) || 'title,text,keyboard,ftitle',
@@ -115,7 +166,19 @@ function restoreSearchState(): boolean {
     minLikes.value = state.minLikes ?? 0
     sortOrder.value = state.sortOrder ?? 'default'
     visibleCount.value = state.visibleCount ?? PAGE_SIZE
+    currentPage.value = state.currentPage ?? 0
+    hasNextPage.value = state.hasNextPage ?? false
     hasSearched.value = state.hasSearched ?? false
+    const savedClassid = state.classid as string | undefined
+    const savedShow = state.show as string | undefined
+    if (lastKeyword.value) {
+      lastParams.value = {
+        keyword: lastKeyword.value,
+        classid: savedClassid ? Number(savedClassid) : 9,
+        show: savedShow || 'title,text,keyboard,ftitle',
+        tempid: '1',
+      }
+    }
     return true
   } catch {
     return false
@@ -172,10 +235,15 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
   lastKeyword.value = params.keyword
   minLikes.value = likesFilter
   sortOrder.value = order
+  currentPage.value = 0
+  hasNextPage.value = false
   visibleCount.value = PAGE_SIZE
+  lastParams.value = params
+  prevBlacklistVersion = blacklistVersion.value
   try {
-    const result = await searchComics(params)
+    const result = await searchComics(params, 0)
     items.value = result.items
+    hasNextPage.value = result.pagination.hasNext
   } catch (e) {
     error.value = (e as Error).message
     items.value = []
@@ -276,11 +344,14 @@ function goToSplit() {
           <LoadingSpinner message="正在搜索..." />
         </div>
 
-        <div v-else-if="error" class="search-error">
+        <div v-else-if="error && items.length === 0" class="search-error">
           <EmptyState title="搜索失败" :message="error" />
         </div>
 
         <div v-else>
+          <div v-if="error && items.length > 0" class="search-error-bar">
+            <span>{{ error }}</span>
+          </div>
           <div class="search-result-header">
             <h2 class="result-title">{{ resultTitle }}</h2>
             <button v-if="processedItems.length > 0" class="split-btn" @click="goToSplit">
@@ -292,14 +363,18 @@ function goToSplit() {
 
           <ComicGrid v-if="visibleItems.length > 0" :items="visibleItems" />
 
-          <div v-if="hasMore" class="scroll-sentinel" />
+          <div v-if="hasMoreLocal || hasNextPage" class="scroll-sentinel" />
 
-          <div v-if="!hasMore && processedItems.length > PAGE_SIZE" class="no-more">
+          <div v-if="loadingMore" class="loading-more">
+            <LoadingSpinner message="加载更多..." />
+          </div>
+
+          <div v-if="!hasMoreLocal && !hasNextPage && processedItems.length > 0" class="no-more">
             <span>已加载全部 {{ processedItems.length }} 条结果</span>
           </div>
 
           <EmptyState
-            v-if="processedItems.length === 0"
+            v-if="processedItems.length === 0 && !loading"
             title="未找到相关内容"
             message="请尝试更换关键词或调整搜索范围"
           />
@@ -381,6 +456,20 @@ function goToSplit() {
 
 .scroll-sentinel {
   height: 1px;
+}
+
+.loading-more {
+  padding: var(--spacing-lg) 0;
+}
+
+.search-error-bar {
+  text-align: center;
+  padding: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  font-size: var(--font-size-caption);
+  color: var(--color-primary);
+  background: var(--color-canvas-parchment);
+  border-radius: var(--radius-sm);
 }
 
 .no-more {

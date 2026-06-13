@@ -30,12 +30,18 @@ export function fetchCategoryList(
 
 export function searchComics(
   params: SearchParams,
+  page = 0,
+  cacheBuster?: string,
 ): Promise<SearchResult> {
   const body = new URLSearchParams()
   body.set('classid', String(params.classid))
   body.set('keyword', params.keyword)
   body.set('show', params.show || 'title,text,keyboard,ftitle')
   body.set('tempid', params.tempid || '1')
+  body.set('page', String(page))
+  if (cacheBuster) {
+    body.set('_t', cacheBuster)
+  }
 
   return request<SearchResult>('/api/search', {
     method: 'POST',
