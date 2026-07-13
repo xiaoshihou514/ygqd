@@ -5,6 +5,7 @@ import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams } from '@/types'
 import { parseLikes } from '@/utils/likes'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
+import { useSearchHistory } from '@/composables/useSearchHistory'
 import SearchForm from '@/components/SearchForm.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -30,6 +31,7 @@ const currentPage = ref(0)
 const hasNextPage = ref(false)
 const lastParams = ref<SearchParams | null>(null)
 const { filterItems, version: blacklistVersion } = useTagBlacklist()
+const { add: addHistory } = useSearchHistory()
 
 const processedItems = computed(() => {
   let result = items.value
@@ -200,26 +202,6 @@ function restoreScrollPosition() {
   }
 }
 
-function restoreRouteQuery() {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY)
-    if (!raw) return
-    const state = JSON.parse(raw)
-    const keyword = state.lastKeyword ?? ''
-    if (!keyword) return
-    router.replace({
-      name: 'search',
-      query: {
-        keyword,
-        classid: state.classid ?? '9',
-        show: state.show ?? 'title,text,keyboard,ftitle',
-      },
-    })
-  } catch {
-    // ignore
-  }
-}
-
 function clearSavedState() {
   try {
     sessionStorage.removeItem(SESSION_KEY)
@@ -229,6 +211,7 @@ function clearSavedState() {
 }
 
 async function handleSearch(params: SearchParams, likesFilter: number, order: string) {
+  addHistory(params.keyword)
   loading.value = true
   error.value = ''
   hasSearched.value = true
@@ -295,9 +278,6 @@ onActivated(() => {
     clearSavedState()
     searchFromQuery()
     return
-  }
-  if (!currentKeyword && lastKeyword.value) {
-    restoreRouteQuery()
   }
   restoreScrollPosition()
   nextTick(() => {
