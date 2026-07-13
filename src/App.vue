@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
 import NavHeader from '@/components/NavHeader.vue'
+import BottomTabBar from '@/components/BottomTabBar.vue'
 </script>
 
 <template>
@@ -14,6 +15,7 @@ import NavHeader from '@/components/NavHeader.vue'
       </transition>
     </RouterView>
   </main>
+  <BottomTabBar />
 </template>
 
 <style>

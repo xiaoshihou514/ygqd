@@ -46,6 +46,8 @@
   --color-tag-text: var(--color-ink-muted-48);
   --color-border: var(--color-hairline);
   --color-like: #ff4757;
+  --color-error: #ff4757;
+  --color-tab-bar-bg: rgba(255, 255, 255, 0.92);
 
   /* ---- Typography ---- */
   --font-family-display: 'SF Pro Display', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -110,6 +112,8 @@
   --max-width: 1440px;
   --nav-height: 44px;
   --sub-nav-height: 52px;
+  --tab-bar-height: 50px;
+  --tab-bar-safe-bottom: 0px;
 
   /* ---- Transitions ---- */
   --transition-press: transform 0.15s ease;
@@ -152,6 +156,7 @@
   --color-tag-text: var(--color-ink-muted-48);
   --color-border: var(--color-hairline);
   --color-like: #ff4757;
+  --color-tab-bar-bg: rgba(28, 28, 30, 0.95);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -184,6 +189,7 @@
     --color-accent-hover: #40a8ff;
     --color-navbar-bg: var(--color-surface-black);
     --color-navbar-text: var(--color-body-on-dark);
+    --color-tab-bar-bg: rgba(28, 28, 30, 0.95);
     --color-tag-bg: var(--color-divider-soft);
     --color-tag-text: var(--color-ink-muted-48);
     --color-border: var(--color-hairline);
