@@ -1,4 +1,4 @@
-_grd := "kotlin-backend/gradlew"
+_grd := "cd kotlin-backend && ./gradlew"
 
 # show available recipes
 default:
@@ -17,6 +17,20 @@ backend:
 # preview production build
 preview:
     npx vite preview
+
+# ── Build ────────────────────────────────────────────────────
+
+# full production build (type-check + vite build)
+build +args="":
+    npx run-p type-check "build-only {{args}}" --
+
+# vite production build only
+build-only:
+    npx vite build
+
+# vue-tsc type check
+type-check:
+    npx vue-tsc --build
 
 # ── Lint & Format ────────────────────────────────────────────
 
