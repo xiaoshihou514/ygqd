@@ -1,5 +1,8 @@
 package com.niacg.backend.server
 
+import com.niacg.backend.db.DatabaseFactory
+import com.niacg.backend.db.FollowedAuthorsRepository
+import com.niacg.backend.db.ViewHistoryRepository
 import com.niacg.backend.service.HttpClient
 import com.niacg.backend.service.NiacgService
 import io.ktor.http.ContentType
@@ -14,7 +17,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import java.io.File
 
-fun Application.module(httpClient: HttpClient, webDir: File? = null) {
+fun Application.module(httpClient: HttpClient, webDir: File? = null, dbDir: File? = null) {
     install(ContentNegotiation) {
         json(Json {
             ignoreUnknownKeys = true
@@ -28,8 +31,14 @@ fun Application.module(httpClient: HttpClient, webDir: File? = null) {
         allowNonSimpleContentTypes = true
     }
 
+    val dbFile = dbDir?.let { File(it, "ygqd.db") }
+    val dbFactory = dbFile?.let { DatabaseFactory.forFile(it) }
+        ?: DatabaseFactory.inMemory()
+    val followsRepo = FollowedAuthorsRepository(dbFactory)
+    val historyRepo = ViewHistoryRepository(dbFactory)
+
     routing {
-        apiRoutes(NiacgService(httpClient))
+        apiRoutes(NiacgService(httpClient), followsRepo, historyRepo)
 
         if (webDir != null && webDir.isDirectory) {
             serveWebApp(webDir)

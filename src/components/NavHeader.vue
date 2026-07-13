@@ -8,6 +8,8 @@ const { current, toggleTheme, nextLabel } = useTheme()
 const navItems = [
   { label: '推荐', to: '/' },
   { label: '搜索', to: '/search' },
+  { label: '关注', to: '/following' },
+  { label: '历史', to: '/history' },
   { label: '黑名单', to: '/settings/blacklist' },
 ]
 </script>

@@ -93,7 +93,7 @@ class BackendService : Service() {
         val httpClient = AndroidHttpClient()
 
         server = embeddedServer(Netty, port = port, host = "0.0.0.0") {
-            module(httpClient, webDir)
+            module(httpClient, webDir, filesDir)
         }.start(wait = false)
 
         serverInstance = server

@@ -100,3 +100,32 @@ data class CategoryOption(
     val id: Int,
     val label: String
 )
+
+@Serializable
+data class FollowAuthorRequest(val author: String)
+
+@Serializable
+data class FollowedAuthorResponse(
+    val author: String,
+    val followedAt: Long,
+    val lastCheckedAt: Long,
+)
+
+@Serializable
+data class RecordHistoryRequest(
+    val comicId: String,
+    val title: String,
+    val thumbnail: String,
+    val categoryId: Int,
+    val author: String,
+)
+
+@Serializable
+data class ViewHistoryResponse(
+    val comicId: String,
+    val title: String,
+    val thumbnail: String,
+    val categoryId: Int,
+    val author: String,
+    val viewedAt: Long,
+)

@@ -18,6 +18,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jsoup:jsoup:1.18.1")
+    implementation("org.jetbrains.exposed:exposed-core:0.51.1")
+    implementation("org.jetbrains.exposed:exposed-jdbc:0.51.1")
+    implementation("org.xerial:sqlite-jdbc:3.46.1.0")
 
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

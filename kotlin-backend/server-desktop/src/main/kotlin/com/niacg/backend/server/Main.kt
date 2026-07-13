@@ -7,13 +7,24 @@ import java.io.File
 fun main() {
     val webDir = locateWebDir()
     val httpClient: HttpClient = JvmTlsClient()
+    val dataDir = resolveDataDir()
 
     println("Server starting on http://localhost:8080")
     if (webDir != null) {
         println("Serving Vue frontend from: ${webDir.absolutePath}")
     }
 
-    startServer(httpClient, webDir)
+    startServer(httpClient, webDir, dataDir)
+}
+
+private fun resolveDataDir(): File {
+    val xdgDataHome = System.getenv("XDG_DATA_HOME")
+    val base = if (xdgDataHome.isNullOrBlank()) {
+        File(System.getProperty("user.home"), ".local/share")
+    } else {
+        File(xdgDataHome)
+    }
+    return File(base, "ygqd")
 }
 
 private fun locateWebDir(): File? {

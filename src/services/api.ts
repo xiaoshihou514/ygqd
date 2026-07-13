@@ -1,4 +1,4 @@
-import type { ComicItem, ComicDetail, HomeSection, PaginationInfo, SearchParams, SearchResult } from '../types'
+import type { ComicItem, ComicDetail, HomeSection, PaginationInfo, SearchParams, SearchResult, FollowedAuthor, ViewHistoryEntry } from '../types'
 
 interface ApiResponse<T> {
   code: number
@@ -55,4 +55,40 @@ export function fetchComicDetail(
   id: string,
 ): Promise<ComicDetail> {
   return request<ComicDetail>(`/api/comic?cat=${categoryId}&id=${id}`)
+}
+
+export function fetchFollowedAuthors(): Promise<FollowedAuthor[]> {
+  return request<FollowedAuthor[]>('/api/follows')
+}
+
+export function followAuthor(author: string): Promise<FollowedAuthor> {
+  return request<FollowedAuthor>('/api/follows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ author }),
+  })
+}
+
+export function unfollowAuthor(author: string): Promise<void> {
+  return request<void>(`/api/follows?author=${encodeURIComponent(author)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function fetchViewHistory(limit = 50): Promise<ViewHistoryEntry[]> {
+  return request<ViewHistoryEntry[]>(`/api/history?limit=${limit}`)
+}
+
+export function recordViewHistory(entry: {
+  comicId: string
+  title: string
+  thumbnail: string
+  categoryId: number
+  author: string
+}): Promise<void> {
+  return request<void>('/api/history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+  })
 }

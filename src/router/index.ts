@@ -28,6 +28,16 @@ const router = createRouter({
       name: 'tag-blacklist',
       component: () => import('@/pages/TagBlacklistPage.vue'),
     },
+    {
+      path: '/following',
+      name: 'following',
+      component: () => import('@/pages/FollowingPage.vue'),
+    },
+    {
+      path: '/history',
+      name: 'history',
+      component: () => import('@/pages/HistoryPage.vue'),
+    },
   ],
 })
 

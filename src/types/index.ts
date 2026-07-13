@@ -75,3 +75,18 @@ export interface SearchResult {
   pagination: PaginationInfo
   pageUrlTemplate: string | null
 }
+
+export interface FollowedAuthor {
+  author: string
+  followedAt: number
+  lastCheckedAt: number
+}
+
+export interface ViewHistoryEntry {
+  comicId: string
+  title: string
+  thumbnail: string
+  categoryId: number
+  author: string
+  viewedAt: number
+}

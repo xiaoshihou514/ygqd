@@ -1,9 +1,16 @@
 package com.niacg.backend.server
 
+import com.niacg.backend.db.FollowedAuthorsRepository
+import com.niacg.backend.db.ViewHistoryEntry
+import com.niacg.backend.db.ViewHistoryRepository
 import com.niacg.backend.models.ApiResponse
 import com.niacg.backend.models.ComicDetail
 import com.niacg.backend.models.ComicItem
+import com.niacg.backend.models.FollowAuthorRequest
+import com.niacg.backend.models.FollowedAuthorResponse
 import com.niacg.backend.models.HomeSection
+import com.niacg.backend.models.RecordHistoryRequest
+import com.niacg.backend.models.ViewHistoryResponse
 import com.niacg.backend.service.NiacgService
 import com.niacg.backend.util.SplitUtil
 import io.ktor.http.ContentType
@@ -15,12 +22,17 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.serialization.json.Json as SerializationJson
 
-fun Route.apiRoutes(service: NiacgService) {
+fun Route.apiRoutes(
+    service: NiacgService,
+    followsRepo: FollowedAuthorsRepository,
+    historyRepo: ViewHistoryRepository,
+) {
 
     route("/api") {
 
@@ -114,6 +126,72 @@ fun Route.apiRoutes(service: NiacgService) {
                 val body = call.receiveStream().bufferedReader().readText()
                 val items = SerializationJson.decodeFromString<List<ComicItem>>(body)
                 SplitUtil.splitAndGroup(items)
+            }
+        }
+
+        get("/follows") {
+            handleApiCall(call) {
+                followsRepo.listAll().map {
+                    FollowedAuthorResponse(
+                        author = it.author,
+                        followedAt = it.followedAt,
+                        lastCheckedAt = it.lastCheckedAt,
+                    )
+                }
+            }
+        }
+
+        post("/follows") {
+            handleApiCall(call) {
+                val body = call.receiveStream().bufferedReader().readText()
+                val req = SerializationJson.decodeFromString<FollowAuthorRequest>(body)
+                followsRepo.follow(req.author)
+                FollowedAuthorResponse(
+                    author = req.author,
+                    followedAt = System.currentTimeMillis(),
+                    lastCheckedAt = System.currentTimeMillis(),
+                )
+            }
+        }
+
+        delete("/follows") {
+            handleApiCall(call) {
+                val author = call.request.queryParameters["author"]
+                    ?: throw IllegalArgumentException("Missing author parameter")
+                followsRepo.unfollow(author)
+            }
+        }
+
+        get("/history") {
+            handleApiCall(call) {
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
+                historyRepo.listRecent(limit).map {
+                    ViewHistoryResponse(
+                        comicId = it.comicId,
+                        title = it.title,
+                        thumbnail = it.thumbnail,
+                        categoryId = it.categoryId,
+                        author = it.author,
+                        viewedAt = it.viewedAt,
+                    )
+                }
+            }
+        }
+
+        post("/history") {
+            handleApiCall(call) {
+                val body = call.receiveStream().bufferedReader().readText()
+                val req = SerializationJson.decodeFromString<RecordHistoryRequest>(body)
+                historyRepo.record(
+                    ViewHistoryEntry(
+                        comicId = req.comicId,
+                        title = req.title,
+                        thumbnail = req.thumbnail,
+                        categoryId = req.categoryId,
+                        author = req.author,
+                        viewedAt = System.currentTimeMillis(),
+                    )
+                )
             }
         }
     }

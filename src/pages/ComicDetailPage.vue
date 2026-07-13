@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { fetchComicDetail } from '@/services/api'
 import type { ComicDetail } from '@/types'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
+import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
+import { useViewHistory } from '@/composables/useViewHistory'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -17,6 +19,8 @@ const loading = ref(true)
 const error = ref('')
 const visibleCount = ref(PAGE_SIZE)
 const { add, has } = useTagBlacklist()
+const { isFollowing, follow, unfollow } = useFollowedAuthors()
+const { record: recordHistory } = useViewHistory()
 
 const visibleImages = computed(() => {
   if (!detail.value) return []
@@ -61,6 +65,15 @@ onMounted(async () => {
 
   try {
     detail.value = await fetchComicDetail(categoryId, id)
+    if (detail.value) {
+      recordHistory({
+        comicId: detail.value.id,
+        title: detail.value.title,
+        thumbnail: detail.value.thumbnail,
+        categoryId: detail.value.categoryId,
+        author: detail.value.author,
+      })
+    }
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -154,6 +167,19 @@ export default {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <circle cx="12" cy="12" r="10" />
                       <path d="M4.93 4.93l14.14 14.14" />
+                    </svg>
+                  </button>
+                  <button
+                    class="detail-tag-follow"
+                    :class="{ following: isFollowing(detail.author) }"
+                    :title="isFollowing(detail.author) ? `取消关注 ${detail.author}` : `关注 ${detail.author}`"
+                    @click="isFollowing(detail.author) ? unfollow(detail.author) : follow(detail.author)"
+                  >
+                    <svg v-if="isFollowing(detail.author)" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                    </svg>
+                    <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                     </svg>
                   </button>
                 </span>
@@ -459,6 +485,26 @@ export default {
 
 .detail-tag-ban:hover {
   background: var(--color-error);
+  color: var(--color-on-error);
+}
+
+.detail-tag-follow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  background: var(--color-tag-bg);
+  color: var(--color-text-muted);
+  border: none;
+  border-left: 1px solid var(--color-divider-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.detail-tag-follow:hover,
+.detail-tag-follow.following {
+  background: var(--color-like);
   color: var(--color-on-error);
 }
 
