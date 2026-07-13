@@ -15,8 +15,32 @@ val copyVueDist = tasks.register<Copy>("copyVueDist") {
     }
 }
 
+val sqliteVersion = "3.53.2.0"
+
+val extractSqliteNatives = tasks.register<Copy>("extractSqliteNatives") {
+    val nativesJar = configurations.detachedConfiguration(
+        dependencies.create("org.xerial:sqlite-jdbc:$sqliteVersion:natives-android")
+    ).singleFile
+    from(zipTree(nativesJar)) {
+        include("**/*.so")
+    }
+    eachFile {
+        val parent = relativePath.parent?.pathString ?: ""
+        val dirName = parent.substringAfterLast("/")
+        val abiMap = mapOf(
+            "aarch64" to "arm64-v8a",
+            "arm" to "armeabi",
+            "x86" to "x86",
+            "x86_64" to "x86_64",
+        )
+        path = "${abiMap[dirName] ?: dirName}/${name}"
+    }
+    into(file("src/main/jniLibs"))
+    includeEmptyDirs = false
+}
+
 tasks.named("preBuild") {
-    dependsOn(copyVueDist)
+    dependsOn(copyVueDist, extractSqliteNatives)
 }
 
 android {
@@ -82,6 +106,9 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    implementation("org.jetbrains.exposed:exposed-core:0.51.1")
+    implementation("org.jetbrains.exposed:exposed-jdbc:0.51.1")
+    implementation("org.xerial:sqlite-jdbc:$sqliteVersion")
     implementation("io.ktor:ktor-server-core:3.0.2")
     implementation("io.ktor:ktor-server-netty:3.0.2")
     implementation("io.ktor:ktor-server-content-negotiation:3.0.2")

@@ -1,7 +1,7 @@
 package com.niacg.backend.server
 
-import com.niacg.backend.db.DatabaseFactory
 import com.niacg.backend.db.FollowedAuthorsRepository
+import com.niacg.backend.db.JdbcDatabaseProvider
 import com.niacg.backend.db.ViewHistoryRepository
 import com.niacg.backend.service.HttpClient
 import com.niacg.backend.service.NiacgService
@@ -32,10 +32,15 @@ fun Application.module(httpClient: HttpClient, webDir: File? = null, dbDir: File
     }
 
     val dbFile = dbDir?.let { File(it, "ygqd.db") }
-    val dbFactory = dbFile?.let { DatabaseFactory.forFile(it) }
-        ?: DatabaseFactory.inMemory()
-    val followsRepo = FollowedAuthorsRepository(dbFactory)
-    val historyRepo = ViewHistoryRepository(dbFactory)
+    val dbProvider = dbFile?.let {
+        it.parentFile?.mkdirs()
+        JdbcDatabaseProvider(
+            jdbcUrl = "jdbc:sqlite:${it.absolutePath}",
+            driverClass = "org.sqlite.JDBC",
+        )
+    } ?: error("dbDir must be provided on Android")
+    val followsRepo = FollowedAuthorsRepository(dbProvider)
+    val historyRepo = ViewHistoryRepository(dbProvider)
 
     routing {
         apiRoutes(NiacgService(httpClient), followsRepo, historyRepo)

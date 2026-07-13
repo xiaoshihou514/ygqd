@@ -6,7 +6,7 @@ import kotlin.test.assertTrue
 
 class ViewHistoryRepositoryTest {
 
-    private val factory = DatabaseFactory.inMemory()
+    private val factory = JdbcDatabaseProvider.inMemory()
     private val repo = ViewHistoryRepository(factory)
 
     @Test

@@ -7,7 +7,7 @@ import kotlin.test.assertTrue
 
 class FollowedAuthorsRepositoryTest {
 
-    private val factory = DatabaseFactory.inMemory()
+    private val factory = JdbcDatabaseProvider.inMemory()
     private val repo = FollowedAuthorsRepository(factory)
 
     @Test

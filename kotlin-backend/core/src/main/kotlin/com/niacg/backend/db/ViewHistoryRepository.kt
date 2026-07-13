@@ -12,7 +12,7 @@ data class ViewHistoryEntry(
     val viewedAt: Long,
 )
 
-class ViewHistoryRepository(private val factory: DatabaseFactory) {
+class ViewHistoryRepository(private val factory: DatabaseProvider) {
 
     fun record(entry: ViewHistoryEntry) {
         factory.query {

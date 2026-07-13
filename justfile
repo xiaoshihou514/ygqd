@@ -58,6 +58,9 @@ desktop: _vue-build-if-needed
 android: _vue-build-if-needed
     {{_grd}} :server-android:assembleRelease
 
+install:
+    adb install -r kotlin-backend/server-android/build/outputs/apk/release/server-android-release.apk
+
 _vue-build-if-needed:
     @if [ ! -d dist ] || [ -n "$$(find src/ -newer dist -type f -print -quit 2>/dev/null)" ]; then just build-only; fi
 

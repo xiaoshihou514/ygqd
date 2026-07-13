@@ -12,7 +12,7 @@ data class FollowedAuthor(
     val lastCheckedAt: Long,
 )
 
-class FollowedAuthorsRepository(private val factory: DatabaseFactory) {
+class FollowedAuthorsRepository(private val factory: DatabaseProvider) {
 
     fun follow(author: String) {
         val now = System.currentTimeMillis()

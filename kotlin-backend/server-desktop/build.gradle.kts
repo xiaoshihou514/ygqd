@@ -39,6 +39,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    implementation("org.xerial:sqlite-jdbc:3.46.1.0")
     implementation("io.ktor:ktor-server-core:3.0.2")
     implementation("io.ktor:ktor-server-netty:3.0.2")
     implementation("io.ktor:ktor-server-content-negotiation:3.0.2")
