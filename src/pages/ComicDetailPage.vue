@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { fetchComicDetail } from '@/services/api'
 import type { ComicDetail } from '@/types'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
@@ -59,9 +59,15 @@ function setupObserver() {
   observer.observe(sentinel)
 }
 
-onMounted(async () => {
-  const categoryId = Number(route.params.categoryId)
-  const id = route.params.id as string
+async function loadComic(categoryId: number, id: string) {
+  loading.value = true
+  error.value = ''
+  visibleCount.value = PAGE_SIZE
+
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
 
   try {
     detail.value = await fetchComicDetail(categoryId, id)
@@ -76,11 +82,20 @@ onMounted(async () => {
     }
   } catch (e) {
     error.value = (e as Error).message
+    detail.value = null
   } finally {
     loading.value = false
     await nextTick()
     setupObserver()
   }
+}
+
+onMounted(() => {
+  loadComic(Number(route.params.categoryId), route.params.id as string)
+})
+
+onBeforeRouteUpdate((to) => {
+  loadComic(Number(to.params.categoryId), to.params.id as string)
 })
 
 onUnmounted(() => {
@@ -100,7 +115,6 @@ function searchByScope(keyword: string, show: string = 'title,text,keyboard,ftit
 </script>
 
 <script lang="ts">
-import { computed, nextTick } from 'vue'
 export default {
   name: 'ComicDetailPage',
   inheritAttrs: false,
