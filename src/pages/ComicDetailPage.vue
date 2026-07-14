@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, nextTick, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { fetchComicDetail } from '@/services/api'
 import type { ComicDetail } from '@/types'
@@ -96,6 +96,10 @@ onMounted(() => {
 
 onBeforeRouteUpdate((to) => {
   loadComic(Number(to.params.categoryId), to.params.id as string)
+})
+
+onActivated(() => {
+  loadComic(Number(route.params.categoryId), route.params.id as string)
 })
 
 onUnmounted(() => {

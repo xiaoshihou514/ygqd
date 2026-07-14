@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
+import { useTheme } from '@/composables/useTheme'
 import EmptyState from '@/components/EmptyState.vue'
 
 const { tagList, count, add, remove } = useTagBlacklist()
+const { current, setTheme } = useTheme()
+
+const themeOptions = [
+  { value: 'light' as const, label: '明亮' },
+  { value: 'dark' as const, label: '黑暗' },
+  { value: 'system' as const, label: '跟随系统' },
+]
 
 const newTag = ref('')
 const inputError = ref('')
@@ -46,6 +54,23 @@ function handleKeydown(e: KeyboardEvent) {
       <p class="page-desc">
         添加标签到黑名单后，包含该标签的漫画将被过滤隐藏。
       </p>
+
+      <div class="theme-section">
+        <h2 class="section-title">主题模式</h2>
+        <div class="theme-options">
+          <button
+            v-for="opt in themeOptions"
+            :key="opt.value"
+            class="theme-btn"
+            :class="{ active: current === opt.value }"
+            @click="setTheme(opt.value)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
+
+      <div class="section-divider" />
 
       <div class="add-bar">
         <div class="input-wrap">
@@ -254,5 +279,46 @@ function handleKeydown(e: KeyboardEvent) {
   .page-title {
     font-size: var(--font-size-tagline);
   }
+}
+
+.theme-section {
+  margin-bottom: var(--spacing-xl);
+}
+
+.section-title {
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.theme-options {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.theme-btn {
+  flex: 1;
+  height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.theme-btn.active {
+  background: var(--color-accent);
+  color: var(--color-on-primary);
+  border-color: var(--color-accent);
+}
+
+.section-divider {
+  height: 1px;
+  background: var(--color-hairline);
+  margin-bottom: var(--spacing-xl);
 }
 </style>
