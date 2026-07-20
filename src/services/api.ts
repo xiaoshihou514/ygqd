@@ -1,4 +1,4 @@
-import type { ComicItem, ComicDetail, HomeSection, PaginationInfo, SearchParams, SearchResult, FollowedAuthor, ViewHistoryEntry } from '../types'
+import type { BlacklistEntry, ComicItem, ComicDetail, HomeSection, PaginationInfo, SearchParams, SearchResult, FollowedAuthor, ViewHistoryEntry } from '../types'
 
 interface ApiResponse<T> {
   code: number
@@ -90,5 +90,31 @@ export function recordViewHistory(entry: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(entry),
+  })
+}
+
+export function fetchBlacklist(): Promise<BlacklistEntry[]> {
+  return request<BlacklistEntry[]>('/api/blacklist')
+}
+
+export function addBlacklistEntry(tag: string, mode: string): Promise<BlacklistEntry> {
+  return request<BlacklistEntry>('/api/blacklist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag, mode }),
+  })
+}
+
+export function removeBlacklistEntry(tag: string): Promise<void> {
+  return request<void>(`/api/blacklist?tag=${encodeURIComponent(tag)}`, {
+    method: 'DELETE',
+  })
+}
+
+export function updateBlacklistEntry(tag: string, mode: string): Promise<void> {
+  return request<void>('/api/blacklist', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag, mode }),
   })
 }

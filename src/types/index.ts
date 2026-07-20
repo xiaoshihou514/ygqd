@@ -76,6 +76,14 @@ export interface SearchResult {
   pageUrlTemplate: string | null
 }
 
+export type BlacklistMode = 'fuzzy' | 'exact' | 'single'
+
+export interface BlacklistEntry {
+  tag: string
+  mode: BlacklistMode
+  createdAt?: number
+}
+
 export interface FollowedAuthor {
   author: string
   followedAt: number

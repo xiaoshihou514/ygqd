@@ -10,6 +10,14 @@ object FollowedAuthorsTable : Table("followed_authors") {
     override val primaryKey = PrimaryKey(author)
 }
 
+object TagBlacklistTable : Table("tag_blacklist") {
+    val tag = varchar("tag", 256)
+    val mode = varchar("mode", 32) // "fuzzy" | "exact" | "single"
+    val createdAt = long("created_at")
+
+    override val primaryKey = PrimaryKey(tag)
+}
+
 object ViewHistoryTable : Table("view_history") {
     val comicId = varchar("comic_id", 64)
     val title = varchar("title", 512)

@@ -31,6 +31,7 @@ class JdbcDatabaseProvider(
         transaction(db) {
             SchemaUtils.create(FollowedAuthorsTable)
             SchemaUtils.create(ViewHistoryTable)
+            SchemaUtils.create(TagBlacklistTable)
         }
     }
 

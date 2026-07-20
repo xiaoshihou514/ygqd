@@ -2,6 +2,7 @@ package com.niacg.backend.server
 
 import com.niacg.backend.db.FollowedAuthorsRepository
 import com.niacg.backend.db.JdbcDatabaseProvider
+import com.niacg.backend.db.TagBlacklistRepository
 import com.niacg.backend.db.ViewHistoryRepository
 import com.niacg.backend.service.HttpClient
 import com.niacg.backend.service.NiacgService
@@ -38,9 +39,10 @@ fun Application.module(httpClient: HttpClient, webDir: File? = null, dbDir: File
         ?: JdbcDatabaseProvider.inMemory()
     val followsRepo = FollowedAuthorsRepository(dbProvider)
     val historyRepo = ViewHistoryRepository(dbProvider)
+    val blacklistRepo = TagBlacklistRepository(dbProvider)
 
     routing {
-        apiRoutes(NiacgService(httpClient), followsRepo, historyRepo)
+        apiRoutes(NiacgService(httpClient), followsRepo, historyRepo, blacklistRepo)
 
         if (webDir != null && webDir.isDirectory) {
             serveWebApp(webDir)

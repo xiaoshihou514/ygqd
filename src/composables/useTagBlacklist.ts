@@ -1,87 +1,121 @@
 import { ref, computed } from 'vue'
+import {
+  fetchBlacklist,
+  addBlacklistEntry as apiAdd,
+  removeBlacklistEntry as apiRemove,
+  updateBlacklistEntry as apiUpdateMode,
+} from '@/services/api'
+import type { BlacklistEntry, BlacklistMode } from '@/types'
 
 const BLACKLIST_KEY = 'niacg-tag-blacklist'
 
-const blacklist = ref<string[]>([])
+const entries = ref<BlacklistEntry[]>([])
 const _version = ref(0)
-
-function loadFromStorage(): string[] {
-  try {
-    const raw = localStorage.getItem(BLACKLIST_KEY)
-    if (!raw) return []
-    const arr: unknown = JSON.parse(raw)
-    if (!Array.isArray(arr)) return []
-    return arr.filter((t): t is string => typeof t === 'string' && t.length > 0)
-  } catch {
-    return []
-  }
-}
-
-function saveToStorage() {
-  localStorage.setItem(BLACKLIST_KEY, JSON.stringify(blacklist.value))
-}
-
-blacklist.value = loadFromStorage()
-
-const tagList = computed(() => [...blacklist.value].sort())
-
-const count = computed(() => blacklist.value.length)
 
 function bumpVersion() {
   _version.value++
 }
 
-function add(tag: string) {
+function matchesEntry(entry: BlacklistEntry, itemTags: string[], itemTitle?: string): boolean {
+  switch (entry.mode) {
+    case 'fuzzy':
+      return itemTags.some((t) => t.includes(entry.tag))
+        || (itemTitle != null && itemTitle.includes(entry.tag))
+    case 'exact':
+      return itemTags.some((t) => t === entry.tag)
+    case 'single':
+      return itemTags.length === 1 && itemTags[0] === entry.tag
+    default:
+      return false
+  }
+}
+
+function loadFromStorage(): BlacklistEntry[] {
+  try {
+    const raw = localStorage.getItem(BLACKLIST_KEY)
+    if (!raw) return []
+    const arr: unknown = JSON.parse(raw)
+    if (!Array.isArray(arr)) return []
+    return arr
+      .filter((t): t is string => typeof t === 'string' && t.length > 0)
+      .map((tag) => ({ tag, mode: 'exact' as BlacklistMode }))
+  } catch {
+    return []
+  }
+}
+
+async function load() {
+  try {
+    const serverEntries = await fetchBlacklist()
+    const localEntries = loadFromStorage()
+    if (localEntries.length > 0) {
+      const existingTags = new Set(serverEntries.map((e) => e.tag))
+      const toMigrate = localEntries.filter((e) => !existingTags.has(e.tag))
+      for (const e of toMigrate) {
+        await apiAdd(e.tag, e.mode)
+      }
+      localStorage.removeItem(BLACKLIST_KEY)
+      entries.value = [...serverEntries, ...toMigrate]
+    } else {
+      entries.value = serverEntries
+    }
+  } catch {
+    entries.value = loadFromStorage()
+  }
+  bumpVersion()
+}
+
+load()
+
+const tagList = computed(() => [...entries.value]
+  .sort((a, b) => a.tag.localeCompare(b.tag)))
+
+const count = computed(() => entries.value.length)
+
+function add(tag: string, mode: BlacklistMode = 'exact') {
   const trimmed = tag.trim()
   if (!trimmed) return
-  if (blacklist.value.includes(trimmed)) return
-  blacklist.value = [...blacklist.value, trimmed]
-  saveToStorage()
+  if (entries.value.some((e) => e.tag === trimmed)) return
+
+  apiAdd(trimmed, mode).catch(() => {})
+  entries.value = [...entries.value, { tag: trimmed, mode, createdAt: Date.now() }]
   bumpVersion()
 }
 
 function remove(tag: string) {
-  const trimmed = tag.trim()
-  const idx = blacklist.value.indexOf(trimmed)
-  if (idx === -1) return
-  const next = [...blacklist.value]
-  next.splice(idx, 1)
-  blacklist.value = next
-  saveToStorage()
+  apiRemove(tag).catch(() => {})
+  entries.value = entries.value.filter((e) => e.tag !== tag)
+  bumpVersion()
+}
+
+function updateMode(tag: string, mode: BlacklistMode) {
+  apiUpdateMode(tag, mode).catch(() => {})
+  entries.value = entries.value.map((e) => e.tag === tag ? { ...e, mode } : e)
   bumpVersion()
 }
 
 function has(tag: string): boolean {
-  return blacklist.value.includes(tag.trim())
+  return entries.value.some((e) => e.mode === 'exact' && e.tag === tag.trim())
 }
 
 function hasAny(tags: string[]): boolean {
-  return tags.some((tag) => blacklist.value.includes(tag))
+  return tags.some((tag) => has(tag))
 }
 
-function filterItems<T extends { tags: string[] }>(items: T[]): T[] {
-  if (blacklist.value.length === 0) return items
-  return items.filter((item) => !hasAny(item.tags))
+function filterItems<T extends { tags: string[]; title?: string }>(items: T[]): T[] {
+  if (entries.value.length === 0) return items
+  return items.filter((item) => !entries.value.some((e) => matchesEntry(e, item.tags, item.title)))
 }
-
-let useCount = 0
 
 export function useTagBlacklist() {
-  if (useCount === 0 && typeof window !== 'undefined') {
-    window.addEventListener('storage', (e) => {
-      if (e.key === BLACKLIST_KEY) {
-        blacklist.value = loadFromStorage()
-      }
-    })
-  }
-  useCount++
-
   return {
+    entries,
     tagList,
     count,
     version: _version,
     add,
     remove,
+    updateMode,
     has,
     hasAny,
     filterItems,

@@ -102,6 +102,25 @@ data class CategoryOption(
 )
 
 @Serializable
+data class BlacklistEntryResponse(
+    val tag: String,
+    val mode: String,
+    val createdAt: Long,
+)
+
+@Serializable
+data class BlacklistRequest(
+    val tag: String,
+    val mode: String,
+)
+
+@Serializable
+data class BlacklistUpdateRequest(
+    val tag: String,
+    val mode: String,
+)
+
+@Serializable
 data class FollowAuthorRequest(val author: String)
 
 @Serializable

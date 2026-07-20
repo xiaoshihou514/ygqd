@@ -1,9 +1,13 @@
 package com.niacg.backend.server
 
 import com.niacg.backend.db.FollowedAuthorsRepository
+import com.niacg.backend.db.TagBlacklistRepository
 import com.niacg.backend.db.ViewHistoryEntry
 import com.niacg.backend.db.ViewHistoryRepository
 import com.niacg.backend.models.ApiResponse
+import com.niacg.backend.models.BlacklistEntryResponse
+import com.niacg.backend.models.BlacklistRequest
+import com.niacg.backend.models.BlacklistUpdateRequest
 import com.niacg.backend.models.ComicDetail
 import com.niacg.backend.models.ComicItem
 import com.niacg.backend.models.FollowAuthorRequest
@@ -24,6 +28,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.serialization.json.Json as SerializationJson
@@ -32,6 +37,7 @@ fun Route.apiRoutes(
     service: NiacgService,
     followsRepo: FollowedAuthorsRepository,
     historyRepo: ViewHistoryRepository,
+    blacklistRepo: TagBlacklistRepository,
 ) {
 
     route("/api") {
@@ -192,6 +198,47 @@ fun Route.apiRoutes(
                         viewedAt = System.currentTimeMillis(),
                     )
                 )
+            }
+        }
+
+        get("/blacklist") {
+            handleApiCall(call) {
+                blacklistRepo.listAll().map {
+                    BlacklistEntryResponse(
+                        tag = it.tag,
+                        mode = it.mode,
+                        createdAt = it.createdAt,
+                    )
+                }
+            }
+        }
+
+        post("/blacklist") {
+            handleApiCall(call) {
+                val body = call.receiveStream().bufferedReader().readText()
+                val req = SerializationJson.decodeFromString<BlacklistRequest>(body)
+                blacklistRepo.add(req.tag, req.mode)
+                BlacklistEntryResponse(
+                    tag = req.tag,
+                    mode = req.mode,
+                    createdAt = System.currentTimeMillis(),
+                )
+            }
+        }
+
+        delete("/blacklist") {
+            handleApiCall(call) {
+                val tag = call.request.queryParameters["tag"]
+                    ?: throw IllegalArgumentException("Missing tag parameter")
+                blacklistRepo.remove(tag)
+            }
+        }
+
+        patch("/blacklist") {
+            handleApiCall(call) {
+                val body = call.receiveStream().bufferedReader().readText()
+                val req = SerializationJson.decodeFromString<BlacklistUpdateRequest>(body)
+                blacklistRepo.updateMode(req.tag, req.mode)
             }
         }
     }

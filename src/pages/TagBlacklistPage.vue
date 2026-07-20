@@ -3,8 +3,9 @@ import { ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useTheme } from '@/composables/useTheme'
 import EmptyState from '@/components/EmptyState.vue'
+import type { BlacklistMode } from '@/types'
 
-const { tagList, count, add, remove } = useTagBlacklist()
+const { entries, count, add, remove, updateMode } = useTagBlacklist()
 const { current, setTheme } = useTheme()
 
 const themeOptions = [
@@ -13,8 +14,17 @@ const themeOptions = [
   { value: 'system' as const, label: '跟随系统' },
 ]
 
+const MODE_LABELS: Record<BlacklistMode, string> = {
+  fuzzy: '模糊',
+  exact: '精确',
+  single: '单一',
+}
+
+const MODE_CYCLE: BlacklistMode[] = ['fuzzy', 'exact', 'single']
+
 const newTag = ref('')
 const inputError = ref('')
+const selectedMode = ref<BlacklistMode>('fuzzy')
 
 function handleAdd() {
   const trimmed = newTag.value.trim()
@@ -22,17 +32,26 @@ function handleAdd() {
     inputError.value = '请输入标签名称'
     return
   }
-  if (tagList.value.includes(trimmed)) {
+  if (entries.value.some((e) => e.tag === trimmed)) {
     inputError.value = '该标签已在黑名单中'
     return
   }
-  add(trimmed)
+  add(trimmed, selectedMode.value)
   newTag.value = ''
   inputError.value = ''
+  selectedMode.value = 'fuzzy'
 }
 
 function handleRemove(tag: string) {
   remove(tag)
+}
+
+function handleCycleMode(tag: string, currentMode: BlacklistMode) {
+  const idx = MODE_CYCLE.indexOf(currentMode)
+  if (idx === -1) return
+  const nextIdx = (idx + 1) % MODE_CYCLE.length
+  const next = MODE_CYCLE[nextIdx]!
+  updateMode(tag, next)
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -84,12 +103,25 @@ function handleKeydown(e: KeyboardEvent) {
           />
           <span v-if="inputError" class="input-error">{{ inputError }}</span>
         </div>
-        <button class="add-btn" @click="handleAdd">
-          添加
-        </button>
+        <div class="add-actions">
+          <div class="mode-pills">
+            <button
+              v-for="m in MODE_CYCLE"
+              :key="m"
+              class="mode-pill"
+              :class="{ active: selectedMode === m }"
+              @click="selectedMode = m"
+            >
+              {{ MODE_LABELS[m] }}
+            </button>
+          </div>
+          <button class="add-btn" @click="handleAdd">
+            添加
+          </button>
+        </div>
       </div>
 
-      <div v-if="tagList.length === 0" class="empty-wrap">
+      <div v-if="entries.length === 0" class="empty-wrap">
         <EmptyState
           title="黑名单为空"
           message="添加标签到黑名单以开始屏蔽内容"
@@ -98,15 +130,24 @@ function handleKeydown(e: KeyboardEvent) {
 
       <div v-else class="tag-grid">
         <div
-          v-for="tag in tagList"
-          :key="tag"
+          v-for="entry in entries"
+          :key="entry.tag"
           class="tag-item"
         >
-          <span class="tag-name">{{ tag }}</span>
+          <div class="tag-info">
+            <span class="tag-name">{{ entry.tag }}</span>
+            <button
+              class="mode-badge"
+              :title="`点击切换匹配模式（当前：${MODE_LABELS[entry.mode]}）`"
+              @click="handleCycleMode(entry.tag, entry.mode)"
+            >
+              {{ MODE_LABELS[entry.mode] }}
+            </button>
+          </div>
           <button
             class="tag-remove"
             title="移出黑名单"
-            @click="handleRemove(tag)"
+            @click="handleRemove(entry.tag)"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -154,11 +195,11 @@ function handleKeydown(e: KeyboardEvent) {
   display: flex;
   gap: var(--spacing-sm);
   margin-bottom: var(--spacing-xl);
+  flex-direction: column;
 }
 
 .input-wrap {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   position: relative;
 }
 
@@ -193,9 +234,39 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-error);
 }
 
+.add-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.mode-pills {
+  display: flex;
+  gap: 4px;
+}
+
+.mode-pill {
+  height: 36px;
+  padding: 0 var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-pill.active {
+  background: var(--color-accent);
+  color: var(--color-on-primary);
+  border-color: var(--color-accent);
+}
+
 .add-btn {
   flex-shrink: 0;
-  height: 44px;
+  height: 36px;
   padding: 0 var(--spacing-lg);
   background: var(--color-primary);
   color: var(--color-on-primary);
@@ -230,10 +301,40 @@ function handleKeydown(e: KeyboardEvent) {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   transition: border-color 0.2s;
+  gap: var(--spacing-sm);
 }
 
 .tag-item:hover {
   border-color: var(--color-error);
+}
+
+.tag-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.mode-badge {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-canvas);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all 0.2s;
+  line-height: 24px;
+}
+
+.mode-badge:hover {
+  background: var(--color-accent);
+  color: var(--color-on-primary);
+  border-color: var(--color-accent);
 }
 
 .tag-name {
@@ -268,12 +369,12 @@ function handleKeydown(e: KeyboardEvent) {
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   }
 
-  .add-bar {
-    flex-direction: column;
+  .add-actions {
+    flex-wrap: wrap;
   }
 
   .add-btn {
-    width: 100%;
+    flex: 1;
   }
 
   .page-title {
