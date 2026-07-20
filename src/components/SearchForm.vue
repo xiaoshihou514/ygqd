@@ -34,7 +34,6 @@ const SCOPE_OPTIONS = [
 const SORT_OPTIONS = [
   { value: 'default', label: '默认排序' },
   { value: 'likes_desc', label: '星标降序' },
-  { value: 'likes_asc', label: '星标升序' },
 ] as const
 
 const form = reactive({

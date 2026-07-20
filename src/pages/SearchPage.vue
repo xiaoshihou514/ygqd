@@ -14,6 +14,7 @@ import LoadingSpinner from '@/components/LoadingSpinner.vue'
 defineOptions({ name: 'SearchPage' })
 
 const PAGE_SIZE = 20
+const MAX_PAGES = 50
 
 const route = useRoute()
 const router = useRouter()
@@ -32,6 +33,29 @@ const hasNextPage = ref(false)
 const lastParams = ref<SearchParams | null>(null)
 const { filterItems, version: blacklistVersion } = useTagBlacklist()
 const { add: addHistory } = useSearchHistory()
+const fetchingProgress = ref('')
+
+async function fetchAllPages(
+  params: SearchParams,
+  firstPageItems: ComicItem[],
+  totalPages: number,
+): Promise<ComicItem[]> {
+  const pageCount = Math.min(totalPages, MAX_PAGES)
+  const all = [...firstPageItems]
+
+  for (let i = 1; i < pageCount; i += 5) {
+    const batch: Promise<ComicItem[]>[] = []
+    for (let j = i; j < Math.min(i + 5, pageCount); j++) {
+      fetchingProgress.value = `正在获取全部结果（${j + 1}/${pageCount}）...`
+      batch.push(searchComics(params, j).then((r) => r.items))
+    }
+    const results = await Promise.all(batch)
+    all.push(...results.flat())
+  }
+
+  fetchingProgress.value = ''
+  return all
+}
 
 const processedItems = computed(() => {
   let result = items.value
@@ -40,8 +64,6 @@ const processedItems = computed(() => {
   }
   if (sortOrder.value === 'likes_desc') {
     result = [...result].sort((a, b) => parseLikes(b.likes) - parseLikes(a.likes))
-  } else if (sortOrder.value === 'likes_asc') {
-    result = [...result].sort((a, b) => parseLikes(a.likes) - parseLikes(b.likes))
   }
   result = filterItems(result)
   return result
@@ -123,8 +145,14 @@ async function reSearchWithCacheBuster() {
   const buster = String(Date.now())
   try {
     const result = await searchComics(lastParams.value, 0, buster)
-    items.value = result.items
-    hasNextPage.value = result.pagination.hasNext
+    if (sortOrder.value === 'likes_desc') {
+      const pagesToFetch = result.pagination.total
+      items.value = await fetchAllPages(lastParams.value, result.items, pagesToFetch)
+      hasNextPage.value = false
+    } else {
+      items.value = result.items
+      hasNextPage.value = result.pagination.hasNext
+    }
   } catch (e) {
     error.value = (e as Error).message
     items.value = []
@@ -225,8 +253,14 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
   prevBlacklistVersion = blacklistVersion.value
   try {
     const result = await searchComics(params, 0)
-    items.value = result.items
-    hasNextPage.value = result.pagination.hasNext
+    if (order === 'likes_desc') {
+      const pagesToFetch = result.pagination.total
+      items.value = await fetchAllPages(params, result.items, pagesToFetch)
+      hasNextPage.value = false
+    } else {
+      items.value = result.items
+      hasNextPage.value = result.pagination.hasNext
+    }
   } catch (e) {
     error.value = (e as Error).message
     items.value = []
@@ -321,7 +355,7 @@ function goToSplit() {
 
       <template v-else>
         <div v-if="loading" class="search-loading">
-          <LoadingSpinner message="正在搜索..." />
+          <LoadingSpinner :message="fetchingProgress || '正在搜索...'" />
         </div>
 
         <div v-else-if="error && items.length === 0" class="search-error">

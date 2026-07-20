@@ -6,6 +6,7 @@ import type { ComicDetail } from '@/types'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import { useViewHistory } from '@/composables/useViewHistory'
+import { extractAuthorFromTitle } from '@/utils/title'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -30,6 +31,11 @@ const visibleImages = computed(() => {
 const hasMore = computed(() => {
   if (!detail.value) return false
   return visibleCount.value < detail.value.images.length
+})
+
+const effectiveAuthor = computed(() => {
+  if (!detail.value) return ''
+  return detail.value.author || extractAuthorFromTitle(detail.value.title) || ''
 })
 
 function loadMore() {
@@ -169,18 +175,18 @@ export default {
                 {{ detail.likes }}
               </span>
             </div>
-            <div v-if="detail.author" class="detail-tag-row">
+            <div v-if="effectiveAuthor" class="detail-tag-row">
               <span class="tag-label">作者</span>
               <div class="detail-tags">
                 <span class="detail-tag-wrap">
-                  <button class="detail-tag detail-tag-link" @click="searchByScope(detail.author)">
-                    {{ detail.author }}
+                  <button class="detail-tag detail-tag-link" @click="searchByScope(effectiveAuthor)">
+                    {{ effectiveAuthor }}
                   </button>
                   <button
-                    v-if="!has(detail.author)"
+                    v-if="!has(effectiveAuthor)"
                     class="detail-tag-ban"
-                    :title="`拉黑作者标签: ${detail.author}`"
-                    @click="add(detail.author)"
+                    :title="`拉黑作者标签: ${effectiveAuthor}`"
+                    @click="add(effectiveAuthor)"
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <circle cx="12" cy="12" r="10" />
@@ -189,11 +195,11 @@ export default {
                   </button>
                   <button
                     class="detail-tag-follow"
-                    :class="{ following: isFollowing(detail.author) }"
-                    :title="isFollowing(detail.author) ? `取消关注 ${detail.author}` : `关注 ${detail.author}`"
-                    @click="isFollowing(detail.author) ? unfollow(detail.author) : follow(detail.author)"
+                    :class="{ following: isFollowing(effectiveAuthor) }"
+                    :title="isFollowing(effectiveAuthor) ? `取消关注 ${effectiveAuthor}` : `关注 ${effectiveAuthor}`"
+                    @click="isFollowing(effectiveAuthor) ? unfollow(effectiveAuthor) : follow(effectiveAuthor)"
                   >
-                    <svg v-if="isFollowing(detail.author)" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <svg v-if="isFollowing(effectiveAuthor)" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                       <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                     </svg>
                     <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
