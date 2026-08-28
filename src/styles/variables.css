@@ -113,7 +113,8 @@
   --nav-height: 44px;
   --sub-nav-height: 52px;
   --tab-bar-height: 50px;
-  --tab-bar-safe-bottom: 0px;
+  --tab-bar-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --tab-bar-total-height: calc(var(--tab-bar-height) + var(--tab-bar-safe-bottom));
 
   /* ---- Transitions ---- */
   --transition-press: transform 0.15s ease;

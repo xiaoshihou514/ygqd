@@ -12,9 +12,10 @@
     "lint": "eslint . --fix",
     "format": "prettier --write src/",
     "tauri": "tauri",
-    "android:init": "tauri android init",
-    "android:dev": "tauri android dev",
-    "android": "tauri android build"
+    "icons": "tauri icon public/icon.png",
+    "android:init": "tauri android init && npm run icons",
+    "android:dev": "npm run icons && tauri android dev",
+    "android": "npm run icons && tauri android build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

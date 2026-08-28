@@ -76,6 +76,6 @@ select {
 
 .main-content {
   padding-top: calc(var(--nav-height) + var(--spacing-sm));
-  padding-bottom: calc(var(--tab-bar-height) + var(--tab-bar-safe-bottom) + var(--spacing-sm));
+  padding-bottom: calc(var(--tab-bar-total-height) + var(--spacing-sm));
   min-height: 100vh;
 }

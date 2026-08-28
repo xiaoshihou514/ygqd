@@ -65,7 +65,7 @@ const tabs = [
   bottom: 0;
   left: 0;
   right: 0;
-  height: var(--tab-bar-height);
+  height: var(--tab-bar-total-height);
   background: var(--color-tab-bar-bg);
   border-top: 1px solid var(--color-hairline);
   z-index: 100;
@@ -79,7 +79,7 @@ const tabs = [
   display: flex;
   justify-content: space-around;
   align-items: center;
-  height: 100%;
+  height: var(--tab-bar-height);
   max-width: var(--max-width);
   margin: 0 auto;
 }
