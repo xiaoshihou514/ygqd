@@ -218,6 +218,18 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
             .filter(|v| !v.is_empty())
             .collect::<Vec<String>>()
     };
+    let author = doc
+        .select(&sel(".tag-block [data-type='author']"))
+        .next()
+        .map(|block| {
+            block
+                .select(&sel("a.btn"))
+                .map(text)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<String>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
     ComicDetail {
         id,
         title: doc
@@ -235,7 +247,7 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
             .map(text)
             .unwrap_or_else(|| category(category_id)),
         category_id,
-        author: list(".tag-block [data-type='author'] a.btn").join(", "),
+        author,
         works: list(".tag-block [data-type='works'] a.btn"),
         characters: list(".tag-block [data-type='actor'] a.btn"),
         tags: list(".tag-block [data-type='tags'] a.btn"),
@@ -281,5 +293,19 @@ mod tests {
     fn missing_published_date_is_none() {
         let parsed = detail("<html><body><h1>Example</h1></body></html>", 3, "42".into());
         assert_eq!(parsed.published_at, None);
+    }
+
+    #[test]
+    fn reads_author_only_from_the_first_author_block() {
+        let parsed = detail(
+            r#"<html><body>
+                <div class="tag-block"><span data-type="author"><a class="btn">Author</a></span></div>
+                <div class="tag-block"><span data-type="author"><a class="btn">Author</a></span></div>
+            </body></html>"#,
+            3,
+            "42".into(),
+        );
+
+        assert_eq!(parsed.author, "Author");
     }
 }
