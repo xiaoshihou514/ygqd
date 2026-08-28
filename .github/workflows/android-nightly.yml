@@ -1,0 +1,138 @@
+name: Android Nightly
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: android-nightly
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  NDK_VERSION: 27.2.12479018
+  BUILD_TOOLS_VERSION: 36.1.0
+
+jobs:
+  build:
+    name: Build signed Android nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;$BUILD_TOOLS_VERSION" \
+            "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check frontend and Rust
+        run: |
+          npm run type-check
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Initialize Android project
+        run: npm run android:init
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          : "${KEYSTORE_BASE64:?Missing KEYSTORE_BASE64 repository secret}"
+          : "${KEYSTORE_PASSWORD:?Missing KEYSTORE_PASSWORD repository secret}"
+          : "${KEY_ALIAS:?Missing KEY_ALIAS repository secret}"
+          : "${KEY_PASSWORD:?Missing KEY_PASSWORD repository secret}"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.keystore"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > src-tauri/gen/android/keystore.properties
+          node scripts/configure-android-signing.mjs
+
+      - name: Build signed APK
+        run: npm run android -- --target aarch64 --target armv7 --apk
+
+      - name: Verify and stage APK
+        id: artifact
+        run: |
+          source_apk="src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+          test -f "$source_apk"
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner" verify --verbose "$source_apk"
+          mkdir -p artifacts
+          artifact="artifacts/ygqd-nightly.apk"
+          cp "$source_apk" "$artifact"
+          sha256sum "$artifact" > "$artifact.sha256"
+          echo "apk=$artifact" >> "$GITHUB_OUTPUT"
+          echo "checksum=$artifact.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygqd-nightly-${{ github.sha }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Move nightly tag
+        run: |
+          git tag --force nightly "$GITHUB_SHA"
+          git push --force origin refs/tags/nightly
+
+      - name: Publish rolling nightly release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          body: |
+            Automated Android nightly from `${{ github.sha }}`.
+
+            This release is replaced by the next successful nightly build.
+          files: |
+            ${{ steps.artifact.outputs.apk }}
+            ${{ steps.artifact.outputs.checksum }}
+          fail_on_unmatched_files: true
+          overwrite_files: true
