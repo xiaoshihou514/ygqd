@@ -26,7 +26,17 @@ pub struct ComicDetail {
     pub characters: Vec<String>,
     pub tags: Vec<String>,
     pub likes: String,
+    pub published_at: Option<String>,
     pub images: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicMetadata {
+    pub id: String,
+    pub category_id: i32,
+    pub author: String,
+    pub published_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

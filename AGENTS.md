@@ -23,6 +23,7 @@ cd src-tauri && cargo fmt --check
 - commands、网络、缓存和数据访问入口位于 `src-tauri/src/lib.rs`。
 - HTML 解析位于 `src-tauri/src/parser.rs`，使用 `scraper`。
 - 关注、历史和黑名单位于应用数据目录的 `ygqd.db`，使用 bundled SQLite。
+- 漫画发布日期元数据也持久化在 `ygqd.db`，供关注作者的新作检查复用。
 - 图片通过 `fetch_image` command 返回二进制数据，`ProxyImage.vue` 将其转换成 Blob URL。
 - `src/services/api.ts` 是前端唯一的 Tauri IPC 封装层。
 - `noUncheckedIndexedAccess: true`，索引访问必须处理 `undefined`。

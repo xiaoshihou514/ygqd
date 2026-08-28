@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useTheme } from '@/composables/useTheme'
+import { datedJsonFilename, exportJson, type ExportResult } from '@/utils/exportJson'
 import EmptyState from '@/components/EmptyState.vue'
 import type { BlacklistMode } from '@/types'
 
@@ -25,6 +26,8 @@ const MODE_CYCLE: BlacklistMode[] = ['fuzzy', 'exact', 'single']
 const newTag = ref('')
 const inputError = ref('')
 const selectedMode = ref<BlacklistMode>('fuzzy')
+const exporting = ref(false)
+const exportStatus = ref('')
 
 function handleAdd() {
   const trimmed = newTag.value.trim()
@@ -60,6 +63,36 @@ function handleKeydown(e: KeyboardEvent) {
   }
   inputError.value = ''
 }
+
+const EXPORT_MESSAGES: Record<ExportResult, string> = {
+  shared: '已发送黑名单备份',
+  downloaded: '黑名单备份已下载',
+  copied: '无法保存文件，备份 JSON 已复制',
+  cancelled: '',
+}
+
+async function handleExport() {
+  if (exporting.value) return
+  exporting.value = true
+  exportStatus.value = ''
+  try {
+    const result = await exportJson({
+      filename: datedJsonFilename('ygqd-blacklist'),
+      title: 'ygqd 黑名单备份',
+      data: {
+        format: 'ygqd.blacklist',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        entries: entries.value,
+      },
+    })
+    exportStatus.value = EXPORT_MESSAGES[result]
+  } catch {
+    exportStatus.value = '导出失败，请稍后重试'
+  } finally {
+    exporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -68,7 +101,12 @@ function handleKeydown(e: KeyboardEvent) {
       <div class="page-header">
         <h1 class="page-title">标签黑名单</h1>
         <span class="page-count">{{ count }} 个屏蔽标签</span>
+        <button class="export-btn" :disabled="exporting" @click="handleExport">
+          {{ exporting ? '导出中' : '导出' }}
+        </button>
       </div>
+
+      <p v-if="exportStatus" class="export-status" aria-live="polite">{{ exportStatus }}</p>
 
       <p class="page-desc">
         添加标签到黑名单后，包含该标签的漫画将被过滤隐藏。
@@ -182,6 +220,28 @@ function handleKeydown(e: KeyboardEvent) {
 .page-count {
   font-size: var(--font-size-caption);
   color: var(--color-text-muted);
+}
+
+.export-btn {
+  margin-left: auto;
+  min-height: 36px;
+  padding: 0 var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  background: var(--color-card-bg);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+}
+
+.export-btn:disabled {
+  opacity: 0.55;
+}
+
+.export-status {
+  margin: 0 0 var(--spacing-sm);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
 }
 
 .page-desc {

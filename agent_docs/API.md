@@ -9,6 +9,7 @@
 | `fetch_category` | `category`, `page` | `{ items, pagination }` |
 | `search_comics` | `keyword`, `classid`, `show`, `page`, `cacheBuster?` | `SearchResult` |
 | `fetch_comic` | `categoryId`, `id` | `ComicDetail` |
+| `fetch_comic_metadata` | `categoryId`, `id` | `ComicMetadata` |
 | `fetch_image` | `url` | `ArrayBuffer` |
 | `fetch_follows` | — | `FollowedAuthor[]` |
 | `follow_author` | `author` | `FollowedAuthor` |

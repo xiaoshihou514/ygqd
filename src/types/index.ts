@@ -20,7 +20,15 @@ export interface ComicDetail {
   characters: string[]
   tags: string[]
   likes: string
+  publishedAt?: string
   images: string[]
+}
+
+export interface ComicMetadata {
+  id: string
+  categoryId: number
+  author: string
+  publishedAt?: string
 }
 
 export interface PaginationInfo {

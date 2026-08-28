@@ -13,7 +13,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
     db.execute_batch("PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS followed_authors(author TEXT PRIMARY KEY, followed_at INTEGER NOT NULL, last_checked_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS view_history(comic_id TEXT PRIMARY KEY, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, viewed_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS tag_blacklist(tag TEXT PRIMARY KEY, mode TEXT NOT NULL, created_at INTEGER NOT NULL);").map_err(|e| e.to_string())?;
+      CREATE TABLE IF NOT EXISTS tag_blacklist(tag TEXT PRIMARY KEY, mode TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS comic_metadata(comic_id TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, published_at TEXT, PRIMARY KEY(comic_id, category_id));").map_err(|e| e.to_string())?;
     Ok(db)
 }
 pub fn follows(db: &Connection) -> Result<Vec<FollowedAuthor>, String> {
@@ -65,6 +66,38 @@ pub fn history(db: &Connection, limit: i64) -> Result<Vec<ViewHistoryEntry>, Str
 }
 pub fn record(db: &Connection, v: RecordHistory) -> Result<(), String> {
     db.execute("INSERT INTO view_history VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(comic_id) DO UPDATE SET title=?2,thumbnail=?3,category_id=?4,author=?5,viewed_at=?6",params![v.comic_id,v.title,v.thumbnail,v.category_id,v.author,now()]).map_err(|e|e.to_string())?;
+    Ok(())
+}
+pub fn comic_metadata(
+    db: &Connection,
+    category_id: i32,
+    id: &str,
+) -> Result<Option<ComicMetadata>, String> {
+    let mut statement = db
+        .prepare("SELECT comic_id,category_id,author,published_at FROM comic_metadata WHERE comic_id=?1 AND category_id=?2")
+        .map_err(|e| e.to_string())?;
+    let mut rows = statement
+        .query(params![id, category_id])
+        .map_err(|e| e.to_string())?;
+    rows.next()
+        .map_err(|e| e.to_string())?
+        .map(|row| {
+            Ok(ComicMetadata {
+                id: row.get(0)?,
+                category_id: row.get(1)?,
+                author: row.get(2)?,
+                published_at: row.get(3)?,
+            })
+        })
+        .transpose()
+        .map_err(|e: rusqlite::Error| e.to_string())
+}
+pub fn save_comic_metadata(db: &Connection, value: &ComicMetadata) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO comic_metadata VALUES(?1,?2,?3,?4) ON CONFLICT(comic_id,category_id) DO UPDATE SET author=?3,published_at=?4",
+        params![value.id, value.category_id, value.author, value.published_at],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 pub fn blacklist(db: &Connection) -> Result<Vec<BlacklistEntry>, String> {

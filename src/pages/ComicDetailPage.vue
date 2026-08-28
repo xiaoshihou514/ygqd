@@ -84,7 +84,7 @@ async function loadComic(categoryId: number, id: string) {
         title: detail.value.title,
         thumbnail: detail.value.thumbnail,
         categoryId: detail.value.categoryId,
-        author: detail.value.author,
+        author: effectiveAuthor.value,
       })
     }
   } catch (e) {
