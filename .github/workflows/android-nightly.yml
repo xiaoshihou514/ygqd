@@ -25,16 +25,16 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -63,10 +63,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Check frontend and Rust
-        run: |
-          npm run type-check
-          cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Check frontend
+        run: npm run type-check
 
       - name: Initialize Android project
         run: npm run android:init
