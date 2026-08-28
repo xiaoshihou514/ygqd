@@ -1,8 +1,9 @@
 name: Android Nightly
 
 on:
-  schedule:
-    - cron: '0 18 * * *'
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
