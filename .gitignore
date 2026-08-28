@@ -11,6 +11,8 @@ node_modules
 .DS_Store
 dist
 dist-ssr
+src-tauri/target
+src-tauri/gen
 coverage
 *.local
 

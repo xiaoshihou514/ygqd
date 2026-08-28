@@ -9,6 +9,7 @@ import { useViewHistory } from '@/composables/useViewHistory'
 import { extractAuthorFromTitle } from '@/utils/title'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import ProxyImage from '@/components/ProxyImage.vue'
 
 const PAGE_SIZE = 10
 
@@ -153,11 +154,10 @@ export default {
         <div class="detail-header">
           <div class="cover-col">
             <div class="cover-wrap">
-              <img
+              <ProxyImage
                 v-if="detail.thumbnail"
                 :src="detail.thumbnail"
                 :alt="detail.title"
-                referrerpolicy="no-referrer"
               />
               <div v-else class="cover-placeholder">
                 <span>{{ detail.title }}</span>
@@ -300,13 +300,12 @@ export default {
         </div>
 
         <div v-if="detail.images.length > 0" class="detail-gallery">
-          <img
+          <ProxyImage
             v-for="(img, i) in visibleImages"
             :key="i"
             :src="img"
             :alt="`${detail.title} - 第${i + 1}页`"
             loading="lazy"
-            referrerpolicy="no-referrer"
             class="gallery-img"
           />
 

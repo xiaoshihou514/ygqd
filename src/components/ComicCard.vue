@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { ComicItem } from '@/types'
+import ProxyImage from '@/components/ProxyImage.vue'
 
 const props = defineProps<{
   item: ComicItem
@@ -11,16 +12,9 @@ const router = useRouter()
 const TAG_LIMIT = 4
 const imgError = ref(false)
 
-const isAndroid = typeof (window as any).AndroidBridge !== 'undefined'
-
 function handleClick() {
   const url = `/comic/${props.item.categoryId}/${props.item.id}`
-  if (isAndroid) {
-    router.push(url)
-  } else {
-    window.open(url, '_blank', 'noopener,noreferrer')
-    window.focus()
-  }
+  router.push(url)
 }
 </script>
 
@@ -33,12 +27,11 @@ function handleClick() {
     @click.prevent="handleClick"
   >
     <div class="card-image">
-      <img
+      <ProxyImage
         v-if="item.thumbnail && !imgError"
         :src="item.thumbnail"
         :alt="item.title"
         loading="lazy"
-        referrerpolicy="no-referrer"
         @error="imgError = true"
       />
       <div v-if="!item.thumbnail || imgError" class="card-placeholder">

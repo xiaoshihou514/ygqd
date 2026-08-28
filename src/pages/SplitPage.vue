@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { splitAndGroup } from '@/utils/split'
 import type { ComicItem, SplitGroup } from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
+import ProxyImage from '@/components/ProxyImage.vue'
 
 const router = useRouter()
 const groups = ref<SplitGroup[]>([])
@@ -122,13 +123,12 @@ function formatChapters(chapters: number[]): string {
                   :href="`/comic/${item.categoryId}/${item.id}`"
                   class="item-link"
                 >
-                  <img
+                  <ProxyImage
                     v-if="item.thumbnail"
                     :src="item.thumbnail"
                     :alt="item.title"
                     class="item-thumb"
                     loading="lazy"
-                    referrerpolicy="no-referrer"
                   />
                   <span class="item-title">{{ item.title }}</span>
                 </a>

@@ -1,62 +1,37 @@
-# niacg — 漫画浏览应用 (Vue 3 + Kotlin/Ktor)
+# niacg — Android 漫画浏览应用（Vue 3 + Tauri 2）
 
 ## 项目概况
 
-前端 Vue 3 + TypeScript + Vite + vue-router，后端 Kotlin/Ktor 多模块 Gradle 项目。
-后端同时提供桌面端（单文件可执行）和 Android APK（内嵌 WebView）两种分发形式。
+前端使用 Vue 3、TypeScript、Vite 和 vue-router。Android 容器及全部后端逻辑使用
+Tauri 2/Rust；应用内部不启动 HTTP 服务，也不提供桌面分发。
 
 ## 关键命令
 
 ```sh
-# 前端
-npm run dev              # Vite 开发服务器（:5173），/api/* 代理到 KOTLIN_BACKEND
-npm run build-only       # 生产构建
-npm run type-check       # vue-tsc --build 类型检查（tsconfig 有 project references）
-npm run lint             # eslint . --fix
-npm run format           # prettier --write src/
-npm run backend          # 启动 Kotlin 桌面后端（Gradle :server-desktop:run）
-
-# 全量构建
-npm run desktop          # vite build → :server-desktop:installDist
-npm run android          # vite build → :server-android:assembleRelease
-
-# Kotlin 后端测试（核心模块）
-cd kotlin-backend && ./gradlew :core:test -PexcludeIntegration
+npm run type-check       # Vue/TypeScript 类型检查
+npm run build-only       # Vite 生产构建
+npm run android:init     # 首次生成 Tauri Android 工程
+npm run android:dev      # 在 Android 设备或模拟器上开发
+npm run android          # 构建 APK/AAB
+cd src-tauri && cargo check
+cd src-tauri && cargo fmt --check
 ```
 
 ## 架构要点
 
-- **Vite 代理**：开发环境 `/api/*` 由 Vite proxy 转发到 `KOTLIN_BACKEND`（默认 `http://localhost:8080`），无需单独配置 CORS
-- **双后端实现**：`src/server/parser.ts` 用 Node.js（`node-html-parser`）抓取 niacg.com；`kotlin-backend/` 用 Ktor + Jsoup 实现同样功能——两者是平行实现，没有调用关系
-- **tsconfig project references**：`tsconfig.json` -> `tsconfig.app.json` + `tsconfig.node.json`；`src/server/*` 仅在 node 配置中编译
-- **@/ 路径别名**：映射到 `./src/*`，在 Vue SFC 和 TS 文件中通用
-- **`noUncheckedIndexedAccess: true`**：tsconfig.app.json 开启，数组/对象访问需处理 undefined
+- Vue 通过 `@tauri-apps/api/core` 的 `invoke` 调用 Rust commands。
+- commands、网络、缓存和数据访问入口位于 `src-tauri/src/lib.rs`。
+- HTML 解析位于 `src-tauri/src/parser.rs`，使用 `scraper`。
+- 关注、历史和黑名单位于应用数据目录的 `ygqd.db`，使用 bundled SQLite。
+- 图片通过 `fetch_image` command 返回二进制数据，`ProxyImage.vue` 将其转换成 Blob URL。
+- `src/services/api.ts` 是前端唯一的 Tauri IPC 封装层。
+- `noUncheckedIndexedAccess: true`，索引访问必须处理 `undefined`。
 
-## Kotlin 后端注意事项
+## 开发注意事项
 
-- **JDK 17**，Kotlin 2.1.10，Ktor 3.0.2，Gradle 8.x
-- **core 模块**：`allWarningsAsErrors = true`，JaCoCo 强制指令覆盖率 ≥ 95%（`./gradlew check` 会运行 `checkCoverage`）
-- **测试**：集成测试标记 `@Tag("integration")`，CI 中用 `-PexcludeIntegration` 跳过
-- **server-desktop**：主类 `com.niacg.backend.server.MainKt`，构建时将 `dist/` 复制到 `web/` 目录
-- **server-android**：minSdk 26，targetSdk 35，构建时将 `dist/` 复制到 `src/main/assets/web/`
-- **CI 触发条件**：`push-apk.yml` 监听 `kotlin-backend/**`、`src/**`、`package.json`、`vite.config.ts`、`tsconfig*.json`、`index.html` 变更
-
-## 开发工作流
-
-本地开发需要同时运行前端和后端：
-
-```sh
-# 方式一：一键启动（Kitty 终端，分屏）
-./launch_kitty.sh
-
-# 方式二：手动分步
-npm run backend    # 终端 1：Kotlin 后端 (:8080)
-npm run dev        # 终端 2：Vite 前端 (:5173)
-```
-
-## 部署
-
-- `npm run desktop` -> `kotlin-backend/server-desktop/build/install/server-desktop/`
-- `npm run android` -> `kotlin-backend/server-android/build/outputs/apk/release/`
-- GitHub Release（latest tag）由 push-apk.yml 自动推送，pre-release
-- `release.keystore` 和签名密码通过 CI secrets 注入
+- 这是 Android-only 项目；不要增加桌面窗口行为或 localhost API 服务。
+- 新增后端功能时同时注册 `#[tauri::command]` 和 `generate_handler!`，再在
+  `src/services/api.ts` 添加类型化封装。
+- 网络请求应继续复用共享的 `reqwest::Client`，以保留 cookie 和统一请求头。
+- SQLite 操作必须经过共享连接的互斥锁，并保持 camelCase IPC 序列化格式。
+- 修改解析逻辑后应优先增加基于固定 HTML fixture 的 Rust 单元测试。
