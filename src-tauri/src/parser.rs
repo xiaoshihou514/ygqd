@@ -44,6 +44,13 @@ fn attr(el: Option<ElementRef<'_>>, names: &[&str]) -> String {
     })
     .unwrap_or_default()
 }
+fn unique(items: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    items
+        .into_iter()
+        .filter(|v| seen.insert(v.clone()))
+        .collect()
+}
 
 fn item(el: ElementRef<'_>) -> Option<ComicItem> {
     let link = el.select(&sel("a[href*='moehome']")).next()?;
@@ -58,11 +65,12 @@ fn item(el: ElementRef<'_>) -> Option<ComicItem> {
         .next()
         .map(text)
         .unwrap_or_default();
-    let tags = el
-        .select(&sel(".tag"))
-        .map(text)
-        .filter(|v| !v.is_empty())
-        .collect();
+    let tags = unique(
+        el.select(&sel(".tag"))
+            .map(text)
+            .filter(|v| !v.is_empty())
+            .collect(),
+    );
     let likes = el
         .select(&sel("[id^='albim_likes_']"))
         .next()
@@ -248,9 +256,9 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
             .unwrap_or_else(|| category(category_id)),
         category_id,
         author,
-        works: list(".tag-block [data-type='works'] a.btn"),
-        characters: list(".tag-block [data-type='actor'] a.btn"),
-        tags: list(".tag-block [data-type='tags'] a.btn"),
+        works: unique(list(".tag-block [data-type='works'] a.btn")),
+        characters: unique(list(".tag-block [data-type='actor'] a.btn")),
+        tags: unique(list(".tag-block [data-type='tags'] a.btn")),
         likes: doc
             .select(&sel("#diggnum, [id^='albim_likes_']"))
             .next()
@@ -307,5 +315,35 @@ mod tests {
         );
 
         assert_eq!(parsed.author, "Author");
+    }
+
+    #[test]
+    fn deduplicates_tags_keeping_order() {
+        let parsed = detail(
+            r#"<html><body><h1>Example</h1>
+                <div class="tag-block"><span data-type="tags">
+                    <a class="btn">纯爱</a><a class="btn">纯爱</a><a class="btn">萝莉</a><a class="btn">萝莉</a>
+                </span></div>
+            </body></html>"#,
+            3,
+            "42".into(),
+        );
+
+        assert_eq!(parsed.tags, vec!["纯爱", "萝莉"]);
+    }
+
+    #[test]
+    fn deduplicates_works_keeping_order() {
+        let parsed = detail(
+            r#"<html><body><h1>Example</h1>
+                <div class="tag-block"><span data-type="works">
+                    <a class="btn">作品A</a><a class="btn">作品B</a><a class="btn">作品A</a>
+                </span></div>
+            </body></html>"#,
+            3,
+            "42".into(),
+        );
+
+        assert_eq!(parsed.works, vec!["作品A", "作品B"]);
     }
 }

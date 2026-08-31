@@ -102,25 +102,36 @@ async function findNewWorks(
   return found
 }
 
+const CONCURRENCY = 3
+
 async function syncNewWorks() {
   if (syncing.value) return
   syncing.value = true
   syncError.value = ''
   try {
     const history = await fetchViewHistory(10000)
-    for (let index = 0; index < followed.value.length; index++) {
-      const follow = followed.value[index]
-      if (!follow) continue
-      syncProgress.value = `正在检查 ${follow.author}（${index + 1}/${followed.value.length}）`
-      try {
-        const items = await fetchAllAuthorWorks(follow.author)
-        authorWorks.value[follow.author] = { items, loading: false }
-        newByAuthor.value[follow.author] = await findNewWorks(follow, history, items)
-      } catch {
-        newByAuthor.value[follow.author] = []
-        syncError.value = '部分作者检查失败，可稍后重试'
+    const queue = [...followed.value]
+    const total = queue.length
+    let done = 0
+    const workerCount = Math.min(CONCURRENCY, total)
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (queue.length > 0) {
+        const follow = queue.shift()
+        if (!follow) continue
+        try {
+          const items = await fetchAllAuthorWorks(follow.author)
+          authorWorks.value[follow.author] = { items, loading: false }
+          newByAuthor.value[follow.author] = await findNewWorks(follow, history, items)
+        } catch {
+          newByAuthor.value[follow.author] = []
+          syncError.value = '部分作者检查失败，可稍后重试'
+        } finally {
+          done++
+          syncProgress.value = `正在检查 ${total} 位作者（${done}/${total}）`
+        }
       }
-    }
+    })
+    await Promise.all(workers)
   } catch {
     syncError.value = '检查新作失败，请确认网络后重试'
   } finally {

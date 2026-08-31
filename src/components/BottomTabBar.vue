@@ -1,7 +1,36 @@
 <script setup lang="ts">
-import { RouterLink, useRoute } from 'vue-router'
+import { nextTick } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
+const router = useRouter()
+
+const DOUBLE_CLICK_MS = 300
+let lastClickTab = ''
+let lastClickAt = 0
+
+function scrollToTop() {
+  if ('scrollBehavior' in document.documentElement.style) {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  } else {
+    window.scrollTo(0, 0)
+  }
+}
+
+async function handleTabClick(tab: { to: string }) {
+  const now = Date.now()
+  const isDoubleClick = lastClickTab === tab.to && now - lastClickAt < DOUBLE_CLICK_MS
+  lastClickTab = tab.to
+  lastClickAt = now
+  if (!isDoubleClick) return
+
+  if (route.path !== tab.to) {
+    await router.push(tab.to)
+  }
+  await nextTick()
+  // keep-alive 页面会在激活时恢复滚动位置，等它完成后再滚到顶部
+  setTimeout(scrollToTop, 100)
+}
 
 const tabs = [
   {
@@ -41,6 +70,7 @@ const tabs = [
         :to="tab.to"
         class="tab-item"
         :class="{ active: route.path === tab.to }"
+        @click="handleTabClick(tab)"
       >
         <svg
           class="tab-icon"
