@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import { fetchComicMetadata, fetchViewHistory, searchComics } from '@/services/api'
@@ -12,30 +12,47 @@ import LoadingSpinner from '@/components/LoadingSpinner.vue'
 const router = useRouter()
 const { followed, loading: loadingFollows, load, unfollow } = useFollowedAuthors()
 
-const expandedAuthor = ref<string | null>(null)
-const authorWorks = ref<Record<string, { items: ComicItem[]; loading: boolean }>>({})
+interface AuthorWorksState {
+  items: ComicItem[]
+  page: number
+  hasNext: boolean
+  loading: boolean
+}
+
+const authorWorks = ref<Record<string, AuthorWorksState>>({})
 const newByAuthor = ref<Record<string, ComicItem[]>>({})
 const syncing = ref(false)
+const loadingMore = ref(false)
 const syncProgress = ref('')
 const syncError = ref('')
 const exporting = ref(false)
 const exportStatus = ref('')
+const historySnapshot = ref<ViewHistoryEntry[]>([])
+let syncCacheBuster = ''
+let nextAuthorIndex = 0
+let sentinel: HTMLElement | null = null
+let observer: IntersectionObserver | null = null
 
-const newItems = computed(() => {
+const newItemKeys = computed(() => {
   const seen = new Set<string>()
-  return followed.value.flatMap((fa) => newByAuthor.value[fa.author] ?? [])
-    .filter((item) => {
-      const key = `${item.categoryId}:${item.id}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
+  followed.value.forEach((fa) => {
+    newByAuthor.value[fa.author]?.forEach((item) => {
+      seen.add(`${item.categoryId}:${item.id}`)
     })
+  })
+  return seen
 })
+
+const hasMoreWorks = computed(() =>
+  followed.value.some((fa) => authorWorks.value[fa.author]?.hasNext),
+)
 
 onMounted(async () => {
   await load()
   if (followed.value.length > 0) {
     await syncNewWorks()
+    await nextTick()
+    setupObserver()
   }
 })
 
@@ -55,37 +72,44 @@ function baselineFor(follow: FollowedAuthor, history: ViewHistoryEntry[]): strin
   return siteDate(Math.max(lastRead, follow.followedAt))
 }
 
-async function fetchAllAuthorWorks(author: string): Promise<ComicItem[]> {
-  const params = { keyword: author, classid: 9, show: 'title,text,keyboard,ftitle', tempid: '1' }
-  const cacheBuster = String(Date.now())
-  const first = await searchComics(params, 0, cacheBuster)
-  const all = [...first.items]
-  const totalPages = Math.min(Math.max(first.pagination.total, 1), 50)
-  for (let page = 1; page < totalPages; page += 3) {
-    const pages = Array.from(
-      { length: Math.min(3, totalPages - page) },
-      (_, offset) => page + offset,
-    )
-    const results = await Promise.all(pages.map((value) => searchComics(params, value, cacheBuster)))
-    all.push(...results.flatMap((result) => result.items))
+async function fetchAuthorPage(
+  follow: FollowedAuthor,
+  page: number,
+): Promise<ComicItem[]> {
+  const result = await searchComics(
+    { keyword: follow.author, classid: 9, show: 'title,text,keyboard,ftitle', tempid: '1' },
+    page,
+    syncCacheBuster,
+  )
+  const state = authorWorks.value[follow.author] ?? {
+    items: [],
+    page: -1,
+    hasNext: true,
+    loading: false,
   }
-  const seen = new Set<string>()
-  return all.filter((item) => {
+  const seen = new Set(state.items.map((item) => `${item.categoryId}:${item.id}`))
+  state.items.push(...result.items.filter((item) => {
     const key = `${item.categoryId}:${item.id}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
-  })
+  }))
+  state.page = page
+  state.hasNext = result.pagination.hasNext
+  state.loading = false
+  authorWorks.value[follow.author] = state
+  return result.items
 }
 
-async function findNewWorks(
+async function markNewWorks(
   follow: FollowedAuthor,
   history: ViewHistoryEntry[],
   items: ComicItem[],
-): Promise<ComicItem[]> {
+): Promise<void> {
   const baseline = baselineFor(follow, history)
   const viewed = new Set(history.map((entry) => `${entry.categoryId}:${entry.comicId}`))
-  const found: ComicItem[] = []
+  const found = newByAuthor.value[follow.author] ?? []
+  const foundKeys = new Set(found.map((item) => `${item.categoryId}:${item.id}`))
   for (let index = 0; index < items.length; index += 4) {
     const batch = items.slice(index, index + 4)
     const metadata = await Promise.all(batch.map((item) =>
@@ -96,10 +120,14 @@ async function findNewWorks(
       if (!item || !value?.publishedAt) return
       if (!sameAuthor(value.author, follow.author)) return
       if (viewed.has(`${item.categoryId}:${item.id}`)) return
-      if (value.publishedAt > baseline) found.push(item)
+      const key = `${item.categoryId}:${item.id}`
+      if (value.publishedAt > baseline && !foundKeys.has(key)) {
+        found.push(item)
+        foundKeys.add(key)
+      }
     })
   }
-  return found
+  newByAuthor.value[follow.author] = found
 }
 
 async function syncNewWorks() {
@@ -107,17 +135,31 @@ async function syncNewWorks() {
   syncing.value = true
   syncError.value = ''
   try {
-    const history = await fetchViewHistory(10000)
+    historySnapshot.value = await fetchViewHistory(10000)
+    syncCacheBuster = String(Date.now())
+    authorWorks.value = {}
+    newByAuthor.value = {}
+    nextAuthorIndex = 0
     for (let index = 0; index < followed.value.length; index++) {
       const follow = followed.value[index]
       if (!follow) continue
       syncProgress.value = `正在检查 ${follow.author}（${index + 1}/${followed.value.length}）`
       try {
-        const items = await fetchAllAuthorWorks(follow.author)
-        authorWorks.value[follow.author] = { items, loading: false }
-        newByAuthor.value[follow.author] = await findNewWorks(follow, history, items)
+        authorWorks.value[follow.author] = {
+          items: [],
+          page: -1,
+          hasNext: true,
+          loading: true,
+        }
+        const items = await fetchAuthorPage(follow, 0)
+        await markNewWorks(follow, historySnapshot.value, items)
       } catch {
         newByAuthor.value[follow.author] = []
+        const state = authorWorks.value[follow.author]
+        if (state) {
+          state.loading = false
+          state.hasNext = false
+        }
         syncError.value = '部分作者检查失败，可稍后重试'
       }
     }
@@ -126,24 +168,54 @@ async function syncNewWorks() {
   } finally {
     syncing.value = false
     syncProgress.value = ''
+    await nextTick()
+    setupObserver()
   }
 }
 
-async function toggleAuthor(author: string) {
-  if (expandedAuthor.value === author) {
-    expandedAuthor.value = null
-    return
-  }
-  expandedAuthor.value = author
-  if (!authorWorks.value[author]) {
-    authorWorks.value[author] = { items: [], loading: true }
-    try {
-      const result = await searchComics({ keyword: author, classid: 9, show: 'title,text,keyboard,ftitle', tempid: '1' })
-      authorWorks.value[author] = { items: result.items, loading: false }
-    } catch {
-      authorWorks.value[author] = { items: [], loading: false }
+async function loadNextPage() {
+  if (loadingMore.value || syncing.value || followed.value.length === 0) return
+
+  const start = nextAuthorIndex % followed.value.length
+  let selected: { follow: FollowedAuthor; page: number } | null = null
+  for (let offset = 0; offset < followed.value.length; offset += 1) {
+    const index = (start + offset) % followed.value.length
+    const follow = followed.value[index]
+    const state = follow ? authorWorks.value[follow.author] : undefined
+    if (follow && state && !state.loading && state.hasNext) {
+      selected = { follow, page: state.page + 1 }
+      nextAuthorIndex = (index + 1) % followed.value.length
+      break
     }
   }
+  if (!selected) return
+
+  loadingMore.value = true
+  authorWorks.value[selected.follow.author]!.loading = true
+  try {
+    const items = await fetchAuthorPage(selected.follow, selected.page)
+    await markNewWorks(selected.follow, historySnapshot.value, items)
+  } catch {
+    syncError.value = '加载更多作品失败，请重试'
+  } finally {
+    const state = authorWorks.value[selected.follow.author]
+    if (state) state.loading = false
+    loadingMore.value = false
+  }
+}
+
+function setupObserver() {
+  observer?.disconnect()
+  sentinel = document.querySelector('.scroll-sentinel')
+  if (!sentinel) return
+
+  observer = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting) {
+      loadNextPage()
+    }
+  }, { rootMargin: '200px' })
+
+  observer.observe(sentinel)
 }
 
 function goToAuthor(author: string) {
@@ -189,6 +261,11 @@ async function handleExport() {
     exporting.value = false
   }
 }
+
+onUnmounted(() => {
+  observer?.disconnect()
+  observer = null
+})
 </script>
 
 <template>
@@ -211,13 +288,13 @@ async function handleExport() {
       />
 
       <template v-else>
-        <section class="update-panel" :class="{ hasUpdates: newItems.length > 0 }">
+        <section class="update-panel" :class="{ hasUpdates: newItemKeys.size > 0 }">
           <div class="update-copy">
             <span class="update-kicker">关注动态</span>
             <strong v-if="syncing">{{ syncProgress || '正在检查新作' }}</strong>
-            <strong v-else-if="newItems.length">发现 {{ newItems.length }} 部确定的新作</strong>
+            <strong v-else-if="newItemKeys.size">发现 {{ newItemKeys.size }} 部确定的新作</strong>
             <strong v-else>暂时没有确定的新作</strong>
-            <span v-if="!syncing" class="update-detail">以最后阅读日期为准，同日发布的作品不会误报</span>
+            <span v-if="!syncing" class="update-detail">新作会在对应作品卡片上标记</span>
           </div>
           <button class="refresh-btn" :disabled="syncing" @click="syncNewWorks">
             {{ syncing ? '检查中' : '重新检查' }}
@@ -226,19 +303,13 @@ async function handleExport() {
 
         <p v-if="syncError" class="sync-error">{{ syncError }}</p>
 
-        <section v-if="newItems.length" class="new-works">
-          <h3 class="section-title">新作</h3>
-          <ComicGrid :items="newItems" />
-        </section>
-
-      <div class="following-list">
+        <div class="following-list">
         <div
           v-for="fa in followed"
           :key="fa.author"
           class="author-card"
-          :class="{ expanded: expandedAuthor === fa.author }"
         >
-          <div class="author-header" @click="toggleAuthor(fa.author)">
+          <div class="author-header">
             <span class="author-name">{{ fa.author }}</span>
             <span v-if="newByAuthor[fa.author]?.length" class="new-count">
               {{ newByAuthor[fa.author]!.length }} 部新作
@@ -267,23 +338,34 @@ async function handleExport() {
             </div>
           </div>
 
-          <div v-if="expandedAuthor === fa.author" class="author-works">
+          <div class="author-works">
             <LoadingSpinner
-              v-if="authorWorks[fa.author]?.loading"
+              v-if="!authorWorks[fa.author]?.items.length && (syncing || authorWorks[fa.author]?.loading)"
               message="加载作品..."
             />
             <ComicGrid
-              v-else-if="authorWorks[fa.author]?.items.length"
+              v-if="authorWorks[fa.author]?.items.length"
               :items="authorWorks[fa.author]!.items"
+              :new-item-keys="newItemKeys"
             />
             <EmptyState
-              v-else
+              v-if="!syncing && !authorWorks[fa.author]?.loading && !authorWorks[fa.author]?.items.length"
               title="未找到作品"
               :message="`未能搜索到 ${fa.author} 的作品`"
             />
           </div>
         </div>
       </div>
+
+        <div v-if="loadingMore" class="loading-more">
+          <LoadingSpinner message="正在加载更多..." />
+        </div>
+
+        <div v-if="!syncing && !loadingMore && !hasMoreWorks" class="no-more">
+          <span>已加载全部关注作品</span>
+        </div>
+
+        <div v-if="hasMoreWorks" class="scroll-sentinel" />
       </template>
     </div>
   </div>
@@ -391,16 +473,6 @@ async function handleExport() {
   font-size: var(--font-size-caption);
 }
 
-.new-works {
-  margin-bottom: var(--spacing-xl);
-}
-
-.section-title {
-  margin-bottom: var(--spacing-md);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-tagline);
-}
-
 .new-count {
   padding: 3px 8px;
   border-radius: var(--radius-pill);
@@ -439,12 +511,7 @@ async function handleExport() {
   align-items: center;
   gap: var(--spacing-md);
   padding: var(--spacing-md) var(--spacing-lg);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.author-header:hover {
-  background: var(--color-primary-focus);
+  cursor: default;
 }
 
 .author-name {
@@ -490,5 +557,20 @@ async function handleExport() {
 .author-works {
   border-top: 1px solid var(--color-hairline);
   padding: var(--spacing-md);
+}
+
+.loading-more {
+  padding: var(--spacing-lg) 0;
+}
+
+.scroll-sentinel {
+  height: 1px;
+}
+
+.no-more {
+  padding: var(--spacing-lg) 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
+  text-align: center;
 }
 </style>

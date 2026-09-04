@@ -9,6 +9,7 @@ defineOptions({ name: 'ComicCard' })
 
 const props = defineProps<{
   item: ComicItem
+  isNew?: boolean
 }>()
 
 const router = useRouter()
@@ -104,6 +105,7 @@ onBeforeUnmount(() => {
         <span class="placeholder-title">{{ item.title }}</span>
       </div>
       <span class="card-badge">{{ item.category }}</span>
+      <span v-if="isNew" class="card-new-badge">新</span>
     </div>
     <div class="card-body">
       <h3 class="card-title">{{ item.title }}</h3>
@@ -316,6 +318,19 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-weight: var(--font-weight-semibold);
   border-radius: var(--radius-sm);
+  letter-spacing: 0.5px;
+}
+
+.card-new-badge {
+  position: absolute;
+  top: var(--spacing-xs);
+  right: var(--spacing-xs);
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
+  font-size: 11px;
+  font-weight: var(--font-weight-bold);
   letter-spacing: 0.5px;
 }
 

@@ -5,6 +5,7 @@ import ComicCard from './ComicCard.vue'
 defineProps<{
   items: ComicItem[]
   loading?: boolean
+  newItemKeys?: Set<string>
 }>()
 </script>
 
@@ -24,6 +25,7 @@ defineProps<{
         v-for="item in items"
         :key="item.id + item.categoryId"
         :item="item"
+        :is-new="newItemKeys?.has(`${item.categoryId}:${item.id}`)"
       />
     </template>
   </div>
