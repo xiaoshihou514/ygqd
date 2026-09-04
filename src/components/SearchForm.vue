@@ -101,6 +101,15 @@ watch(() => route.query.keyword, (kw) => {
   if (kw && typeof kw === 'string') form.keyword = kw
 })
 
+function clearKeyword() {
+  form.keyword = ''
+  showSuggestions.value = false
+  selectedIndex.value = -1
+  nextTick(() => {
+    inputRef.value?.focus()
+  })
+}
+
 function handleSubmit() {
   if (!form.keyword.trim()) return
   emit('search', {
@@ -139,6 +148,20 @@ onMounted(() => {
             @blur="onInputBlur"
             @keydown="onKeydown"
           />
+          <button
+            v-if="form.keyword"
+            type="button"
+            class="search-clear"
+            title="清空搜索"
+            aria-label="清空搜索"
+            @mousedown.prevent
+            @click="clearKeyword"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
           <ul v-if="showSuggestions && matchedSuggestions.length > 0" class="suggestions-dropdown">
             <li
               v-for="(s, i) in matchedSuggestions"
@@ -260,7 +283,7 @@ onMounted(() => {
 .search-input {
   width: 100%;
   height: 44px;
-  padding: 0 var(--spacing-lg);
+  padding: 0 44px 0 var(--spacing-lg);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: var(--radius-pill);
   font-size: var(--font-size-body);
@@ -274,6 +297,29 @@ onMounted(() => {
 .search-input:focus {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-primary-focus);
+}
+
+.search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-text-muted) 14%, transparent);
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.search-clear:hover {
+  background: color-mix(in srgb, var(--color-text-muted) 24%, transparent);
+  color: var(--color-text-primary);
 }
 
 .search-btn {

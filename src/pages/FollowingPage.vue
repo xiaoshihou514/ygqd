@@ -130,6 +130,8 @@ async function markNewWorks(
   newByAuthor.value[follow.author] = found
 }
 
+const CONCURRENCY = 3
+
 async function syncNewWorks() {
   if (syncing.value) return
   syncing.value = true
@@ -140,29 +142,39 @@ async function syncNewWorks() {
     authorWorks.value = {}
     newByAuthor.value = {}
     nextAuthorIndex = 0
-    for (let index = 0; index < followed.value.length; index++) {
-      const follow = followed.value[index]
-      if (!follow) continue
-      syncProgress.value = `正在检查 ${follow.author}（${index + 1}/${followed.value.length}）`
-      try {
-        authorWorks.value[follow.author] = {
-          items: [],
-          page: -1,
-          hasNext: true,
-          loading: true,
+
+    const queue = [...followed.value]
+    const total = queue.length
+    let done = 0
+    const workerCount = Math.min(CONCURRENCY, total)
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (queue.length > 0) {
+        const follow = queue.shift()
+        if (!follow) continue
+        try {
+          authorWorks.value[follow.author] = {
+            items: [],
+            page: -1,
+            hasNext: true,
+            loading: true,
+          }
+          const items = await fetchAuthorPage(follow, 0)
+          await markNewWorks(follow, historySnapshot.value, items)
+        } catch {
+          newByAuthor.value[follow.author] = []
+          const state = authorWorks.value[follow.author]
+          if (state) {
+            state.loading = false
+            state.hasNext = false
+          }
+          syncError.value = '部分作者检查失败，可稍后重试'
+        } finally {
+          done++
+          syncProgress.value = `正在检查 ${total} 位作者（${done}/${total}）`
         }
-        const items = await fetchAuthorPage(follow, 0)
-        await markNewWorks(follow, historySnapshot.value, items)
-      } catch {
-        newByAuthor.value[follow.author] = []
-        const state = authorWorks.value[follow.author]
-        if (state) {
-          state.loading = false
-          state.hasNext = false
-        }
-        syncError.value = '部分作者检查失败，可稍后重试'
       }
-    }
+    })
+    await Promise.all(workers)
   } catch {
     syncError.value = '检查新作失败，请确认网络后重试'
   } finally {
