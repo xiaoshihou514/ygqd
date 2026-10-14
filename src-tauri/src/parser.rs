@@ -214,12 +214,6 @@ pub fn tag_max_page(html: &str) -> i32 {
 
 pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
     let doc = Html::parse_document(html);
-    let page_text = doc.root_element().text().collect::<String>();
-    let published_at = Regex::new(r"上架日期\s*[:：]\s*(\d{4}-\d{2}-\d{2})")
-        .expect("static date regex")
-        .captures(&page_text)
-        .and_then(|captures| captures.get(1))
-        .map(|value| value.as_str().to_string());
     let list = |selector: &str| {
         doc.select(&sel(selector))
             .map(text)
@@ -264,7 +258,6 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
             .next()
             .map(text)
             .unwrap_or_default(),
-        published_at,
         images: vec![],
     }
 }
@@ -286,22 +279,6 @@ pub fn images(html: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::detail;
-
-    #[test]
-    fn parses_published_date_from_detail_text() {
-        let parsed = detail(
-            "<html><body><h1>Example</h1><div>上架日期 : 2026-06-08</div></body></html>",
-            3,
-            "42".into(),
-        );
-        assert_eq!(parsed.published_at.as_deref(), Some("2026-06-08"));
-    }
-
-    #[test]
-    fn missing_published_date_is_none() {
-        let parsed = detail("<html><body><h1>Example</h1></body></html>", 3, "42".into());
-        assert_eq!(parsed.published_at, None);
-    }
 
     #[test]
     fn reads_author_only_from_the_first_author_block() {

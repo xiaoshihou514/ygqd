@@ -205,37 +205,6 @@ async fn fetch_comic(
     Ok(out)
 }
 #[tauri::command]
-async fn fetch_comic_metadata(
-    category_id: i32,
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<ComicMetadata, String> {
-    {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        if let Some(metadata) = db::comic_metadata(&conn, category_id, &id)? {
-            return Ok(metadata);
-        }
-    }
-    let detail = parser::detail(
-        &state
-            .get(&format!("/moehome-{category_id}-{id}.html"))
-            .await?,
-        category_id,
-        id.clone(),
-    );
-    let metadata = ComicMetadata {
-        id,
-        category_id,
-        author: detail.author,
-        published_at: detail.published_at,
-    };
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    if metadata.published_at.is_some() {
-        db::save_comic_metadata(&conn, &metadata)?;
-    }
-    Ok(metadata)
-}
-#[tauri::command]
 async fn fetch_image(url: String, state: State<'_, AppState>) -> Result<Response, String> {
     let bytes = state
         .client
@@ -302,5 +271,5 @@ fn update_blacklist(tag: String, mode: String, state: State<'_, AppState>) -> Re
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().setup(|app|{let dir=app.path().app_data_dir()?;std::fs::create_dir_all(&dir)?;let mut headers=HeaderMap::new();headers.insert(USER_AGENT,HeaderValue::from_static("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"));headers.insert(REFERER,HeaderValue::from_static(BASE));let client=reqwest::Client::builder().default_headers(headers).cookie_store(true).build()?;let conn=db::open(&dir.join("ygqd.db")).map_err(std::io::Error::other)?;app.manage(AppState{client,db:Mutex::new(conn),cache:Mutex::new(HashMap::new())});Ok(())}).invoke_handler(tauri::generate_handler![fetch_home,fetch_category,search_comics,fetch_comic,fetch_comic_metadata,fetch_image,fetch_follows,follow_author,unfollow_author,fetch_history,record_history,fetch_blacklist,add_blacklist,remove_blacklist,update_blacklist]).run(tauri::generate_context!()).expect("failed to run app")
+    tauri::Builder::default().setup(|app|{let dir=app.path().app_data_dir()?;std::fs::create_dir_all(&dir)?;let mut headers=HeaderMap::new();headers.insert(USER_AGENT,HeaderValue::from_static("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"));headers.insert(REFERER,HeaderValue::from_static(BASE));let client=reqwest::Client::builder().default_headers(headers).cookie_store(true).build()?;let conn=db::open(&dir.join("ygqd.db")).map_err(std::io::Error::other)?;app.manage(AppState{client,db:Mutex::new(conn),cache:Mutex::new(HashMap::new())});Ok(())}).invoke_handler(tauri::generate_handler![fetch_home,fetch_category,search_comics,fetch_comic,fetch_image,fetch_follows,follow_author,unfollow_author,fetch_history,record_history,fetch_blacklist,add_blacklist,remove_blacklist,update_blacklist]).run(tauri::generate_context!()).expect("failed to run app")
 }
