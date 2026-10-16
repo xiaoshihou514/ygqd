@@ -119,7 +119,8 @@ jobs:
       - name: Move nightly tag
         run: |
           git tag --force nightly "$GITHUB_SHA"
-          git push --force origin refs/tags/nightly
+          # Linux 流水线可能同时移动该标签,竞争失败可忽略,由 release upsert 兜底
+          git push --force origin refs/tags/nightly || true
 
       - name: Publish rolling nightly release
         uses: softprops/action-gh-release@v3
@@ -130,7 +131,10 @@ jobs:
           make_latest: false
           target_commitish: ${{ github.sha }}
           body: |
-            Automated Android nightly from `${{ github.sha }}`.
+            Automated nightly from `${{ github.sha }}`.
+
+            安卓 APK 与 Linux AppImage 由两条流水线分别发布到本 release,
+            任一缺失说明对应构建尚未完成或失败。
 
             This release is replaced by the next successful nightly build.
           files: |
