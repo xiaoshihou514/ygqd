@@ -257,7 +257,12 @@ impl BikaApi {
             request = request.bearer_auth(token);
         }
         if let Some(body) = body {
-            request = request.json(&body);
+            // 不能用 .json():它会把 Content-Type 覆盖为不带 charset 的版本,
+            // 哔咔风控会以 "too many requests" 拒绝(实测,见对照测试)
+            let serialized = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+            request = request
+                .header(CONTENT_TYPE, "application/json; charset=UTF-8")
+                .body(serialized);
         }
         let response = request.send().await.map_err(|e| e.to_string())?;
         let status = response.status();
@@ -274,7 +279,7 @@ impl BikaApi {
     }
 
     pub async fn sign_in(&self, email: &str, password: &str) -> Result<String, String> {
-        let data: TokenDoc = self
+        let data: TokenDoc = match self
             .request(
                 "POST",
                 "/auth/sign-in",
@@ -282,7 +287,18 @@ impl BikaApi {
                 Some(json!({ "email": email, "password": password })),
                 None,
             )
-            .await?;
+            .await
+        {
+            Ok(data) => data,
+            // 登录接口返回 200 但不带 data:哔咔防爆破的影子限流(错误密码同样如此)
+            Err(e) if e.contains("missing data") => {
+                return Err("哔咔登录暂时受限（防爆破保护），请过一段时间再试".into())
+            }
+            Err(e) => return Err(e),
+        };
+        if data.token.is_empty() {
+            return Err("哔咔登录暂时受限（防爆破保护），请过一段时间再试".into());
+        }
         Ok(data.token)
     }
 
