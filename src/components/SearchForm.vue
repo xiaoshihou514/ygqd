@@ -211,10 +211,15 @@ onMounted(() => {
               v-for="option in SEARCH_SOURCE_OPTIONS"
               :key="option.id"
               type="button"
-              class="option-tag"
+              class="option-tag source-tag"
               :class="{ active: form.source === option.id }"
               @click="form.source = option.id"
             >
+              <span v-if="option.id === 'all'" class="src-dots">
+                <span class="src-dot niacg" />
+                <span class="src-dot bika" />
+              </span>
+              <span v-else class="src-dot" :class="option.id" />
               {{ option.label }}
             </button>
           </div>
@@ -445,6 +450,12 @@ onMounted(() => {
 .option-group.muted .option-tag {
   opacity: 0.45;
   pointer-events: none;
+}
+
+.option-tag.source-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .filter-input {

@@ -154,7 +154,7 @@ async function handleExport() {
   <div class="blacklist-page">
     <div class="container">
       <div class="page-header">
-        <h1 class="page-title">标签黑名单</h1>
+        <h1 class="page-title">设置</h1>
         <span class="page-count">{{ count }} 个屏蔽标签</span>
         <button class="export-btn" :disabled="exporting" @click="handleExport">
           {{ exporting ? '导出中' : '导出' }}
@@ -163,12 +163,8 @@ async function handleExport() {
 
       <p v-if="exportStatus" class="export-status" aria-live="polite">{{ exportStatus }}</p>
 
-      <p class="page-desc">
-        添加标签到黑名单后，包含该标签的漫画将被过滤隐藏。
-      </p>
-
       <div class="theme-section">
-        <h2 class="section-title">主题模式</h2>
+        <h2 class="section-title">外观</h2>
         <div class="theme-options">
           <button
             v-for="opt in themeOptions"
@@ -185,7 +181,10 @@ async function handleExport() {
       <div class="section-divider" />
 
       <div class="theme-section">
-        <h2 class="section-title">哔咔账号</h2>
+        <h2 class="section-title">
+          <span class="src-dot bika" />
+          哔咔账号
+        </h2>
         <template v-if="bikaLoggedIn">
           <p class="bika-account">已登录：{{ bikaAccountEmail }}</p>
           <button class="bika-logout-btn" @click="handleBikaLogout">退出登录</button>
@@ -217,6 +216,13 @@ async function handleExport() {
       </div>
 
       <div class="section-divider" />
+
+      <div class="theme-section">
+        <h2 class="section-title">标签黑名单</h2>
+        <p class="page-desc">
+          添加标签到黑名单后，两个来源中包含该标签的漫画都会被过滤隐藏。
+        </p>
+      </div>
 
       <div class="add-bar">
         <div class="input-wrap">
@@ -536,6 +542,9 @@ async function handleExport() {
 }
 
 .section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--font-size-body);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);

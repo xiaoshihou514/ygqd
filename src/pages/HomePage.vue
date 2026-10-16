@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { fetchCategoryList, fetchBikaCategories } from '@/services/api'
 import type { ComicItem } from '@/types'
 import { parseLikes } from '@/utils/likes'
-import { HOME_TABS, type HomeTab } from '@/config/sources'
+import { appendDistinct, interleaveSources } from '@/utils/merge'
+import { HOME_TABS, normalizeCategoryLabel, type HomeTab } from '@/config/sources'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import ComicGrid from '@/components/ComicGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -12,17 +14,28 @@ import EmptyState from '@/components/EmptyState.vue'
 defineOptions({ name: 'HomePage' })
 
 const HOME_STATE_KEY = 'home_page_state_v2'
+/** 「最新」混合流固定取 niacg 的漫画分类 */
+const MIX_NIACG_CATEGORY = '9'
+
+interface SourcePageState {
+  page: number
+  hasNext: boolean
+}
 
 interface TabState {
   items: ComicItem[]
   page: number
   hasNext: boolean
   scrollY: number
+  mix?: { niacg: SourcePageState; bika: SourcePageState }
 }
+
+const router = useRouter()
 
 const tabs = ref<HomeTab[]>([...HOME_TABS])
 const activeKey = ref(HOME_TABS[0]!.key)
 const tabStates = ref<Record<string, TabState>>({})
+const mixNotice = ref('')
 
 function stateFor(key: string): TabState {
   if (!tabStates.value[key]) {
@@ -44,10 +57,14 @@ const error = ref('')
 const minLikes = ref(0)
 const { filterItems } = useTagBlacklist()
 
+const needsLogin = computed(() =>
+  activeTab.value.source === 'bika' && error.value.includes('登录'),
+)
+
 const filteredItems = computed(() => {
   let result = items.value
-  if (activeTab.value.key === 'niacg:9') {
-    result = result.filter((item) => item.categoryId !== 1)
+  if (activeTab.value.key === 'mix:' || activeTab.value.key === 'niacg:9') {
+    result = result.filter((item) => item.source !== 'niacg' || item.categoryId !== 1)
   }
   if (minLikes.value > 0) {
     result = result.filter((item) => parseLikes(item.likes) >= minLikes.value)
@@ -56,19 +73,68 @@ const filteredItems = computed(() => {
   return result
 })
 
-let sentinel: HTMLElement | null = null
-let observer: IntersectionObserver | null = null
+/** 混合流:两个源同页并发交错;哔咔不可用时安静降级为单源 */
+async function loadMixPage(state: TabState, reset: boolean) {
+  const mix = state.mix ?? { niacg: { page: -1, hasNext: true }, bika: { page: -1, hasNext: true } }
+  const fetches: { source: 'niacg' | 'bika'; page: number; request: Promise<ComicItem[]> }[] = []
+  for (const source of ['niacg', 'bika'] as const) {
+    if (!mix[source].hasNext) continue
+    fetches.push({
+      source,
+      page: mix[source].page + 1,
+      request: fetchCategoryList(source, source === 'niacg' ? MIX_NIACG_CATEGORY : '', mix[source].page + 1)
+        .then((result) => result.items),
+    })
+  }
+  if (fetches.length === 0) {
+    state.hasNext = false
+    return
+  }
+  const settled = await Promise.allSettled(fetches.map((fetch) => fetch.request))
+  const lists: ComicItem[][] = []
+  fetches.forEach((fetch, index) => {
+    const result = settled[index]!
+    if (result.status === 'fulfilled') {
+      mix[fetch.source] = { page: fetch.page, hasNext: true }
+      lists.push(result.value)
+    } else {
+      mix[fetch.source] = { page: mix[fetch.source].page, hasNext: false }
+      if (fetch.source === 'bika') {
+        mixNotice.value = '哔咔源暂时不可用，可在设置中登录后与最新内容混合显示'
+      }
+    }
+  })
+  state.mix = mix
+  if (reset) {
+    state.items = interleaveSources(lists)
+  } else {
+    appendDistinct(state.items, interleaveSources(lists))
+  }
+  state.hasNext = mix.niacg.hasNext || mix.bika.hasNext
+  if (settled.every((result) => result.status === 'rejected')) {
+    throw new Error(String((settled[0] as PromiseRejectedResult).reason))
+  }
+}
 
 async function loadFirstPage() {
   loading.value = true
   error.value = ''
+  if (activeTab.value.key === 'mix:') {
+    mixNotice.value = ''
+  }
   try {
     const tab = activeTab.value
-    const result = await fetchCategoryList(tab.source, tab.category, 0)
     const state = stateFor(tab.key)
-    state.items = result.items
-    state.hasNext = result.pagination.hasNext
-    state.page = 0
+    if (tab.source === 'mix') {
+      state.mix = { niacg: { page: -1, hasNext: true }, bika: { page: -1, hasNext: true } }
+      await loadMixPage(state, true)
+      state.page = 0
+    } else {
+      const result = await fetchCategoryList(tab.source, tab.category, 0)
+      state.items = result.items
+      state.hasNext = result.pagination.hasNext
+      state.page = 0
+    }
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -82,17 +148,15 @@ async function loadNextPage() {
   try {
     const tab = activeTab.value
     const state = stateFor(tab.key)
-    const nextPage = state.page + 1
-    const result = await fetchCategoryList(tab.source, tab.category, nextPage)
-    const seen = new Set(state.items.map((item) => `${item.source}:${item.id}`))
-    state.items.push(...result.items.filter((item) => {
-      const key = `${item.source}:${item.id}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    }))
-    state.hasNext = result.pagination.hasNext
-    state.page = nextPage
+    if (tab.source === 'mix') {
+      await loadMixPage(state, false)
+    } else {
+      const nextPage = state.page + 1
+      const result = await fetchCategoryList(tab.source, tab.category, nextPage)
+      appendDistinct(state.items, result.items)
+      state.hasNext = result.pagination.hasNext
+      state.page = nextPage
+    }
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -119,6 +183,10 @@ function retry() {
   loadFirstPage()
 }
 
+function goToSettings() {
+  router.push('/settings')
+}
+
 async function loadBikaTabs() {
   try {
     const categories = await fetchBikaCategories()
@@ -126,7 +194,7 @@ async function loadBikaTabs() {
     if (bikaIndex < 0) return
     const dynamic = categories.map((category) => ({
       key: `bika:${category}`,
-      label: category,
+      label: normalizeCategoryLabel(category),
       source: 'bika' as const,
       category,
     }))
@@ -184,6 +252,9 @@ function restoreHomeScroll() {
   nextTick(() => window.scrollTo(0, activeState.value.scrollY))
 }
 
+let sentinel: HTMLElement | null = null
+let observer: IntersectionObserver | null = null
+
 onMounted(() => {
   loadBikaTabs()
   const restored = restoreHomeState()
@@ -223,6 +294,9 @@ onUnmounted(() => {
 
       <div v-else-if="error && items.length === 0" class="home-error">
         <EmptyState title="加载失败" :message="error">
+          <button v-if="needsLogin" class="retry-btn" @click="goToSettings">
+            去设置登录哔咔
+          </button>
           <button class="retry-btn" @click="retry">
             重新加载
           </button>
@@ -241,6 +315,11 @@ onUnmounted(() => {
               :aria-selected="activeKey === tab.key"
               @click="switchTab(tab.key)"
             >
+              <span v-if="tab.source === 'mix'" class="src-dots">
+                <span class="src-dot niacg" />
+                <span class="src-dot bika" />
+              </span>
+              <span v-else class="src-dot" :class="tab.source" />
               {{ tab.label }}
             </button>
           </div>
@@ -254,6 +333,11 @@ onUnmounted(() => {
               min="0"
             />
           </div>
+        </div>
+
+        <div v-if="activeTab.source === 'mix' && mixNotice" class="mix-notice">
+          <span>{{ mixNotice }}</span>
+          <button class="mix-notice-btn" @click="goToSettings">去设置</button>
         </div>
 
         <ComicGrid :items="filteredItems" />
@@ -300,6 +384,10 @@ onUnmounted(() => {
   padding-top: var(--spacing-xxl);
 }
 
+.home-error .retry-btn + .retry-btn {
+  margin-left: var(--spacing-sm);
+}
+
 .page-header {
   display: flex;
   align-items: baseline;
@@ -311,12 +399,16 @@ onUnmounted(() => {
 .content-tabs {
   display: inline-flex;
   flex-wrap: wrap;
+  align-items: center;
   padding: 3px;
   border-radius: var(--radius-pill);
   background: var(--color-divider-soft);
 }
 
 .content-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-width: 66px;
   padding: 7px 16px;
   border-radius: var(--radius-pill);
@@ -341,6 +433,29 @@ onUnmounted(() => {
 .page-count {
   font-size: var(--font-size-caption);
   color: var(--color-text-muted);
+}
+
+.mix-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--color-canvas);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.mix-notice-btn {
+  flex: none;
+  margin-left: auto;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  color: var(--color-accent);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  background: transparent;
 }
 
 .loading-more {

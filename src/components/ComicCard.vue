@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { ComicItem } from '@/types'
 import ProxyImage from '@/components/ProxyImage.vue'
 import { comicPath } from '@/utils/comicPath'
+import { sourceLabel } from '@/config/sources'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 
 defineOptions({ name: 'ComicCard' })
@@ -18,11 +19,6 @@ const imgError = ref(false)
 const blacklistOpen = ref(false)
 const suppressClick = ref(false)
 const { add, has } = useTagBlacklist()
-const badgeText = computed(() =>
-  props.item.source === 'bika' && props.item.category
-    ? `哔咔·${props.item.category}`
-    : props.item.category,
-)
 let pressTimer: ReturnType<typeof setTimeout> | null = null
 let suppressTimer: ReturnType<typeof setTimeout> | null = null
 let pressStart = { x: 0, y: 0 }
@@ -109,7 +105,10 @@ onBeforeUnmount(() => {
       <div v-if="!item.thumbnail || imgError" class="card-placeholder">
         <span class="placeholder-title">{{ item.title }}</span>
       </div>
-      <span class="card-badge">{{ badgeText }}</span>
+      <span class="card-badge">
+        <span class="src-dot" :class="item.source" />
+        {{ item.category || sourceLabel(item.source) }}
+      </span>
     </div>
     <div class="card-body">
       <h3 class="card-title">{{ item.title }}</h3>
@@ -316,6 +315,9 @@ onBeforeUnmount(() => {
   position: absolute;
   top: var(--spacing-xs);
   left: var(--spacing-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 2px 8px;
   background: var(--color-surface-black);
   color: var(--color-body-on-dark);

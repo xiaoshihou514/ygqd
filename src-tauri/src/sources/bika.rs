@@ -1,6 +1,8 @@
 use crate::models::*;
 use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,17 +11,24 @@ const BASE: &str = "https://picaapi.picacomic.com";
 const API_KEY: &str = "C69BAF41DA5ABD1FFEDC6D2FEA56B";
 const SECRET: &str = "~d}$Q7$eIni=V)9\\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn";
 
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 /// PicaAPI 请求签名:`path(含 query) + time + nonce + METHOD + api-key`
 /// 直接拼接后整体转小写,再以固定密钥做 HMAC-SHA256(小写 hex)
 pub fn signature(path_and_query: &str, time: &str, nonce: &str, method: &str) -> String {
     let raw = format!("{path_and_query}{time}{nonce}{method}{API_KEY}").to_lowercase();
     let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).expect("static hmac key");
     mac.update(raw.as_bytes());
-    mac.finalize()
-        .into_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex_lower(&mac.finalize().into_bytes())
 }
 
 fn now_secs() -> String {
@@ -34,75 +43,150 @@ fn nonce() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+// ---- PicaAPI 响应 DTO ----
+
+// 注:泛型容器上的字段不要用 #[serde(default)],serde 会给 T 追加 Default 约束
+#[derive(Deserialize)]
+struct Envelope<T> {
+    code: i64,
+    #[serde(default)]
+    message: String,
+    data: Option<T>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Page<T> {
+    docs: Vec<T>,
+    page: i64,
+    pages: i64,
+}
+
+impl<T> Page<T> {
+    /// PicaAPI 分页为 1-based,统一转换为前端使用的 0-based current
+    fn pagination(&self) -> PaginationInfo {
+        let page = self.page.max(1);
+        let pages = self.pages.max(1);
+        PaginationInfo {
+            current: (page - 1) as i32,
+            total: pages as i32,
+            has_next: page < pages,
+            has_prev: page > 1,
+        }
+    }
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RemoteImage {
+    #[serde(default)]
+    file_server: String,
+    #[serde(default)]
+    path: String,
+}
+
+impl RemoteImage {
+    fn url(&self) -> String {
+        format!("{}{}", self.file_server, self.path)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ComicDoc {
+    #[serde(rename = "_id", default)]
+    id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    author: String,
+    #[serde(default)]
+    categories: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    thumb: Option<RemoteImage>,
+    #[serde(default)]
+    likes_count: i64,
+}
+
+impl From<ComicDoc> for ComicItem {
+    fn from(doc: ComicDoc) -> Self {
+        ComicItem {
+            source: "bika".into(),
+            category: doc.categories.first().cloned().unwrap_or_default(),
+            thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
+            id: doc.id,
+            title: doc.title,
+            category_id: 0,
+            tags: doc.categories,
+            likes: doc.likes_count.to_string(),
+            link: String::new(),
+        }
+    }
+}
+
+impl From<ComicDoc> for ComicDetail {
+    fn from(doc: ComicDoc) -> Self {
+        let mut tags = doc.categories.clone();
+        for tag in &doc.tags {
+            if !tags.contains(tag) {
+                tags.push(tag.clone());
+            }
+        }
+        ComicDetail {
+            source: "bika".into(),
+            category: doc.categories.first().cloned().unwrap_or_default(),
+            thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
+            id: doc.id,
+            title: doc.title,
+            category_id: 0,
+            author: doc.author,
+            works: vec![],
+            characters: vec![],
+            tags,
+            likes: doc.likes_count.to_string(),
+            episodes: vec![],
+            images: vec![],
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EpisodeDoc {
+    #[serde(default)]
+    order: i64,
+    #[serde(default)]
+    title: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PictureDoc {
+    #[serde(default)]
+    media: Option<RemoteImage>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CategoryDoc {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    active: bool,
+    #[serde(default)]
+    is_web: bool,
+}
+
+#[derive(Deserialize)]
+struct TokenDoc {
+    #[serde(default)]
+    token: String,
+}
+
 pub struct BikaApi {
     pub client: reqwest::Client,
-}
-
-fn jstr(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-fn jnum(value: &Value, key: &str) -> i64 {
-    value.get(key).and_then(Value::as_i64).unwrap_or_default()
-}
-
-fn jarr_str(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn image_url(value: &Value) -> String {
-    format!("{}{}", jstr(value, "fileServer"), jstr(value, "path"))
-}
-
-fn comic_item(doc: &Value) -> ComicItem {
-    let categories = jarr_str(doc, "categories");
-    ComicItem {
-        source: "bika".into(),
-        id: jstr(doc, "_id"),
-        title: jstr(doc, "title"),
-        thumbnail: doc.get("thumb").map(image_url).unwrap_or_default(),
-        category: categories.first().cloned().unwrap_or_default(),
-        category_id: 0,
-        tags: categories,
-        likes: jnum(doc, "likesCount").to_string(),
-        link: String::new(),
-    }
-}
-
-/// PicaAPI 分页为 1-based,统一转换为前端使用的 0-based current
-fn pagination(data: &Value) -> PaginationInfo {
-    let page = data.get("page").and_then(Value::as_i64).unwrap_or(1).max(1);
-    let pages = data
-        .get("pages")
-        .and_then(Value::as_i64)
-        .unwrap_or(1)
-        .max(1);
-    PaginationInfo {
-        current: (page - 1) as i32,
-        total: pages as i32,
-        has_next: page < pages,
-        has_prev: page > 1,
-    }
-}
-
-fn docs(data: &Value) -> Vec<Value> {
-    data.get("docs")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
 }
 
 fn encode_query(pairs: &[(&str, &str)]) -> String {
@@ -140,25 +224,25 @@ impl BikaApi {
         Ok(Self { client })
     }
 
-    /// 返回 Err("401") 表示 token 失效,调用方应重新登录后重试
-    async fn request(
+    /// 返回 Err 以 "401" 开头表示 token 失效,调用方应重新登录后重试
+    async fn request<T: DeserializeOwned>(
         &self,
         method: &str,
         path: &str,
         query: Option<String>,
         body: Option<Value>,
         token: Option<&str>,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let url = match &query {
             Some(query) => format!("{BASE}{path}?{query}"),
             None => format!("{BASE}{path}"),
         };
-        let time = now_secs();
-        let nonce = nonce();
         let path_and_query = match &query {
             Some(query) => format!("{path}?{query}"),
             None => path.to_string(),
         };
+        let time = now_secs();
+        let nonce = nonce();
         let signature = signature(&path_and_query, &time, &nonce, method);
         let method = method
             .parse::<reqwest::Method>()
@@ -177,23 +261,20 @@ impl BikaApi {
         }
         let response = request.send().await.map_err(|e| e.to_string())?;
         let status = response.status();
-        let value: Value = response.json().await.map_err(|e| e.to_string())?;
-        let message = value
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("bika request failed");
+        let envelope: Envelope<T> = response.json().await.map_err(|e| e.to_string())?;
         if status.as_u16() == 401 {
-            return Err(format!("401 {message}"));
+            return Err(format!("401 {}", envelope.message));
         }
-        let code = value.get("code").and_then(Value::as_i64).unwrap_or(0);
-        if !status.is_success() || code != 200 {
-            return Err(format!("{message} ({})", status.as_u16()));
+        if !status.is_success() || envelope.code != 200 {
+            return Err(format!("{} ({})", envelope.message, status.as_u16()));
         }
-        Ok(value.get("data").cloned().unwrap_or(Value::Null))
+        envelope
+            .data
+            .ok_or_else(|| "bika response missing data".to_string())
     }
 
     pub async fn sign_in(&self, email: &str, password: &str) -> Result<String, String> {
-        let data = self
+        let data: TokenDoc = self
             .request(
                 "POST",
                 "/auth/sign-in",
@@ -202,26 +283,18 @@ impl BikaApi {
                 None,
             )
             .await?;
-        data.get("token")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| "bika sign-in response missing token".into())
+        Ok(data.token)
     }
 
     pub async fn categories(&self, token: String) -> Result<Vec<String>, String> {
-        let data = self
+        let docs: Vec<CategoryDoc> = self
             .request("GET", "/categories", None, None, Some(token.as_str()))
             .await?;
-        Ok(data
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter(|v| jbool(v, "active") && !jbool(v, "isWeb"))
-                    .map(|v| jstr(v, "title"))
-                    .filter(|v| !v.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default())
+        Ok(docs
+            .into_iter()
+            .filter(|doc| doc.active && !doc.is_web && !doc.title.is_empty())
+            .map(|doc| doc.title)
+            .collect())
     }
 
     /// 分类/标签/作者浏览,page 为 1-based
@@ -240,12 +313,12 @@ impl BikaApi {
             ("s", "dd"),
             ("page", &page.to_string()),
         ]);
-        let data = self
+        let page_docs: Page<ComicDoc> = self
             .request("GET", "/comics", Some(query), None, Some(token.as_str()))
             .await?;
         Ok(CategoryListResult {
-            items: docs(&data).iter().map(comic_item).collect(),
-            pagination: pagination(&data),
+            pagination: page_docs.pagination(),
+            items: page_docs.docs.into_iter().map(Into::into).collect(),
         })
     }
 
@@ -256,7 +329,7 @@ impl BikaApi {
         page: i32,
     ) -> Result<CategoryListResult, String> {
         let query = encode_query(&[("page", &page.to_string())]);
-        let data = self
+        let page_docs: Page<ComicDoc> = self
             .request(
                 "POST",
                 "/comics/search",
@@ -266,40 +339,21 @@ impl BikaApi {
             )
             .await?;
         Ok(CategoryListResult {
-            items: docs(&data).iter().map(comic_item).collect(),
-            pagination: pagination(&data),
+            pagination: page_docs.pagination(),
+            items: page_docs.docs.into_iter().map(Into::into).collect(),
         })
     }
 
     pub async fn detail(&self, token: String, id: &str) -> Result<ComicDetail, String> {
-        let path = format!("/comics/{id}");
-        let data = self
-            .request("GET", &path, None, None, Some(token.as_str()))
-            .await?;
-        let categories = jarr_str(&data, "categories");
-        let tags = jarr_str(&data, "tags");
-        let mut all_tags = categories.clone();
-        for tag in tags {
-            if !all_tags.contains(&tag) {
-                all_tags.push(tag);
-            }
-        }
-        let author = jstr(&data, "author");
-        Ok(ComicDetail {
-            source: "bika".into(),
-            id: jstr(&data, "_id"),
-            title: jstr(&data, "title"),
-            thumbnail: data.get("thumb").map(image_url).unwrap_or_default(),
-            category: categories.first().cloned().unwrap_or_default(),
-            category_id: 0,
-            author,
-            works: vec![],
-            characters: vec![],
-            tags: all_tags,
-            likes: jnum(&data, "likesCount").to_string(),
-            episodes: vec![],
-            images: vec![],
-        })
+        self.request::<ComicDoc>(
+            "GET",
+            &format!("/comics/{id}"),
+            None,
+            None,
+            Some(token.as_str()),
+        )
+        .await
+        .map(Into::into)
     }
 
     /// 循环拉取全部章节,order 升序
@@ -308,7 +362,7 @@ impl BikaApi {
         let mut page = 1;
         loop {
             let query = encode_query(&[("page", &page.to_string())]);
-            let data = self
+            let page_docs: Page<EpisodeDoc> = self
                 .request(
                     "GET",
                     &format!("/comics/{id}/eps"),
@@ -317,18 +371,17 @@ impl BikaApi {
                     Some(token.as_str()),
                 )
                 .await?;
-            for doc in docs(&data) {
-                result.push(Episode {
-                    order: jnum(&doc, "order") as i32,
-                    title: jstr(&doc, "title"),
-                });
-            }
-            if !pagination(&data).has_next {
+            let has_next = page_docs.pagination().has_next;
+            result.extend(page_docs.docs.into_iter().map(|doc| Episode {
+                order: doc.order as i32,
+                title: doc.title,
+            }));
+            if !has_next {
                 break;
             }
             page += 1;
         }
-        result.sort_by_key(|ep| ep.order);
+        result.sort_by_key(|episode| episode.order);
         Ok(result)
     }
 
@@ -341,7 +394,7 @@ impl BikaApi {
         page: i32,
     ) -> Result<ComicImagesResult, String> {
         let query = encode_query(&[("page", &page.to_string())]);
-        let data = self
+        let page_docs: Page<PictureDoc> = self
             .request(
                 "GET",
                 &format!("/comics/{id}/order/{order}/pages"),
@@ -350,28 +403,77 @@ impl BikaApi {
                 Some(token.as_str()),
             )
             .await?;
-        let images = docs(&data)
-            .iter()
-            .map(|doc| doc.get("media").map(image_url).unwrap_or_default())
-            .filter(|v| !v.is_empty())
-            .collect();
         Ok(ComicImagesResult {
-            images,
-            pagination: pagination(&data),
+            pagination: page_docs.pagination(),
+            images: page_docs
+                .docs
+                .into_iter()
+                .filter_map(|doc| doc.media.map(|media| media.url()))
+                .filter(|url| !url.is_empty())
+                .collect(),
         })
-    }
-}
-
-fn jbool(value: &Value, key: &str) -> bool {
-    match value.get(key) {
-        Some(Value::Bool(b)) => *b,
-        _ => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signature_matches_reference_vector() {
+        // 向量由 openssl dgst -sha256 -hmac 独立计算得到
+        let sig = signature(
+            "/comics?c=短篇&page=1",
+            "1792177753",
+            "ffb366c1e5e448069bcdfbcbfb12e051",
+            "GET",
+        );
+        assert_eq!(
+            sig,
+            "e1eba013d81de92db7ab7372b271861f2e928c893899eb727424451f8f4e1eb6"
+        );
+    }
+
+    #[test]
+    fn maps_comic_item_from_api_doc() {
+        let doc: ComicDoc = serde_json::from_str(
+            r#"{
+                "_id": "5822a40b24fcb814c3ed542d",
+                "title": "Example",
+                "author": "Author",
+                "categories": ["短篇", "全彩"],
+                "thumb": { "fileServer": "https://storage.example", "path": "/static/a.jpg" },
+                "likesCount": 1200
+            }"#,
+        )
+        .unwrap();
+        let item = ComicItem::from(doc);
+        assert_eq!(item.id, "5822a40b24fcb814c3ed542d");
+        assert_eq!(item.thumbnail, "https://storage.example/static/a.jpg");
+        assert_eq!(item.category, "短篇");
+        assert_eq!(item.tags, vec!["短篇", "全彩"]);
+        assert_eq!(item.likes, "1200");
+        assert_eq!(item.source, "bika");
+    }
+
+    #[test]
+    fn missing_fields_default_instead_of_failing() {
+        let doc: ComicDoc = serde_json::from_str(r#"{ "_id": "x" }"#).unwrap();
+        let item = ComicItem::from(doc);
+        assert_eq!(item.title, "");
+        assert!(item.tags.is_empty());
+        assert_eq!(item.likes, "0");
+    }
+
+    #[test]
+    fn maps_pagination_from_api_page() {
+        let page: Page<ComicDoc> =
+            serde_json::from_str(r#"{ "docs": [], "page": 2, "pages": 5 }"#).unwrap();
+        let pagination = page.pagination();
+        assert_eq!(pagination.current, 1);
+        assert_eq!(pagination.total, 5);
+        assert!(pagination.has_next && pagination.has_prev);
+    }
 
     #[test]
     #[ignore = "真实 API 联调,需 BIKA_EMAIL/BIKA_PASSWORD 或 BIKA_TOKEN 环境变量"]
@@ -460,54 +562,5 @@ mod tests {
                 assert!(!pictures.images.is_empty(), "pictures should not be empty");
                 println!("first image: {}", pictures.images[0]);
             });
-    }
-
-    #[test]
-    fn signature_matches_reference_vector() {
-        // 向量由 openssl dgst -sha256 -hmac 独立计算得到
-        let sig = signature(
-            "/comics?c=短篇&page=1",
-            "1792177753",
-            "ffb366c1e5e448069bcdfbcbfb12e051",
-            "GET",
-        );
-        assert_eq!(
-            sig,
-            "e1eba013d81de92db7ab7372b271861f2e928c893899eb727424451f8f4e1eb6"
-        );
-    }
-
-    #[test]
-    fn maps_comic_item_from_api_doc() {
-        let doc: Value = serde_json::from_str(
-            r#"{
-                "_id": "5822a40b24fcb814c3ed542d",
-                "title": "Example",
-                "author": "Author",
-                "categories": ["短篇", "全彩"],
-                "thumb": { "fileServer": "https://storage.example", "path": "/static/a.jpg" },
-                "likesCount": 1200
-            }"#,
-        )
-        .unwrap();
-        let item = comic_item(&doc);
-        assert_eq!(item.id, "5822a40b24fcb814c3ed542d");
-        assert_eq!(item.thumbnail, "https://storage.example/static/a.jpg");
-        assert_eq!(item.category, "短篇");
-        assert_eq!(item.tags, vec!["短篇", "全彩"]);
-        assert_eq!(item.likes, "1200");
-        assert_eq!(item.source, "bika");
-    }
-
-    #[test]
-    fn maps_pagination_from_api_page() {
-        let data: Value = serde_json::from_str(
-            r#"{ "docs": [], "page": 2, "pages": 5, "total": 40, "limit": 8 }"#,
-        )
-        .unwrap();
-        let p = pagination(&data);
-        assert_eq!(p.current, 1);
-        assert_eq!(p.total, 5);
-        assert!(p.has_next && p.has_prev);
     }
 }

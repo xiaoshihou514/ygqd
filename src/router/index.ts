@@ -24,9 +24,13 @@ const router = createRouter({
       component: () => import('@/pages/SplitPage.vue'),
     },
     {
-      path: '/settings/blacklist',
-      name: 'tag-blacklist',
+      path: '/settings',
+      name: 'settings',
       component: () => import('@/pages/TagBlacklistPage.vue'),
+    },
+    {
+      path: '/settings/blacklist',
+      redirect: '/settings',
     },
     {
       path: '/following',

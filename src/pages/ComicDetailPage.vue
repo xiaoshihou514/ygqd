@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, onActivated, nextTick, computed } from 'vu
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { fetchComicDetail, fetchComicImages } from '@/services/api'
 import type { ComicDetail } from '@/types'
+import { sourceLabel } from '@/config/sources'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import { useViewHistory } from '@/composables/useViewHistory'
@@ -89,13 +90,17 @@ function loadMore() {
   }
 }
 
-function switchEp(order: number) {
-  if (order === activeEp.value || imageLoading.value) return
-  activeEp.value = order
+function resetGallery(hasNext: boolean) {
   images.value = []
   visibleCount.value = PAGE_SIZE
   imagePage.value = -1
-  imageHasNext.value = true
+  imageHasNext.value = hasNext
+}
+
+function switchEp(order: number) {
+  if (order === activeEp.value || imageLoading.value) return
+  activeEp.value = order
+  resetGallery(true)
   window.scrollTo({ top: 0 })
   loadImagesPage(true)
 }
@@ -127,11 +132,8 @@ function setupObserver() {
 async function loadComic(categoryId: number, id: string) {
   loading.value = true
   error.value = ''
-  visibleCount.value = PAGE_SIZE
-  images.value = []
-  imagePage.value = -1
-  imageHasNext.value = false
   activeEp.value = 1
+  resetGallery(false)
 
   if (observer) {
     observer.disconnect()
@@ -233,6 +235,10 @@ export default {
             <h1 class="detail-title">{{ detail.title }}</h1>
             <div class="detail-meta">
               <span class="meta-category">{{ detail.category }}</span>
+              <span class="meta-source">
+                <span class="src-dot" :class="detail.source" />
+                {{ sourceLabel(detail.source) }}
+              </span>
               <span class="meta-likes">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="var(--color-like)">
                   <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
@@ -519,6 +525,18 @@ export default {
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-semibold);
   border-radius: var(--radius-pill);
+}
+
+.meta-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
 }
 
 .meta-likes {

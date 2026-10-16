@@ -130,23 +130,26 @@ async function loadAllAuthors() {
         bika: { page: -1, hasNext: true },
         loading: true,
       }
-      const settled = await Promise.allSettled([
-        fetchAuthorPage(follow, 'niacg', 0),
-        fetchAuthorPage(follow, 'bika', 0),
-      ])
+      const sourceFetches = (['niacg', 'bika'] as const).map((source) => ({
+        source,
+        request: fetchAuthorPage(follow, source, 0),
+      }))
+      const settled = await Promise.allSettled(sourceFetches.map((fetch) => fetch.request))
       const state = authorWorks.value[follow.author]!
       state.loading = false
-      if (settled[0]!.status === 'rejected') {
-        state.niacg.hasNext = false
-        syncError.value = '部分作者作品加载失败，可稍后刷新重试'
-      }
-      if (settled[1]!.status === 'rejected') {
-        state.bika.hasNext = false
-        const reason = String((settled[1] as PromiseRejectedResult).reason)
-        if (reason.includes('登录') && !bikaHint.value) {
-          bikaHint.value = '哔咔源未登录，已在设置中登录后可查看哔咔作品'
+      sourceFetches.forEach((fetch, index) => {
+        const result = settled[index]!
+        if (result.status === 'fulfilled') return
+        state[fetch.source].hasNext = false
+        if (fetch.source === 'niacg') {
+          syncError.value = '部分作者作品加载失败，可稍后刷新重试'
+        } else {
+          const reason = String(result.reason)
+          if (reason.includes('登录') && !bikaHint.value) {
+            bikaHint.value = '哔咔源未登录，可在设置中登录后同时查看哔咔作品'
+          }
         }
-      }
+      })
       done++
       syncProgress.value = `正在加载 ${total} 位作者的作品（${done}/${total}）`
     }

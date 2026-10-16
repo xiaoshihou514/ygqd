@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivate
 import { useRoute, useRouter } from 'vue-router'
 import { searchComics } from '@/services/api'
 import type { ComicItem, SearchParams, SearchResult } from '@/types'
+import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
@@ -65,22 +66,8 @@ async function runSearch(
   if (fulfilled.length === 0) {
     throw new Error(errors[0] || '搜索失败')
   }
-  const lists = fulfilled.map((result) => result.value.items)
-  const merged: ComicItem[] = []
-  const seen = new Set<string>()
-  const maxLength = Math.max(...lists.map((list) => list.length), 0)
-  for (let i = 0; i < maxLength; i++) {
-    for (const list of lists) {
-      const item = list[i]
-      if (!item) continue
-      const key = `${item.source}:${item.id}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      merged.push(item)
-    }
-  }
   return {
-    items: merged,
+    items: interleaveSources(fulfilled.map((result) => result.value.items)),
     hasNext: fulfilled.some((result) => result.value.pagination.hasNext),
     totalPages: Math.max(
       ...fulfilled.map((result) => result.value.pagination.total),

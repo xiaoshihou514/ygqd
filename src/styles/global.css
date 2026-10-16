@@ -74,6 +74,36 @@ select {
   padding: 0 var(--spacing-lg);
 }
 
+/* ---- 源标:颜色即来源,卡片/详情/tab 统一使用 ---- */
+.src-dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.src-dot.niacg {
+  background: var(--source-niacg);
+}
+
+.src-dot.bika {
+  background: var(--source-bika);
+}
+
+.src-dots {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+}
+
+.src-dots .src-dot {
+  width: 5px;
+  height: 5px;
+}
+
 .main-content {
   padding-top: calc(var(--nav-height) + var(--spacing-sm));
   padding-bottom: calc(var(--tab-bar-total-height) + var(--spacing-sm));
