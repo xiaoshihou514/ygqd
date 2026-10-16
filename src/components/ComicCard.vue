@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import type { ComicItem } from '@/types'
 import ProxyImage from '@/components/ProxyImage.vue'
 import { comicPath } from '@/utils/comicPath'
-import { sourceLabel } from '@/config/sources'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 
 defineOptions({ name: 'ComicCard' })
@@ -105,10 +104,7 @@ onBeforeUnmount(() => {
       <div v-if="!item.thumbnail || imgError" class="card-placeholder">
         <span class="placeholder-title">{{ item.title }}</span>
       </div>
-      <span class="card-badge">
-        <span class="src-dot" :class="item.source" />
-        {{ item.category || sourceLabel(item.source) }}
-      </span>
+      <span v-if="item.category" class="card-badge">{{ item.category }}</span>
     </div>
     <div class="card-body">
       <h3 class="card-title">{{ item.title }}</h3>
@@ -163,15 +159,14 @@ onBeforeUnmount(() => {
   text-decoration: none;
   color: inherit;
   background: var(--color-card-bg);
+  border: 1px solid transparent;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: var(--shadow-card);
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s;
 }
 
 .comic-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-card-hover);
+  border-color: var(--color-hairline);
 }
 
 .card-image {
@@ -315,9 +310,6 @@ onBeforeUnmount(() => {
   position: absolute;
   top: var(--spacing-xs);
   left: var(--spacing-xs);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
   padding: 2px 8px;
   background: var(--color-surface-black);
   color: var(--color-body-on-dark);

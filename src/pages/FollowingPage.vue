@@ -148,7 +148,7 @@ async function loadAllAuthors(force = false) {
         } else {
           const reason = String(result.reason)
           if (reason.includes('登录') && !bikaHint.value) {
-            bikaHint.value = '哔咔源未登录，可在设置中登录后同时查看哔咔作品'
+            bikaHint.value = '部分内容源未连接，可在设置中登录后查看更多作品'
           }
         }
       })

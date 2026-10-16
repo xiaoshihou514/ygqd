@@ -181,16 +181,13 @@ async function handleExport() {
       <div class="section-divider" />
 
       <div class="theme-section">
-        <h2 class="section-title">
-          <span class="src-dot bika" />
-          哔咔账号
-        </h2>
+        <h2 class="section-title">哔咔账号</h2>
         <template v-if="bikaLoggedIn">
           <p class="bika-account">已登录：{{ bikaAccountEmail }}</p>
           <button class="bika-logout-btn" @click="handleBikaLogout">退出登录</button>
         </template>
         <template v-else>
-          <p class="page-desc">登录哔咔账号后可浏览、搜索哔咔漫画源。</p>
+          <p class="page-desc">登录后「最新」与搜索结果将混入哔咔的漫画内容。</p>
           <div class="bika-form">
             <input
               v-model="bikaEmail"

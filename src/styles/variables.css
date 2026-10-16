@@ -49,10 +49,6 @@
   --color-error: #ff4757;
   --color-tab-bar-bg: rgba(255, 255, 255, 0.92);
 
-  /* ---- Source marks: 颜色即来源,全应用统一 ---- */
-  --source-niacg: #0066cc;
-  --source-bika: #7c5cff;
-
   /* ---- Typography ---- */
   --font-family-display: 'SF Pro Display', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-family-body: 'SF Pro Text', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -148,9 +144,6 @@
   --color-divider-soft: #2c2c2e;
   --color-hairline: #38383a;
 
-  --source-niacg: #2997ff;
-  --source-bika: #9b7dff;
-
   --color-bg: var(--color-canvas-parchment);
   --color-card-bg: var(--color-canvas);
   --color-text-primary: var(--color-ink);
@@ -169,8 +162,6 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --source-niacg: #2997ff;
-    --source-bika: #9b7dff;
     --color-canvas: #1c1c1e;
     --color-canvas-parchment: #121212;
     --color-surface-pearl: #1c1c1e;

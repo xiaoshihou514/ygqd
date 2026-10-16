@@ -100,7 +100,7 @@ async function loadMixPage(state: TabState, reset: boolean) {
     } else {
       mix[fetch.source] = { page: mix[fetch.source].page, hasNext: false }
       if (fetch.source === 'bika') {
-        mixNotice.value = '哔咔源暂时不可用，可在设置中登录后与最新内容混合显示'
+        mixNotice.value = '部分内容源未连接，可在设置中登录后混入更多最新内容'
       }
     }
   })
@@ -190,17 +190,17 @@ function goToSettings() {
 async function loadBikaTabs() {
   try {
     const categories = await fetchBikaCategories()
-    const bikaIndex = tabs.value.findIndex((tab) => tab.key === 'bika:')
-    if (bikaIndex < 0) return
-    const dynamic = categories.map((category) => ({
-      key: `bika:${category}`,
-      label: normalizeCategoryLabel(category),
-      source: 'bika' as const,
-      category,
-    }))
-    tabs.value.splice(bikaIndex + 1, 0, ...dynamic)
+    if (tabs.value.some((tab) => tab.key.startsWith('bika:'))) return
+    tabs.value.push(
+      ...categories.map((category) => ({
+        key: `bika:${category}`,
+        label: normalizeCategoryLabel(category),
+        source: 'bika' as const,
+        category,
+      })),
+    )
   } catch {
-    // 哔咔未登录或网络不可用时不追加分类 tab,保留「哔咔」全部 tab
+    // 源不可用(未登录/网络)时不追加其分类 tab,「最新」与静态 tab 不受影响
   }
 }
 
@@ -295,7 +295,7 @@ onUnmounted(() => {
       <div v-else-if="error && items.length === 0" class="home-error">
         <EmptyState title="加载失败" :message="error">
           <button v-if="needsLogin" class="retry-btn" @click="goToSettings">
-            去设置登录哔咔
+            去设置连接
           </button>
           <button class="retry-btn" @click="retry">
             重新加载
@@ -315,11 +315,6 @@ onUnmounted(() => {
               :aria-selected="activeKey === tab.key"
               @click="switchTab(tab.key)"
             >
-              <span v-if="tab.source === 'mix'" class="src-dots">
-                <span class="src-dot niacg" />
-                <span class="src-dot bika" />
-              </span>
-              <span v-else class="src-dot" :class="tab.source" />
               {{ tab.label }}
             </button>
           </div>
@@ -406,9 +401,6 @@ onUnmounted(() => {
 }
 
 .content-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
   min-width: 66px;
   padding: 7px 16px;
   border-radius: var(--radius-pill);

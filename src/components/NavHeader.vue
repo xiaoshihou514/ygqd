@@ -7,10 +7,6 @@
       <RouterLink to="/" class="nav-logo">
         <span class="logo-icon">摇</span>
         <span class="logo-text">摇杆驱动</span>
-        <span class="logo-marks" aria-hidden="true">
-          <span class="src-dot niacg" />
-          <span class="src-dot bika" />
-        </span>
       </RouterLink>
     </div>
   </header>
@@ -59,17 +55,5 @@
   font-size: 18px;
   font-weight: 800;
   color: #fff;
-}
-
-.logo-marks {
-  display: inline-flex;
-  gap: 3px;
-  align-items: center;
-  margin-left: 2px;
-}
-
-.logo-marks .src-dot {
-  width: 5px;
-  height: 5px;
 }
 </style>

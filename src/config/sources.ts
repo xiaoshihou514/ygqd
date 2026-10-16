@@ -19,12 +19,11 @@ export interface HomeTab {
   category: string
 }
 
-/** 首页静态 tab;哔咔的分类 tab 在运行时从接口拉取后追加 */
+/** 首页静态 tab;哔咔的分类 tab 在运行时从接口拉取后追加,统一按分类语言呈现 */
 export const HOME_TABS: HomeTab[] = [
   { key: 'mix:', label: '最新', source: 'mix', category: '' },
   { key: 'niacg:9', label: '漫画', source: 'niacg', category: '9' },
   { key: 'niacg:1', label: 'COS', source: 'niacg', category: '1' },
-  { key: 'bika:', label: '哔咔', source: 'bika', category: '' },
 ]
 
 export function sourceLabel(source: string): string {
