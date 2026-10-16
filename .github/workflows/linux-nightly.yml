@@ -71,7 +71,8 @@ jobs:
           mkdir -p artifacts
           appimage="$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)"
           test -n "$appimage"
-          cp "$appimage" artifacts/
+          # release 资产名会丢弃非 ASCII 字符,统一复制为稳定的 ASCII 文件名
+          cp "$appimage" artifacts/ygqd-linux-x86_64.AppImage
           cd artifacts
           sha256sum -- * | tee ../checksums.txt
           mv ../checksums.txt .
