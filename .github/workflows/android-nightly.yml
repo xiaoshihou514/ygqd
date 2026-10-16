@@ -49,11 +49,11 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # 不用 android-actions/setup-android:其内置 cmdline-tools 16.0 已装不上
+      # legacy `tools` 包(action 上游回归);runner 预装 SDK 足够,直接自装工具链
       - name: Install Android toolchain
         run: |
+          yes | sdkmanager --licenses > /dev/null || true
           sdkmanager \
             "platforms;android-36" \
             "build-tools;$BUILD_TOOLS_VERSION" \

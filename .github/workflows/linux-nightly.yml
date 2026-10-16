@@ -62,22 +62,16 @@ jobs:
       - name: Check frontend
         run: npm run type-check
 
-      - name: Build Linux packages
+      - name: Build AppImage
         run: npm run desktop:build
 
       - name: Verify and stage packages
         id: artifact
         run: |
           mkdir -p artifacts
-          found=0
-          for bundle in src-tauri/target/release/bundle/deb/*.deb \
-                        src-tauri/target/release/bundle/rpm/*.rpm \
-                        src-tauri/target/release/bundle/appimage/*.AppImage; do
-            test -f "$bundle" || continue
-            found=1
-            cp "$bundle" artifacts/
-          done
-          test "$found" -eq 1
+          appimage="$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          cp "$appimage" artifacts/
           cd artifacts
           sha256sum -- * | tee ../checksums.txt
           mv ../checksums.txt .

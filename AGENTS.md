@@ -3,7 +3,7 @@
 ## 项目概况
 
 前端使用 Vue 3、TypeScript、Vite 和 vue-router。Android 容器及全部后端逻辑使用
-Tauri 2/Rust；同时提供 Linux 桌面构建（deb/rpm/AppImage）。应用内部不启动
+Tauri 2/Rust；同时提供 Linux 桌面构建（AppImage）。应用内部不启动
 HTTP 服务，也不提供 macOS/Windows 分发。
 
 应用聚合两个漫画源，所有功能（首页、搜索、关注、历史、黑名单）跨源混合：
@@ -20,7 +20,7 @@ npm run android:init     # 首次生成 Tauri Android 工程
 npm run android:dev      # 在 Android 设备或模拟器上开发
 npm run android          # 构建 APK/AAB
 npm run desktop:dev      # Linux 桌面开发调试
-npm run desktop:build    # 构建 Linux 桌面包（deb/rpm/AppImage）
+npm run desktop:build    # 构建 Linux AppImage
 cd src-tauri && cargo check
 cd src-tauri && cargo fmt --check
 ```

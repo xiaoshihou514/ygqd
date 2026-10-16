@@ -17,7 +17,7 @@
     "android:dev": "npm run icons && tauri android dev",
     "android": "npm run icons && tauri android build",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build --bundles appimage"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
