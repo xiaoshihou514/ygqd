@@ -42,6 +42,8 @@ const loadingMore = ref(false)
 const exporting = ref(false)
 const exportStatus = ref('')
 let syncCacheBuster = ''
+/** 会话级 buster:进页面时命中后端 5 分钟缓存,避开 niacg 搜索限速的串行等待 */
+const SESSION_BUSTER = String(Date.now())
 let nextAuthorIndex = 0
 let sentinel: HTMLElement | null = null
 let observer: IntersectionObserver | null = null
@@ -107,12 +109,12 @@ async function fetchAuthorPage(
 
 const CONCURRENCY = 3
 
-async function loadAllAuthors() {
+async function loadAllAuthors(force = false) {
   if (syncing.value || followed.value.length === 0) return
   syncing.value = true
   syncError.value = ''
   bikaHint.value = ''
-  syncCacheBuster = String(Date.now())
+  syncCacheBuster = force ? String(Date.now()) : SESSION_BUSTER
   authorWorks.value = {}
   nextAuthorIndex = 0
 
@@ -284,7 +286,7 @@ onUnmounted(() => {
           <button
             class="action-btn"
             :disabled="syncing || loadingFollows"
-            @click="loadAllAuthors"
+            @click="loadAllAuthors(true)"
           >
             刷新
           </button>

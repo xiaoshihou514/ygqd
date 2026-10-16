@@ -20,7 +20,7 @@ scraper = "0.24"
 regex = "1"
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "time"] }
 hmac = "0.12"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }

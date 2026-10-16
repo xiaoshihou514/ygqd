@@ -15,14 +15,28 @@ use std::{
 use tauri::{ipc::Response, Manager, State};
 
 const BASE: &str = "https://www.niacg.com";
+/// niacg 限制两次搜索至少间隔 5 秒,违反时返回无结果的提示页
+const NIACG_SEARCH_INTERVAL: Duration = Duration::from_millis(5200);
 struct AppState {
     niacg: reqwest::Client,
     bika: BikaApi,
     bika_token: Mutex<Option<String>>,
     db: Mutex<Connection>,
     cache: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
+    /// niacg 搜索全局限速:串行化并保证间隔,避免触发 5 秒限制拿到空结果
+    niacg_search_gate: tokio::sync::Mutex<Instant>,
 }
 impl AppState {
+    /// 获取下一次 niacg 搜索的放行权,必要时等待
+    async fn niacg_search_turn(&self) -> tokio::sync::MutexGuard<'_, Instant> {
+        let mut last = self.niacg_search_gate.lock().await;
+        let elapsed = last.elapsed();
+        if elapsed < NIACG_SEARCH_INTERVAL {
+            tokio::time::sleep(NIACG_SEARCH_INTERVAL - elapsed).await;
+        }
+        *last = Instant::now();
+        last
+    }
     async fn niacg_get(&self, path: &str) -> Result<String, String> {
         self.niacg
             .get(if path.starts_with("http") {
@@ -191,6 +205,8 @@ async fn search_comics(
             page_url_template: None,
         }
     } else {
+        // 全局限速:niacg 搜索间隔不足 5 秒会返回无结果的提示页
+        let _search_turn = state.niacg_search_turn().await;
         if show == "tags" {
             let html = state
                 .niacg_get(&format!(
@@ -463,5 +479,5 @@ fn update_blacklist(tag: String, mode: String, state: State<'_, AppState>) -> Re
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().setup(|app|{let dir=app.path().app_data_dir()?;std::fs::create_dir_all(&dir)?;let mut headers=HeaderMap::new();headers.insert(USER_AGENT,HeaderValue::from_static("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"));headers.insert(REFERER,HeaderValue::from_static(BASE));let niacg=reqwest::Client::builder().default_headers(headers).cookie_store(true).build()?;let bika=BikaApi::new()?;let conn=db::open(&dir.join("ygqd.db")).map_err(std::io::Error::other)?;app.manage(AppState{niacg,bika,bika_token:Mutex::new(None),db:Mutex::new(conn),cache:Mutex::new(HashMap::new())});Ok(())}).invoke_handler(tauri::generate_handler![fetch_category,fetch_bika_categories,search_comics,fetch_comic,fetch_comic_images,fetch_image,bika_login,bika_logout,bika_status,fetch_follows,follow_author,unfollow_author,fetch_history,record_history,fetch_blacklist,add_blacklist,remove_blacklist,update_blacklist]).run(tauri::generate_context!()).expect("failed to run app")
+    tauri::Builder::default().setup(|app|{let dir=app.path().app_data_dir()?;std::fs::create_dir_all(&dir)?;let mut headers=HeaderMap::new();headers.insert(USER_AGENT,HeaderValue::from_static("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"));headers.insert(REFERER,HeaderValue::from_static(BASE));let niacg=reqwest::Client::builder().default_headers(headers).cookie_store(true).build()?;let bika=BikaApi::new()?;let conn=db::open(&dir.join("ygqd.db")).map_err(std::io::Error::other)?;app.manage(AppState{niacg,bika,bika_token:Mutex::new(None),db:Mutex::new(conn),cache:Mutex::new(HashMap::new()),niacg_search_gate:tokio::sync::Mutex::new(Instant::now()-Duration::from_secs(3600))});Ok(())}).invoke_handler(tauri::generate_handler![fetch_category,fetch_bika_categories,search_comics,fetch_comic,fetch_comic_images,fetch_image,bika_login,bika_logout,bika_status,fetch_follows,follow_author,unfollow_author,fetch_history,record_history,fetch_blacklist,add_blacklist,remove_blacklist,update_blacklist]).run(tauri::generate_context!()).expect("failed to run app")
 }
