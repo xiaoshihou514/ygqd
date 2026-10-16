@@ -53,8 +53,11 @@ jobs:
       # legacy `tools` 包(action 上游回归);runner 预装 SDK 足够,直接自装工具链
       - name: Install Android toolchain
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager \
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" \
             "platforms;android-36" \
             "build-tools;$BUILD_TOOLS_VERSION" \
             "ndk;$NDK_VERSION"
