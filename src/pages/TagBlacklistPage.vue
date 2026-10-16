@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useTheme } from '@/composables/useTheme'
+import { bikaLogin, bikaLogout, bikaStatus } from '@/services/api'
 import { datedJsonFilename, exportJson, type ExportResult } from '@/utils/exportJson'
 import EmptyState from '@/components/EmptyState.vue'
 import type { BlacklistMode } from '@/types'
@@ -14,6 +15,60 @@ const themeOptions = [
   { value: 'dark' as const, label: '黑暗' },
   { value: 'system' as const, label: '跟随系统' },
 ]
+
+const bikaEmail = ref('')
+const bikaPassword = ref('')
+const bikaLoggedIn = ref(false)
+const bikaAccountEmail = ref('')
+const bikaLoggingIn = ref(false)
+const bikaError = ref('')
+const bikaMessage = ref('')
+
+onMounted(async () => {
+  try {
+    const status = await bikaStatus()
+    bikaLoggedIn.value = status.loggedIn
+    bikaAccountEmail.value = status.email
+  } catch {
+    // ignore status failures
+  }
+})
+
+async function handleBikaLogin() {
+  if (bikaLoggingIn.value) return
+  if (!bikaEmail.value.trim() || !bikaPassword.value) {
+    bikaError.value = '请输入哔咔邮箱和密码'
+    return
+  }
+  bikaLoggingIn.value = true
+  bikaError.value = ''
+  bikaMessage.value = ''
+  try {
+    const status = await bikaLogin(bikaEmail.value.trim(), bikaPassword.value)
+    bikaLoggedIn.value = status.loggedIn
+    bikaAccountEmail.value = status.email
+    bikaEmail.value = ''
+    bikaPassword.value = ''
+    bikaMessage.value = '哔咔登录成功'
+  } catch (e) {
+    bikaError.value = (e as Error).message || '哔咔登录失败'
+  } finally {
+    bikaLoggingIn.value = false
+  }
+}
+
+async function handleBikaLogout() {
+  bikaError.value = ''
+  bikaMessage.value = ''
+  try {
+    await bikaLogout()
+    bikaLoggedIn.value = false
+    bikaAccountEmail.value = ''
+    bikaMessage.value = '已退出哔咔账号'
+  } catch (e) {
+    bikaError.value = (e as Error).message || '退出失败'
+  }
+}
 
 const MODE_LABELS: Record<BlacklistMode, string> = {
   fuzzy: '模糊',
@@ -125,6 +180,40 @@ async function handleExport() {
             {{ opt.label }}
           </button>
         </div>
+      </div>
+
+      <div class="section-divider" />
+
+      <div class="theme-section">
+        <h2 class="section-title">哔咔账号</h2>
+        <template v-if="bikaLoggedIn">
+          <p class="bika-account">已登录：{{ bikaAccountEmail }}</p>
+          <button class="bika-logout-btn" @click="handleBikaLogout">退出登录</button>
+        </template>
+        <template v-else>
+          <p class="page-desc">登录哔咔账号后可浏览、搜索哔咔漫画源。</p>
+          <div class="bika-form">
+            <input
+              v-model="bikaEmail"
+              type="email"
+              class="add-input"
+              placeholder="哔咔邮箱"
+              autocomplete="off"
+            >
+            <input
+              v-model="bikaPassword"
+              type="password"
+              class="add-input"
+              placeholder="哔咔密码"
+              @keydown.enter="handleBikaLogin"
+            >
+            <button class="add-btn" :disabled="bikaLoggingIn" @click="handleBikaLogin">
+              {{ bikaLoggingIn ? '登录中...' : '登录' }}
+            </button>
+          </div>
+        </template>
+        <p v-if="bikaError" class="bika-status error">{{ bikaError }}</p>
+        <p v-if="bikaMessage" class="bika-status">{{ bikaMessage }}</p>
       </div>
 
       <div class="section-divider" />
@@ -481,5 +570,39 @@ async function handleExport() {
   height: 1px;
   background: var(--color-hairline);
   margin-bottom: var(--spacing-xl);
+}
+
+.bika-account {
+  font-size: var(--font-size-body);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.bika-logout-btn {
+  height: 36px;
+  padding: 0 var(--spacing-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+}
+
+.bika-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  max-width: 360px;
+}
+
+.bika-status {
+  margin-top: var(--spacing-sm);
+  font-size: var(--font-size-caption);
+  color: var(--color-text-muted);
+}
+
+.bika-status.error {
+  color: var(--color-error);
 }
 </style>

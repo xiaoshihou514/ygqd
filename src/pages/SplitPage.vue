@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { splitAndGroup } from '@/utils/split'
 import type { ComicItem, SplitGroup } from '@/types'
+import { comicPath } from '@/utils/comicPath'
 import EmptyState from '@/components/EmptyState.vue'
 import ProxyImage from '@/components/ProxyImage.vue'
 
@@ -119,13 +120,14 @@ function formatChapters(chapters: number[]): string {
               <div class="items-list">
                 <a
                   v-for="item in group.items"
-                  :key="item.id"
-                  :href="`/comic/${item.categoryId}/${item.id}`"
+                  :key="`${item.source}:${item.id}`"
+                  :href="comicPath(item)"
                   class="item-link"
                 >
                   <ProxyImage
                     v-if="item.thumbnail"
                     :src="item.thumbnail"
+                    :source="item.source"
                     :alt="item.title"
                     class="item-thumb"
                     loading="lazy"

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
-import { fetchCategoryList } from '@/services/api'
+import { fetchCategoryList, fetchBikaCategories } from '@/services/api'
 import type { ComicItem } from '@/types'
 import { parseLikes } from '@/utils/likes'
+import { HOME_TABS, type HomeTab } from '@/config/sources'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import ComicGrid from '@/components/ComicGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -10,12 +11,7 @@ import EmptyState from '@/components/EmptyState.vue'
 
 defineOptions({ name: 'HomePage' })
 
-const HOME_STATE_KEY = 'home_page_state'
-const tabs = [
-  { category: 9, label: '漫画' },
-  { category: 1, label: 'COS' },
-] as const
-type HomeCategory = (typeof tabs)[number]['category']
+const HOME_STATE_KEY = 'home_page_state_v2'
 
 interface TabState {
   items: ComicItem[]
@@ -24,11 +20,23 @@ interface TabState {
   scrollY: number
 }
 
-const activeCategory = ref<HomeCategory>(9)
-const tabStates = ref<Record<HomeCategory, TabState>>({
-  9: { items: [], page: 0, hasNext: true, scrollY: 0 },
-  1: { items: [], page: 0, hasNext: true, scrollY: 0 },
-})
+const tabs = ref<HomeTab[]>([...HOME_TABS])
+const activeKey = ref(HOME_TABS[0]!.key)
+const tabStates = ref<Record<string, TabState>>({})
+
+function stateFor(key: string): TabState {
+  if (!tabStates.value[key]) {
+    tabStates.value[key] = { items: [], page: 0, hasNext: true, scrollY: 0 }
+  }
+  return tabStates.value[key]!
+}
+
+const activeTab = computed(() =>
+  tabs.value.find((tab) => tab.key === activeKey.value) ?? tabs.value[0]!,
+)
+const activeState = computed(() => stateFor(activeKey.value))
+const items = computed(() => activeState.value.items)
+const hasNext = computed(() => activeState.value.hasNext)
 
 const loading = ref(true)
 const loadingMore = ref(false)
@@ -36,13 +44,9 @@ const error = ref('')
 const minLikes = ref(0)
 const { filterItems } = useTagBlacklist()
 
-const activeState = computed(() => tabStates.value[activeCategory.value])
-const items = computed(() => activeState.value.items)
-const hasNext = computed(() => activeState.value.hasNext)
-
 const filteredItems = computed(() => {
   let result = items.value
-  if (activeCategory.value === 9) {
+  if (activeTab.value.key === 'niacg:9') {
     result = result.filter((item) => item.categoryId !== 1)
   }
   if (minLikes.value > 0) {
@@ -59,10 +63,12 @@ async function loadFirstPage() {
   loading.value = true
   error.value = ''
   try {
-    const result = await fetchCategoryList(activeCategory.value, 0)
-    activeState.value.items = result.items
-    activeState.value.hasNext = result.pagination.hasNext
-    activeState.value.page = 0
+    const tab = activeTab.value
+    const result = await fetchCategoryList(tab.source, tab.category, 0)
+    const state = stateFor(tab.key)
+    state.items = result.items
+    state.hasNext = result.pagination.hasNext
+    state.page = 0
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -74,11 +80,19 @@ async function loadNextPage() {
   if (loadingMore.value || !hasNext.value || loading.value) return
   loadingMore.value = true
   try {
-    const nextPage = activeState.value.page + 1
-    const result = await fetchCategoryList(activeCategory.value, nextPage)
-    activeState.value.items.push(...result.items)
-    activeState.value.hasNext = result.pagination.hasNext
-    activeState.value.page = nextPage
+    const tab = activeTab.value
+    const state = stateFor(tab.key)
+    const nextPage = state.page + 1
+    const result = await fetchCategoryList(tab.source, tab.category, nextPage)
+    const seen = new Set(state.items.map((item) => `${item.source}:${item.id}`))
+    state.items.push(...result.items.filter((item) => {
+      const key = `${item.source}:${item.id}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    }))
+    state.hasNext = result.pagination.hasNext
+    state.page = nextPage
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -105,16 +119,33 @@ function retry() {
   loadFirstPage()
 }
 
-async function switchTab(category: HomeCategory) {
-  if (category === activeCategory.value) return
+async function loadBikaTabs() {
+  try {
+    const categories = await fetchBikaCategories()
+    const bikaIndex = tabs.value.findIndex((tab) => tab.key === 'bika:')
+    if (bikaIndex < 0) return
+    const dynamic = categories.map((category) => ({
+      key: `bika:${category}`,
+      label: category,
+      source: 'bika' as const,
+      category,
+    }))
+    tabs.value.splice(bikaIndex + 1, 0, ...dynamic)
+  } catch {
+    // 哔咔未登录或网络不可用时不追加分类 tab,保留「哔咔」全部 tab
+  }
+}
+
+async function switchTab(key: string) {
+  if (key === activeKey.value) return
   activeState.value.scrollY = window.scrollY
-  activeCategory.value = category
+  activeKey.value = key
   error.value = ''
-  if (activeState.value.items.length === 0) {
+  if (stateFor(key).items.length === 0) {
     await loadFirstPage()
   }
   await nextTick()
-  window.scrollTo(0, activeState.value.scrollY)
+  window.scrollTo(0, stateFor(key).scrollY)
   setupObserver()
 }
 
@@ -122,7 +153,7 @@ function saveHomeState() {
   activeState.value.scrollY = window.scrollY
   try {
     sessionStorage.setItem(HOME_STATE_KEY, JSON.stringify({
-      activeCategory: activeCategory.value,
+      activeKey: activeKey.value,
       tabStates: tabStates.value,
       minLikes: minLikes.value,
     }))
@@ -136,10 +167,10 @@ function restoreHomeState(): boolean {
     const raw = sessionStorage.getItem(HOME_STATE_KEY)
     if (!raw) return false
     const saved = JSON.parse(raw)
-    if (saved.activeCategory === 9 || saved.activeCategory === 1) {
-      activeCategory.value = saved.activeCategory
+    if (typeof saved.activeKey === 'string') {
+      activeKey.value = saved.activeKey
     }
-    if (saved.tabStates?.[9] && saved.tabStates?.[1]) {
+    if (saved.tabStates && typeof saved.tabStates === 'object') {
       tabStates.value = saved.tabStates
     }
     minLikes.value = saved.minLikes ?? 0
@@ -154,6 +185,7 @@ function restoreHomeScroll() {
 }
 
 onMounted(() => {
+  loadBikaTabs()
   const restored = restoreHomeState()
   const ready = restored ? Promise.resolve() : loadFirstPage()
   ready.then(() => {
@@ -202,12 +234,12 @@ onUnmounted(() => {
           <div class="content-tabs" role="tablist" aria-label="内容分类">
             <button
               v-for="tab in tabs"
-              :key="tab.category"
+              :key="tab.key"
               class="content-tab"
-              :class="{ active: activeCategory === tab.category }"
+              :class="{ active: activeKey === tab.key }"
               role="tab"
-              :aria-selected="activeCategory === tab.category"
-              @click="switchTab(tab.category)"
+              :aria-selected="activeKey === tab.key"
+              @click="switchTab(tab.key)"
             >
               {{ tab.label }}
             </button>
@@ -276,14 +308,9 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-.page-title {
-  font-size: var(--font-size-hint);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-}
-
 .content-tabs {
   display: inline-flex;
+  flex-wrap: wrap;
   padding: 3px;
   border-radius: var(--radius-pill);
   background: var(--color-divider-soft);

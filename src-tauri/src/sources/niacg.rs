@@ -83,6 +83,7 @@ fn item(el: ElementRef<'_>) -> Option<ComicItem> {
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| category(category_id));
     Ok::<_, ()>(ComicItem {
+        source: "niacg".into(),
         id,
         title,
         thumbnail: attr(
@@ -104,50 +105,6 @@ fn unique_items(doc: &Html, selector: &str) -> Vec<ComicItem> {
         .filter_map(item)
         .filter(|v| seen.insert(v.id.clone()))
         .collect()
-}
-
-pub fn home(html: &str) -> Vec<HomeSection> {
-    let doc = Html::parse_document(html);
-    let mut heading: Option<(i32, String)> = None;
-    let mut sections = Vec::new();
-    for element in doc.select(&sel("h4, .owl-carousel")) {
-        if element.value().name() == "h4" {
-            let value = text(element);
-            heading = if value.contains("COS") {
-                Some((1, "COS".into()))
-            } else if value.contains("套图") {
-                Some((4, "套图".into()))
-            } else if value.contains("CG") {
-                Some((2, "CG".into()))
-            } else if value.contains("本本") || value.contains("本子") {
-                Some((3, "本子".into()))
-            } else if value.contains("里番") {
-                Some((19, "里番".into()))
-            } else if value.contains("3D") {
-                Some((20, "3D".into()))
-            } else if value.contains("同人") {
-                Some((21, "同人".into()))
-            } else {
-                None
-            };
-        } else if let Some((category_id, category)) = heading.take() {
-            let mut seen = HashSet::new();
-            let items: Vec<_> = element
-                .select(&sel(".owl-item .p-b-15"))
-                .filter_map(item)
-                .filter(|v| seen.insert(v.id.clone()))
-                .collect();
-            if !items.is_empty() {
-                sections.push(HomeSection {
-                    label: format!("{category}推荐"),
-                    category,
-                    category_id,
-                    items,
-                });
-            }
-        }
-    }
-    sections
 }
 
 pub fn list(html: &str) -> CategoryListResult {
@@ -233,6 +190,7 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
         })
         .unwrap_or_default();
     ComicDetail {
+        source: "niacg".into(),
         id,
         title: doc
             .select(&sel("h1, .panel-title"))
@@ -258,6 +216,7 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
             .next()
             .map(text)
             .unwrap_or_default(),
+        episodes: vec![],
         images: vec![],
     }
 }

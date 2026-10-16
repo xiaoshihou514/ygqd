@@ -21,10 +21,15 @@ type FollowingTab = (typeof tabs)[number]['key']
 const activeTab = ref<FollowingTab>('authors')
 const tabScroll: Record<FollowingTab, number> = { authors: 0, works: 0 }
 
-interface AuthorWorksState {
-  items: ComicItem[]
+interface SourcePageState {
   page: number
   hasNext: boolean
+}
+
+interface AuthorWorksState {
+  items: ComicItem[]
+  niacg: SourcePageState
+  bika: SourcePageState
   loading: boolean
 }
 
@@ -32,6 +37,7 @@ const authorWorks = ref<Record<string, AuthorWorksState>>({})
 const syncing = ref(false)
 const syncProgress = ref('')
 const syncError = ref('')
+const bikaHint = ref('')
 const loadingMore = ref(false)
 const exporting = ref(false)
 const exportStatus = ref('')
@@ -40,13 +46,12 @@ let nextAuthorIndex = 0
 let sentinel: HTMLElement | null = null
 let observer: IntersectionObserver | null = null
 
-// 关注作者的作品都来自 classid=9 的搜索，站点 id 递增，按 id 倒序即最新优先
 const allWorks = computed<ComicItem[]>(() => {
   const seen = new Set<string>()
   const merged: ComicItem[] = []
   for (const fa of followed.value) {
     for (const item of authorWorks.value[fa.author]?.items ?? []) {
-      const key = `${item.categoryId}:${item.id}`
+      const key = `${item.source}:${item.id}`
       if (seen.has(key)) continue
       seen.add(key)
       merged.push(item)
@@ -56,7 +61,10 @@ const allWorks = computed<ComicItem[]>(() => {
 })
 
 const hasMoreWorks = computed(() =>
-  followed.value.some((fa) => authorWorks.value[fa.author]?.hasNext),
+  followed.value.some((fa) => {
+    const state = authorWorks.value[fa.author]
+    return state && (state.niacg.hasNext || state.bika.hasNext)
+  }),
 )
 
 onMounted(async () => {
@@ -70,30 +78,31 @@ onMounted(async () => {
 
 async function fetchAuthorPage(
   follow: FollowedAuthor,
+  source: 'niacg' | 'bika',
   page: number,
 ): Promise<void> {
   const result = await searchComics(
-    { keyword: follow.author, classid: 9, show: 'title,text,keyboard,ftitle', tempid: '1' },
+    source,
+    {
+      source,
+      keyword: follow.author,
+      classid: 9,
+      show: source === 'bika' ? 'writer' : 'title,text,keyboard,ftitle',
+      tempid: '1',
+    },
     page,
     syncCacheBuster,
   )
-  const state = authorWorks.value[follow.author] ?? {
-    items: [],
-    page: -1,
-    hasNext: true,
-    loading: false,
-  }
-  const seen = new Set(state.items.map((item) => `${item.categoryId}:${item.id}`))
+  const state = authorWorks.value[follow.author]
+  if (!state) return
+  const seen = new Set(state.items.map((item) => `${item.source}:${item.id}`))
   state.items.push(...result.items.filter((item) => {
-    const key = `${item.categoryId}:${item.id}`
+    const key = `${item.source}:${item.id}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
   }))
-  state.page = page
-  state.hasNext = result.pagination.hasNext
-  state.loading = false
-  authorWorks.value[follow.author] = state
+  state[source] = { page, hasNext: result.pagination.hasNext }
 }
 
 const CONCURRENCY = 3
@@ -102,6 +111,7 @@ async function loadAllAuthors() {
   if (syncing.value || followed.value.length === 0) return
   syncing.value = true
   syncError.value = ''
+  bikaHint.value = ''
   syncCacheBuster = String(Date.now())
   authorWorks.value = {}
   nextAuthorIndex = 0
@@ -114,25 +124,31 @@ async function loadAllAuthors() {
     while (queue.length > 0) {
       const follow = queue.shift()
       if (!follow) continue
-      try {
-        authorWorks.value[follow.author] = {
-          items: [],
-          page: -1,
-          hasNext: true,
-          loading: true,
-        }
-        await fetchAuthorPage(follow, 0)
-      } catch {
-        const state = authorWorks.value[follow.author]
-        if (state) {
-          state.loading = false
-          state.hasNext = false
-        }
-        syncError.value = '部分作者作品加载失败，可稍后刷新重试'
-      } finally {
-        done++
-        syncProgress.value = `正在加载 ${total} 位作者的作品（${done}/${total}）`
+      authorWorks.value[follow.author] = {
+        items: [],
+        niacg: { page: -1, hasNext: true },
+        bika: { page: -1, hasNext: true },
+        loading: true,
       }
+      const settled = await Promise.allSettled([
+        fetchAuthorPage(follow, 'niacg', 0),
+        fetchAuthorPage(follow, 'bika', 0),
+      ])
+      const state = authorWorks.value[follow.author]!
+      state.loading = false
+      if (settled[0]!.status === 'rejected') {
+        state.niacg.hasNext = false
+        syncError.value = '部分作者作品加载失败，可稍后刷新重试'
+      }
+      if (settled[1]!.status === 'rejected') {
+        state.bika.hasNext = false
+        const reason = String((settled[1] as PromiseRejectedResult).reason)
+        if (reason.includes('登录') && !bikaHint.value) {
+          bikaHint.value = '哔咔源未登录，已在设置中登录后可查看哔咔作品'
+        }
+      }
+      done++
+      syncProgress.value = `正在加载 ${total} 位作者的作品（${done}/${total}）`
     }
   })
   await Promise.all(workers)
@@ -146,15 +162,21 @@ async function loadNextPage() {
   if (loadingMore.value || syncing.value || followed.value.length === 0) return
 
   const start = nextAuthorIndex % followed.value.length
-  let selected: { follow: FollowedAuthor; page: number } | null = null
+  let selected: { follow: FollowedAuthor; source: 'niacg' | 'bika'; page: number } | null = null
   for (let offset = 0; offset < followed.value.length; offset += 1) {
     const index = (start + offset) % followed.value.length
     const follow = followed.value[index]
     const state = follow ? authorWorks.value[follow.author] : undefined
-    if (follow && state && !state.loading && state.hasNext) {
-      selected = { follow, page: state.page + 1 }
-      nextAuthorIndex = (index + 1) % followed.value.length
-      break
+    if (follow && state && !state.loading) {
+      if (state.niacg.hasNext) {
+        selected = { follow, source: 'niacg', page: state.niacg.page + 1 }
+      } else if (state.bika.hasNext) {
+        selected = { follow, source: 'bika', page: state.bika.page + 1 }
+      }
+      if (selected) {
+        nextAuthorIndex = (index + 1) % followed.value.length
+        break
+      }
     }
   }
   if (!selected) return
@@ -162,12 +184,17 @@ async function loadNextPage() {
   loadingMore.value = true
   authorWorks.value[selected.follow.author]!.loading = true
   try {
-    await fetchAuthorPage(selected.follow, selected.page)
+    await fetchAuthorPage(selected.follow, selected.source, selected.page)
   } catch {
     const state = authorWorks.value[selected.follow.author]
-    if (state) state.loading = false
+    if (state) {
+      state[selected.source].hasNext = false
+      state.loading = false
+    }
     syncError.value = '加载更多作品失败，请重试'
   } finally {
+    const state = authorWorks.value[selected.follow.author]
+    if (state) state.loading = false
     loadingMore.value = false
   }
 }
@@ -291,6 +318,7 @@ onUnmounted(() => {
 
         <p v-if="syncing && syncProgress" class="sync-progress">{{ syncProgress }}</p>
         <p v-if="syncError && !syncing" class="sync-error">{{ syncError }}</p>
+        <p v-if="bikaHint && !syncing" class="sync-error">{{ bikaHint }}</p>
 
         <template v-if="activeTab === 'authors'">
           <div class="following-list">

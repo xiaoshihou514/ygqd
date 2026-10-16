@@ -1,4 +1,5 @@
 export interface ComicItem {
+  source: string
   id: string
   title: string
   thumbnail: string
@@ -10,6 +11,7 @@ export interface ComicItem {
 }
 
 export interface ComicDetail {
+  source: string
   id: string
   title: string
   thumbnail: string
@@ -20,7 +22,13 @@ export interface ComicDetail {
   characters: string[]
   tags: string[]
   likes: string
+  episodes: Episode[]
   images: string[]
+}
+
+export interface Episode {
+  order: number
+  title: string
 }
 
 export interface PaginationInfo {
@@ -30,18 +38,17 @@ export interface PaginationInfo {
   hasPrev: boolean
 }
 
+export interface ComicImagesResult {
+  images: string[]
+  pagination: PaginationInfo
+}
+
 export interface SearchParams {
+  source: string
   keyword: string
   classid: number
   show?: string
   tempid?: string
-}
-
-export interface HomeSection {
-  category: string
-  categoryId: number
-  label: string
-  items: ComicItem[]
 }
 
 export interface CategoryOption {
@@ -76,6 +83,11 @@ export interface SearchResult {
   pageUrlTemplate: string | null
 }
 
+export interface CategoryListResult {
+  items: ComicItem[]
+  pagination: PaginationInfo
+}
+
 export type BlacklistMode = 'fuzzy' | 'exact' | 'single'
 
 export interface BlacklistEntry {
@@ -91,10 +103,16 @@ export interface FollowedAuthor {
 }
 
 export interface ViewHistoryEntry {
+  source: string
   comicId: string
   title: string
   thumbnail: string
   categoryId: number
   author: string
   viewedAt: number
+}
+
+export interface BikaAccountStatus {
+  loggedIn: boolean
+  email: string
 }

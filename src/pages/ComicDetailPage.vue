@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, onActivated, nextTick, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
-import { fetchComicDetail } from '@/services/api'
+import { fetchComicDetail, fetchComicImages } from '@/services/api'
 import type { ComicDetail } from '@/types'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
@@ -20,31 +20,89 @@ const detail = ref<ComicDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
 const visibleCount = ref(PAGE_SIZE)
+const images = ref<string[]>([])
+const imagePage = ref(-1)
+const imageHasNext = ref(false)
+const imageLoading = ref(false)
+const imageError = ref('')
+const activeEp = ref(1)
 const { add, has } = useTagBlacklist()
 const { isFollowing, follow, unfollow } = useFollowedAuthors()
 const { record: recordHistory } = useViewHistory()
 
-const visibleImages = computed(() => {
-  if (!detail.value) return []
-  return detail.value.images.slice(0, visibleCount.value)
-})
+const source = computed(() => (route.params.source as string) || 'niacg')
+const isBika = computed(() => source.value === 'bika')
 
-const hasMore = computed(() => {
-  if (!detail.value) return false
-  return visibleCount.value < detail.value.images.length
-})
+const visibleImages = computed(() => images.value.slice(0, visibleCount.value))
+
+const hasMore = computed(() =>
+  visibleCount.value < images.value.length || imageHasNext.value,
+)
 
 const effectiveAuthor = computed(() => {
   if (!detail.value) return ''
   return detail.value.author || extractAuthorFromTitle(detail.value.title) || ''
 })
 
-function loadMore() {
-  if (!detail.value || !hasMore.value) return
-  visibleCount.value = Math.min(visibleCount.value + PAGE_SIZE, detail.value.images.length)
-  nextTick(() => {
+const lastEpOrder = computed(() => {
+  if (!detail.value || detail.value.episodes.length === 0) return 1
+  return detail.value.episodes[detail.value.episodes.length - 1]!.order
+})
+
+const hasNextEp = computed(() => isBika.value && activeEp.value < lastEpOrder.value)
+
+async function loadImagesPage(reset = false) {
+  if (!detail.value || imageLoading.value) return
+  imageLoading.value = true
+  imageError.value = ''
+  try {
+    const page = reset ? 0 : imagePage.value + 1
+    const result = await fetchComicImages(
+      source.value,
+      detail.value.categoryId,
+      detail.value.id,
+      activeEp.value,
+      page,
+    )
+    images.value = reset ? result.images : [...images.value, ...result.images]
+    imagePage.value = page
+    imageHasNext.value = result.pagination.hasNext
+  } catch (e) {
+    imageError.value = (e as Error).message
+  } finally {
+    imageLoading.value = false
+    await nextTick()
     setupObserver()
-  })
+  }
+}
+
+function loadMore() {
+  if (visibleCount.value < images.value.length) {
+    visibleCount.value = Math.min(visibleCount.value + PAGE_SIZE, images.value.length)
+    nextTick(() => {
+      setupObserver()
+    })
+    return
+  }
+  if (imageHasNext.value) {
+    loadImagesPage()
+  }
+}
+
+function switchEp(order: number) {
+  if (order === activeEp.value || imageLoading.value) return
+  activeEp.value = order
+  images.value = []
+  visibleCount.value = PAGE_SIZE
+  imagePage.value = -1
+  imageHasNext.value = true
+  window.scrollTo({ top: 0 })
+  loadImagesPage(true)
+}
+
+function goNextEp() {
+  if (!hasNextEp.value) return
+  switchEp(activeEp.value + 1)
 }
 
 let sentinel: HTMLElement | null = null
@@ -70,6 +128,10 @@ async function loadComic(categoryId: number, id: string) {
   loading.value = true
   error.value = ''
   visibleCount.value = PAGE_SIZE
+  images.value = []
+  imagePage.value = -1
+  imageHasNext.value = false
+  activeEp.value = 1
 
   if (observer) {
     observer.disconnect()
@@ -77,15 +139,17 @@ async function loadComic(categoryId: number, id: string) {
   }
 
   try {
-    detail.value = await fetchComicDetail(categoryId, id)
+    detail.value = await fetchComicDetail(source.value, categoryId, id)
     if (detail.value) {
       recordHistory({
+        source: detail.value.source,
         comicId: detail.value.id,
         title: detail.value.title,
         thumbnail: detail.value.thumbnail,
         categoryId: detail.value.categoryId,
         author: effectiveAuthor.value,
       })
+      await loadImagesPage(true)
     }
   } catch (e) {
     error.value = (e as Error).message
@@ -121,7 +185,7 @@ function goBack() {
 }
 
 function searchByScope(keyword: string, show: string = 'title,text,keyboard,ftitle') {
-  router.push({ name: 'search', query: { keyword, show } })
+  router.push({ name: 'search', query: { keyword, show, source: source.value } })
 }
 </script>
 
@@ -157,6 +221,7 @@ export default {
               <ProxyImage
                 v-if="detail.thumbnail"
                 :src="detail.thumbnail"
+                :source="detail.source"
                 :alt="detail.title"
               />
               <div v-else class="cover-placeholder">
@@ -179,7 +244,7 @@ export default {
               <span class="tag-label">作者</span>
               <div class="detail-tags">
                 <span class="detail-tag-wrap">
-                  <button class="detail-tag detail-tag-link" @click="searchByScope(effectiveAuthor)">
+                  <button class="detail-tag detail-tag-link" @click="searchByScope(effectiveAuthor, 'writer')">
                     {{ effectiveAuthor }}
                   </button>
                   <button
@@ -294,25 +359,49 @@ export default {
               </div>
             </div>
             <div class="detail-count">
-              共 {{ detail.images.length }} 张图片
+              {{ isBika ? `已加载 ${images.length} 张图片` : `共 ${images.length} 张图片` }}
             </div>
           </div>
         </div>
 
-        <div v-if="detail.images.length > 0" class="detail-gallery">
+        <div v-if="isBika && detail.episodes.length > 0" class="episode-bar">
+          <button
+            v-for="ep in detail.episodes"
+            :key="ep.order"
+            class="episode-pill"
+            :class="{ active: ep.order === activeEp }"
+            @click="switchEp(ep.order)"
+          >
+            {{ ep.title || `#${ep.order}` }}
+          </button>
+        </div>
+
+        <div v-if="images.length > 0" class="detail-gallery">
           <ProxyImage
             v-for="(img, i) in visibleImages"
-            :key="i"
+            :key="`${activeEp}-${i}`"
             :src="img"
+            :source="detail.source"
             :alt="`${detail.title} - 第${i + 1}页`"
             loading="lazy"
             class="gallery-img"
           />
 
           <div v-if="hasMore" class="scroll-sentinel" />
-          <div v-if="!hasMore && detail.images.length > PAGE_SIZE" class="no-more">
-            <span>已加载全部 {{ detail.images.length }} 张图片</span>
+          <div v-if="imageLoading" class="loading-more">
+            <LoadingSpinner message="正在加载图片..." />
           </div>
+          <p v-if="imageError" class="image-error">{{ imageError }}</p>
+          <div v-if="!hasMore && !hasNextEp" class="no-more">
+            <span>已加载全部 {{ images.length }} 张图片</span>
+          </div>
+          <button v-if="hasNextEp && !imageLoading" class="next-ep-btn" @click="goNextEp">
+            下一章
+          </button>
+        </div>
+
+        <div v-else-if="imageLoading" class="detail-loading">
+          <LoadingSpinner message="正在加载图片..." />
         </div>
 
         <div v-else class="detail-empty">
@@ -536,6 +625,29 @@ export default {
   color: var(--color-text-muted);
 }
 
+.episode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-lg);
+}
+
+.episode-pill {
+  padding: 4px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  background: var(--color-canvas);
+  font-size: var(--font-size-fine-print);
+  transition: all 0.2s;
+}
+
+.episode-pill.active {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-color: var(--color-primary);
+}
+
 .detail-gallery {
   display: flex;
   flex-direction: column;
@@ -553,11 +665,31 @@ export default {
   height: 1px;
 }
 
+.loading-more {
+  padding: var(--spacing-lg) 0;
+}
+
+.image-error {
+  padding: var(--spacing-sm) 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-error);
+}
+
 .no-more {
   text-align: center;
   padding: var(--spacing-lg) 0;
   font-size: var(--font-size-caption);
   color: var(--color-text-muted);
+}
+
+.next-ep-btn {
+  margin-bottom: var(--spacing-lg);
+  padding: 10px 32px;
+  border-radius: var(--radius-pill);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
 }
 
 .detail-empty {

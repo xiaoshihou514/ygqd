@@ -16,6 +16,7 @@ export function useViewHistory() {
   }
 
   async function record(entry: {
+    source: string
     comicId: string
     title: string
     thumbnail: string

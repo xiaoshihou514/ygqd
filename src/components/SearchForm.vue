@@ -2,6 +2,7 @@
 import { reactive, ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import type { SearchParams } from '@/types'
+import { SEARCH_SOURCE_OPTIONS } from '@/config/sources'
 import { useSearchHistory } from '@/composables/useSearchHistory'
 
 const emit = defineEmits<{
@@ -38,6 +39,7 @@ const SORT_OPTIONS = [
 
 const form = reactive({
   keyword: '',
+  source: 'all',
   classid: 9,
   show: 'title,text,keyboard,ftitle',
   minLikes: 0,
@@ -113,6 +115,7 @@ function clearKeyword() {
 function handleSubmit() {
   if (!form.keyword.trim()) return
   emit('search', {
+    source: form.source,
     keyword: form.keyword.trim(),
     classid: form.classid,
     show: form.show,
@@ -128,6 +131,10 @@ onMounted(() => {
   const show = route.query.show as string | undefined
   if (show) {
     form.show = show
+  }
+  const source = route.query.source as string | undefined
+  if (source && SEARCH_SOURCE_OPTIONS.some((option) => option.id === source)) {
+    form.source = source
   }
 })
 </script>
@@ -198,6 +205,22 @@ onMounted(() => {
 
       <div class="search-options">
         <div class="option-group">
+          <span class="option-label">来源</span>
+          <div class="option-tags">
+            <button
+              v-for="option in SEARCH_SOURCE_OPTIONS"
+              :key="option.id"
+              type="button"
+              class="option-tag"
+              :class="{ active: form.source === option.id }"
+              @click="form.source = option.id"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="option-group" :class="{ muted: form.source === 'bika' }">
           <span class="option-label">分类</span>
           <div class="option-tags">
             <button
@@ -206,6 +229,7 @@ onMounted(() => {
               type="button"
               class="option-tag"
               :class="{ active: form.classid === cat.id }"
+              :disabled="form.source === 'bika'"
               @click="form.classid = cat.id"
             >
               {{ cat.label }}
@@ -416,6 +440,11 @@ onMounted(() => {
   background: var(--color-primary);
   color: var(--color-on-primary);
   border-color: var(--color-primary);
+}
+
+.option-group.muted .option-tag {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .filter-input {

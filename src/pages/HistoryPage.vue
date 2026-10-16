@@ -28,6 +28,7 @@ onMounted(async () => {
       <ComicGrid
         v-else
         :items="history.map((h) => ({
+          source: h.source,
           id: h.comicId,
           title: h.title,
           thumbnail: h.thumbnail,

@@ -14,7 +14,7 @@ const router = createRouter({
       component: () => import('@/pages/SearchPage.vue'),
     },
     {
-      path: '/comic/:categoryId/:id',
+      path: '/comic/:source/:categoryId/:id',
       name: 'comic-detail',
       component: () => import('@/pages/ComicDetailPage.vue'),
     },

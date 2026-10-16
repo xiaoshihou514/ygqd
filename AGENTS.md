@@ -6,6 +6,11 @@
 Tauri 2/Rust；同时提供 Linux 桌面构建（deb/rpm/AppImage）。应用内部不启动
 HTTP 服务，也不提供 macOS/Windows 分发。
 
+应用聚合两个漫画源，所有功能（首页、搜索、关注、历史、黑名单）跨源混合：
+- `niacg`：niacg.com，HTML 抓取，无需登录。
+- `bika`：哔咔（PicaAPI JSON 接口），需要账号登录（设置页登录，凭据和 token
+  存 `ygqd.db`，401 自动重登）。
+
 ## 关键命令
 
 ```sh
@@ -23,11 +28,21 @@ cd src-tauri && cargo fmt --check
 ## 架构要点
 
 - Vue 通过 `@tauri-apps/api/core` 的 `invoke` 调用 Rust commands。
-- commands、网络、缓存和数据访问入口位于 `src-tauri/src/lib.rs`。
-- HTML 解析位于 `src-tauri/src/parser.rs`，使用 `scraper`。
-- 关注、历史和黑名单位于应用数据目录的 `ygqd.db`，使用 bundled SQLite。
-- 图片通过 `fetch_image` command 返回二进制数据，`ProxyImage.vue` 将其转换成 Blob URL。
-- `src/services/api.ts` 是前端唯一的 Tauri IPC 封装层。
+- commands、网络、缓存和数据访问入口位于 `src-tauri/src/lib.rs`；命令按
+  `source` 参数分发（`"niacg"`/`"bika"`）。
+- 漫画源实现位于 `src-tauri/src/sources/`：`niacg.rs` 用 `scraper` 解析
+  HTML；`bika.rs` 是 PicaAPI 客户端（HMAC-SHA256 请求签名）。新增源时在该
+  目录加模块，并在 `lib.rs` 命令里加分发分支、前端 `src/config/sources.ts`
+  注册。
+- 关注、历史、黑名单和哔咔账号位于应用数据目录的 `ygqd.db`，使用 bundled
+  SQLite；`view_history` 主键为 (source, comic_id)。
+- 图片通过 `fetch_image` command 返回二进制数据（按源选 HTTP client），
+  `ProxyImage.vue` 将其转换成 Blob URL。
+- 哔咔漫画按章节分页，阅读走 `fetch_comic_images`（ep_order/page）；
+  niacg 一次性返回全部图片。
+- `src/services/api.ts` 是前端唯一的 Tauri IPC 封装层；详情页路由为
+  `/comic/:source/:categoryId/:id`，链接统一由 `src/utils/comicPath.ts`
+  生成。
 - `noUncheckedIndexedAccess: true`，索引访问必须处理 `undefined`。
 
 ## 开发注意事项

@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchComics } from '@/services/api'
-import type { ComicItem, SearchParams } from '@/types'
+import type { ComicItem, SearchParams, SearchResult } from '@/types'
 import { parseLikes } from '@/utils/likes'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
@@ -15,6 +15,7 @@ defineOptions({ name: 'SearchPage' })
 
 const PAGE_SIZE = 20
 const MAX_PAGES = 50
+const SEARCH_SOURCES = ['niacg', 'bika'] as const
 
 const route = useRoute()
 const router = useRouter()
@@ -35,6 +36,60 @@ const { filterItems, version: blacklistVersion } = useTagBlacklist()
 const { add: addHistory } = useSearchHistory()
 const fetchingProgress = ref('')
 
+interface MergedSearchOutcome {
+  items: ComicItem[]
+  hasNext: boolean
+  totalPages: number
+  errors: string[]
+}
+
+function sourcesFor(params: SearchParams): string[] {
+  return params.source === 'all' ? [...SEARCH_SOURCES] : [params.source]
+}
+
+/** 双源并发搜索并交错合并;部分源失败不阻塞其余源 */
+async function runSearch(
+  params: SearchParams,
+  page: number,
+  cacheBuster?: string,
+): Promise<MergedSearchOutcome> {
+  const settled = await Promise.allSettled(
+    sourcesFor(params).map((source) => searchComics(source, params, page, cacheBuster)),
+  )
+  const fulfilled = settled.filter(
+    (result): result is PromiseFulfilledResult<SearchResult> => result.status === 'fulfilled',
+  )
+  const errors = settled
+    .filter((result) => result.status === 'rejected')
+    .map((result) => String((result as PromiseRejectedResult).reason))
+  if (fulfilled.length === 0) {
+    throw new Error(errors[0] || '搜索失败')
+  }
+  const lists = fulfilled.map((result) => result.value.items)
+  const merged: ComicItem[] = []
+  const seen = new Set<string>()
+  const maxLength = Math.max(...lists.map((list) => list.length), 0)
+  for (let i = 0; i < maxLength; i++) {
+    for (const list of lists) {
+      const item = list[i]
+      if (!item) continue
+      const key = `${item.source}:${item.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(item)
+    }
+  }
+  return {
+    items: merged,
+    hasNext: fulfilled.some((result) => result.value.pagination.hasNext),
+    totalPages: Math.max(
+      ...fulfilled.map((result) => result.value.pagination.total),
+      1,
+    ),
+    errors,
+  }
+}
+
 async function fetchAllPages(
   params: SearchParams,
   firstPageItems: ComicItem[],
@@ -47,7 +102,7 @@ async function fetchAllPages(
     const batch: Promise<ComicItem[]>[] = []
     for (let j = i; j < Math.min(i + 5, pageCount); j++) {
       fetchingProgress.value = `正在获取全部结果（${j + 1}/${pageCount}）...`
-      batch.push(searchComics(params, j).then((r) => r.items))
+      batch.push(runSearch(params, j).then((r) => r.items))
     }
     const results = await Promise.all(batch)
     all.push(...results.flat())
@@ -88,10 +143,13 @@ async function loadMore() {
   loadingMore.value = true
   const nextPage = currentPage.value + 1
   try {
-    const result = await searchComics(lastParams.value, nextPage)
-    items.value = [...items.value, ...result.items]
+    const outcome = await runSearch(lastParams.value, nextPage)
+    items.value = [...items.value, ...outcome.items]
     currentPage.value = nextPage
-    hasNextPage.value = result.pagination.hasNext
+    hasNextPage.value = outcome.hasNext
+    if (outcome.errors.length > 0) {
+      error.value = outcome.errors[0]!
+    }
   } catch {
     // silently ignore page load failure
   } finally {
@@ -144,14 +202,16 @@ async function reSearchWithCacheBuster() {
   loadingMore.value = true
   const buster = String(Date.now())
   try {
-    const result = await searchComics(lastParams.value, 0, buster)
+    const outcome = await runSearch(lastParams.value, 0, buster)
     if (sortOrder.value === 'likes_desc') {
-      const pagesToFetch = result.pagination.total
-      items.value = await fetchAllPages(lastParams.value, result.items, pagesToFetch)
+      items.value = await fetchAllPages(lastParams.value, outcome.items, outcome.totalPages)
       hasNextPage.value = false
     } else {
-      items.value = result.items
-      hasNextPage.value = result.pagination.hasNext
+      items.value = outcome.items
+      hasNextPage.value = outcome.hasNext
+    }
+    if (outcome.errors.length > 0) {
+      error.value = outcome.errors[0]!
     }
   } catch (e) {
     error.value = (e as Error).message
@@ -179,6 +239,7 @@ function saveSearchState() {
       hasSearched: hasSearched.value,
       classid: (route.query.classid as string) || '9',
       show: (route.query.show as string) || 'title,text,keyboard,ftitle',
+      source: (route.query.source as string) || 'all',
       scrollY: window.scrollY,
     }))
   } catch {
@@ -201,8 +262,10 @@ function restoreSearchState(): boolean {
     hasSearched.value = state.hasSearched ?? false
     const savedClassid = state.classid as string | undefined
     const savedShow = state.show as string | undefined
+    const savedSource = (state.source as string | undefined) || 'all'
     if (lastKeyword.value) {
       lastParams.value = {
+        source: savedSource,
         keyword: lastKeyword.value,
         classid: savedClassid ? Number(savedClassid) : 9,
         show: savedShow || 'title,text,keyboard,ftitle',
@@ -252,14 +315,16 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
   lastParams.value = params
   prevBlacklistVersion = blacklistVersion.value
   try {
-    const result = await searchComics(params, 0)
+    const outcome = await runSearch(params, 0)
     if (order === 'likes_desc') {
-      const pagesToFetch = result.pagination.total
-      items.value = await fetchAllPages(params, result.items, pagesToFetch)
+      items.value = await fetchAllPages(params, outcome.items, outcome.totalPages)
       hasNextPage.value = false
     } else {
-      items.value = result.items
-      hasNextPage.value = result.pagination.hasNext
+      items.value = outcome.items
+      hasNextPage.value = outcome.hasNext
+    }
+    if (outcome.errors.length > 0) {
+      error.value = outcome.errors[0]!
     }
   } catch (e) {
     error.value = (e as Error).message
@@ -275,8 +340,9 @@ function searchFromQuery() {
   const keyword = route.query.keyword as string | undefined
   if (keyword) {
     const show = (route.query.show as string) || 'title,text,keyboard,ftitle'
+    const source = (route.query.source as string) || 'all'
     handleSearch(
-      { keyword, classid: 9, show, tempid: '1' },
+      { source, keyword, classid: 9, show, tempid: '1' },
       0,
       'default',
     )

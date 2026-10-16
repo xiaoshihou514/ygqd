@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { ComicItem } from '@/types'
 import ProxyImage from '@/components/ProxyImage.vue'
+import { comicPath } from '@/utils/comicPath'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 
 defineOptions({ name: 'ComicCard' })
@@ -17,6 +18,11 @@ const imgError = ref(false)
 const blacklistOpen = ref(false)
 const suppressClick = ref(false)
 const { add, has } = useTagBlacklist()
+const badgeText = computed(() =>
+  props.item.source === 'bika' && props.item.category
+    ? `哔咔·${props.item.category}`
+    : props.item.category,
+)
 let pressTimer: ReturnType<typeof setTimeout> | null = null
 let suppressTimer: ReturnType<typeof setTimeout> | null = null
 let pressStart = { x: 0, y: 0 }
@@ -67,8 +73,7 @@ function handleClick() {
     suppressClick.value = false
     return
   }
-  const url = `/comic/${props.item.categoryId}/${props.item.id}`
-  router.push(url)
+  router.push(comicPath(props.item))
 }
 
 onBeforeUnmount(() => {
@@ -79,7 +84,7 @@ onBeforeUnmount(() => {
 
 <template>
   <a
-    :href="`/comic/${item.categoryId}/${item.id}`"
+    :href="comicPath(item)"
     target="_blank"
     rel="noopener noreferrer"
     class="comic-card"
@@ -96,6 +101,7 @@ onBeforeUnmount(() => {
       <ProxyImage
         v-if="item.thumbnail && !imgError"
         :src="item.thumbnail"
+        :source="item.source"
         :alt="item.title"
         loading="lazy"
         @error="imgError = true"
@@ -103,7 +109,7 @@ onBeforeUnmount(() => {
       <div v-if="!item.thumbnail || imgError" class="card-placeholder">
         <span class="placeholder-title">{{ item.title }}</span>
       </div>
-      <span class="card-badge">{{ item.category }}</span>
+      <span class="card-badge">{{ badgeText }}</span>
     </div>
     <div class="card-body">
       <h3 class="card-title">{{ item.title }}</h3>
