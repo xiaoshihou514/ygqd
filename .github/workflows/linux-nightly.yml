@@ -1,0 +1,112 @@
+name: Linux Nightly
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: linux-nightly
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  # linuxdeploy 自带的旧版 strip 无法识别新版 binutils 产出的 .relr.dyn 段
+  NO_STRIP: 1
+  APPIMAGE_EXTRACT_AND_RUN: 1
+
+jobs:
+  build:
+    name: Build Linux desktop nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check frontend
+        run: npm run type-check
+
+      - name: Build Linux packages
+        run: npm run desktop:build
+
+      - name: Verify and stage packages
+        id: artifact
+        run: |
+          mkdir -p artifacts
+          found=0
+          for bundle in src-tauri/target/release/bundle/deb/*.deb \
+                        src-tauri/target/release/bundle/rpm/*.rpm \
+                        src-tauri/target/release/bundle/appimage/*.AppImage; do
+            test -f "$bundle" || continue
+            found=1
+            cp "$bundle" artifacts/
+          done
+          test "$found" -eq 1
+          cd artifacts
+          sha256sum -- * | tee ../checksums.txt
+          mv ../checksums.txt .
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ygqd-linux-nightly-${{ github.sha }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Move nightly-linux tag
+        run: |
+          git tag --force nightly-linux "$GITHUB_SHA"
+          git push --force origin refs/tags/nightly-linux
+
+      - name: Publish rolling nightly release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly-linux
+          name: Nightly Build (Linux)
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          body: |
+            Automated Linux desktop nightly from `${{ github.sha }}`.
+
+            This release is replaced by the next successful nightly build.
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          overwrite_files: true

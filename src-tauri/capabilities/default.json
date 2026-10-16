@@ -4,5 +4,5 @@
   "description": "Main application capability",
   "windows": ["main"],
   "permissions": ["core:default"],
-  "platforms": ["android"]
+  "platforms": ["android", "linux"]
 }

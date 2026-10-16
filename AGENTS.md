@@ -3,7 +3,8 @@
 ## 项目概况
 
 前端使用 Vue 3、TypeScript、Vite 和 vue-router。Android 容器及全部后端逻辑使用
-Tauri 2/Rust；应用内部不启动 HTTP 服务，也不提供桌面分发。
+Tauri 2/Rust；同时提供 Linux 桌面构建（deb/rpm/AppImage）。应用内部不启动
+HTTP 服务，也不提供 macOS/Windows 分发。
 
 ## 关键命令
 
@@ -13,6 +14,8 @@ npm run build-only       # Vite 生产构建
 npm run android:init     # 首次生成 Tauri Android 工程
 npm run android:dev      # 在 Android 设备或模拟器上开发
 npm run android          # 构建 APK/AAB
+npm run desktop:dev      # Linux 桌面开发调试
+npm run desktop:build    # 构建 Linux 桌面包（deb/rpm/AppImage）
 cd src-tauri && cargo check
 cd src-tauri && cargo fmt --check
 ```
@@ -29,7 +32,8 @@ cd src-tauri && cargo fmt --check
 
 ## 开发注意事项
 
-- 这是 Android-only 项目；不要增加桌面窗口行为或 localhost API 服务。
+- Android 优先，同时支持 Linux 桌面；不要增加 macOS/Windows 特定行为或
+  localhost API 服务。
 - 新增后端功能时同时注册 `#[tauri::command]` 和 `generate_handler!`，再在
   `src/services/api.ts` 添加类型化封装。
 - 网络请求应继续复用共享的 `reqwest::Client`，以保留 cookie 和统一请求头。

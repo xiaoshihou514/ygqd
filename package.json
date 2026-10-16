@@ -15,7 +15,9 @@
     "icons": "tauri icon public/icon.png",
     "android:init": "tauri android init && npm run icons",
     "android:dev": "npm run icons && tauri android dev",
-    "android": "npm run icons && tauri android build"
+    "android": "npm run icons && tauri android build",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
