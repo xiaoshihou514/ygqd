@@ -203,7 +203,7 @@ async function handleExport() {
               placeholder="哔咔密码"
               @keydown.enter="handleBikaLogin"
             >
-            <button class="add-btn" :disabled="bikaLoggingIn" @click="handleBikaLogin">
+            <button class="bika-login-btn" :disabled="bikaLoggingIn" @click="handleBikaLogin">
               {{ bikaLoggingIn ? '登录中...' : '登录' }}
             </button>
           </div>
@@ -587,10 +587,10 @@ async function handleExport() {
 .bika-logout-btn {
   height: 36px;
   padding: 0 var(--spacing-lg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  color: var(--color-text-secondary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-primary);
   font-size: var(--font-size-caption);
   font-weight: var(--font-weight-semibold);
 }
@@ -600,6 +600,25 @@ async function handleExport() {
   flex-direction: column;
   gap: var(--spacing-sm);
   max-width: 360px;
+}
+
+.bika-login-btn {
+  height: 44px;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  transition: opacity 0.2s;
+}
+
+.bika-login-btn:disabled {
+  opacity: 0.55;
+}
+
+.bika-login-btn:focus-visible {
+  outline: 2px solid var(--color-primary-focus);
+  outline-offset: 2px;
 }
 
 .bika-status {
