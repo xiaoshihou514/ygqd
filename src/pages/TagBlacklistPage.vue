@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useTheme } from '@/composables/useTheme'
-import { bikaLogin, bikaLogout, bikaStatus } from '@/services/api'
+import {
+  bikaLogin,
+  bikaLogout,
+  bikaStatus,
+  fetchBikaAddresses,
+  getBikaAddress,
+  setBikaAddress,
+} from '@/services/api'
 import { datedJsonFilename, exportJson, type ExportResult } from '@/utils/exportJson'
 import EmptyState from '@/components/EmptyState.vue'
 import type { BlacklistMode } from '@/types'
@@ -24,6 +31,18 @@ const bikaLoggingIn = ref(false)
 const bikaError = ref('')
 const bikaMessage = ref('')
 
+const bikaAddress = ref('')
+const bikaAddressOptions = ref<string[]>([])
+const bikaAddressSyncing = ref(false)
+const bikaAddressError = ref('')
+
+/** 可选地址 = 同步到的列表,并保留当前已设置(可能来自旧列表)的地址 */
+const addressChoices = computed(() => {
+  const set = new Set(bikaAddressOptions.value)
+  if (bikaAddress.value) set.add(bikaAddress.value)
+  return [...set]
+})
+
 onMounted(async () => {
   try {
     const status = await bikaStatus()
@@ -32,7 +51,42 @@ onMounted(async () => {
   } catch {
     // ignore status failures
   }
+  try {
+    bikaAddress.value = await getBikaAddress()
+  } catch {
+    // ignore address failures
+  }
 })
+
+async function handleSyncAddresses() {
+  if (bikaAddressSyncing.value) return
+  bikaAddressSyncing.value = true
+  bikaAddressError.value = ''
+  try {
+    const list = await fetchBikaAddresses()
+    bikaAddressOptions.value = list
+    if (!list.length) {
+      bikaAddressError.value = '未获取到可用地址'
+    } else if (!list.includes(bikaAddress.value)) {
+      // 同步到新列表后默认切到第一个,避免停留在已失效的地址
+      await handleSelectAddress(list[0]!)
+    }
+  } catch (e) {
+    bikaAddressError.value = (e as Error).message || '同步分流地址失败'
+  } finally {
+    bikaAddressSyncing.value = false
+  }
+}
+
+async function handleSelectAddress(address: string) {
+  bikaAddressError.value = ''
+  try {
+    await setBikaAddress(address)
+    bikaAddress.value = address
+  } catch (e) {
+    bikaAddressError.value = (e as Error).message || '设置分流地址失败'
+  }
+}
 
 async function handleBikaLogin() {
   if (bikaLoggingIn.value) return
@@ -210,6 +264,39 @@ async function handleExport() {
         </template>
         <p v-if="bikaError" class="bika-status error">{{ bikaError }}</p>
         <p v-if="bikaMessage" class="bika-status">{{ bikaMessage }}</p>
+
+        <div class="bika-address-block">
+          <h3 class="bika-address-title">分流地址</h3>
+          <p class="page-desc">
+            登录或加载哔咔内容失败时，切换到其他分流地址后重试。
+          </p>
+          <div class="theme-options">
+            <button
+              class="theme-btn"
+              :class="{ active: bikaAddress === '' }"
+              @click="handleSelectAddress('')"
+            >
+              默认
+            </button>
+            <button
+              v-for="addr in addressChoices"
+              :key="addr"
+              class="theme-btn"
+              :class="{ active: bikaAddress === addr }"
+              @click="handleSelectAddress(addr)"
+            >
+              {{ addr }}
+            </button>
+            <button
+              class="theme-btn bika-address-sync"
+              :disabled="bikaAddressSyncing"
+              @click="handleSyncAddresses"
+            >
+              {{ bikaAddressSyncing ? '同步中...' : '同步地址' }}
+            </button>
+          </div>
+          <p v-if="bikaAddressError" class="bika-status error">{{ bikaAddressError }}</p>
+        </div>
       </div>
 
       <div class="section-divider" />
@@ -629,5 +716,23 @@ async function handleExport() {
 
 .bika-status.error {
   color: var(--color-error);
+}
+
+.bika-address-block {
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-divider-soft);
+}
+
+.bika-address-title {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.bika-address-sync:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 </style>

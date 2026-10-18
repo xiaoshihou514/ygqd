@@ -14,7 +14,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
       CREATE TABLE IF NOT EXISTS followed_authors(author TEXT PRIMARY KEY, followed_at INTEGER NOT NULL, last_checked_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS view_history(comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, viewed_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS tag_blacklist(tag TEXT PRIMARY KEY, mode TEXT NOT NULL, created_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS bika_account(id INTEGER PRIMARY KEY CHECK(id=1), email TEXT NOT NULL, password TEXT NOT NULL, token TEXT NOT NULL);").map_err(|e| e.to_string())?;
+      CREATE TABLE IF NOT EXISTS bika_account(id INTEGER PRIMARY KEY CHECK(id=1), email TEXT NOT NULL, password TEXT NOT NULL, token TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bika_address(id INTEGER PRIMARY KEY CHECK(id=1), address TEXT NOT NULL);").map_err(|e| e.to_string())?;
     migrate_view_history(&db)?;
     Ok(db)
 }
@@ -134,6 +135,25 @@ pub fn save_bika_account(
 pub fn clear_bika_account(db: &Connection) -> Result<(), String> {
     db.execute("DELETE FROM bika_account WHERE id=1", [])
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+/// 哔咔分流地址;空字符串表示不分流(用系统 DNS)
+pub fn bika_address(db: &Connection) -> Result<String, String> {
+    db.query_row("SELECT address FROM bika_address WHERE id=1", [], |row| {
+        row.get(0)
+    })
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(String::new()),
+        other => Err(other),
+    })
+    .map_err(|e: rusqlite::Error| e.to_string())
+}
+pub fn save_bika_address(db: &Connection, address: &str) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO bika_address VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET address=?1",
+        params![address],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 pub fn blacklist(db: &Connection) -> Result<Vec<BlacklistEntry>, String> {

@@ -9,7 +9,7 @@ use sources::bika::BikaApi;
 use std::{
     collections::HashMap,
     future::Future,
-    sync::Mutex,
+    sync::{Mutex, RwLock},
     time::{Duration, Instant},
 };
 use tauri::{ipc::Response, Manager, State};
@@ -19,7 +19,8 @@ const BASE: &str = "https://www.niacg.com";
 const NIACG_SEARCH_INTERVAL: Duration = Duration::from_millis(5200);
 struct AppState {
     niacg: reqwest::Client,
-    bika: BikaApi,
+    /// 哔咔客户端在切换分流地址时整体重建,读锁短持有,clone 后异步使用
+    bika: RwLock<BikaApi>,
     bika_token: Mutex<Option<String>>,
     db: Mutex<Connection>,
     cache: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
@@ -27,6 +28,10 @@ struct AppState {
     niacg_search_gate: tokio::sync::Mutex<Instant>,
 }
 impl AppState {
+    /// 取当前哔咔客户端快照(clone 便宜,reqwest::Client 内部为 Arc)
+    fn bika_snapshot(&self) -> BikaApi {
+        self.bika.read().expect("bika client lock poisoned").clone()
+    }
     /// 获取下一次 niacg 搜索的放行权,必要时等待
     async fn niacg_search_turn(&self) -> tokio::sync::MutexGuard<'_, Instant> {
         let mut last = self.niacg_search_gate.lock().await;
@@ -93,7 +98,7 @@ impl AppState {
             let account = db::bika_account(&conn)?.ok_or("哔咔登录已失效,请重新登录")?;
             (account.email, account.password)
         };
-        let token = self.bika.sign_in(&email, &password).await?;
+        let token = self.bika_snapshot().sign_in(&email, &password).await?;
         {
             let conn = self.db.lock().map_err(|e| e.to_string())?;
             db::save_bika_account(&conn, &email, &password, &token)?;
@@ -140,8 +145,9 @@ async fn fetch_category(
         return Ok(v);
     }
     let mut out = if source == "bika" {
+        let bika = state.bika_snapshot();
         state
-            .bika_call(|token| state.bika.comics(token, &category, "", "", page + 1))
+            .bika_call(|token| bika.comics(token, &category, "", "", page + 1))
             .await?
     } else {
         sources::niacg::list(
@@ -161,9 +167,10 @@ async fn fetch_bika_categories(state: State<'_, AppState>) -> Result<Vec<String>
     if let Some(v) = state.cached(key) {
         return Ok(v);
     }
-    let out = state
-        .bika_call(|token| state.bika.categories(token))
-        .await?;
+    let out = {
+        let bika = state.bika_snapshot();
+        state.bika_call(|token| bika.categories(token)).await?
+    };
     state.put(key.into(), &out);
     Ok(out)
 }
@@ -186,17 +193,18 @@ async fn search_comics(
         return Ok(v);
     }
     let mut out = if source == "bika" {
+        let bika = state.bika_snapshot();
         let result = if show == "tags" {
             state
-                .bika_call(|token| state.bika.comics(token, "", &keyword, "", page + 1))
+                .bika_call(|token| bika.comics(token, "", &keyword, "", page + 1))
                 .await?
         } else if show == "writer" {
             state
-                .bika_call(|token| state.bika.comics(token, "", "", &keyword, page + 1))
+                .bika_call(|token| bika.comics(token, "", "", &keyword, page + 1))
                 .await?
         } else {
             state
-                .bika_call(|token| state.bika.search(token, &keyword, page + 1))
+                .bika_call(|token| bika.search(token, &keyword, page + 1))
                 .await?
         };
         SearchResult {
@@ -294,12 +302,9 @@ async fn fetch_comic(
         return Ok(v);
     }
     let out = if source == "bika" {
-        let mut detail = state
-            .bika_call(|token| state.bika.detail(token, &id))
-            .await?;
-        detail.episodes = state
-            .bika_call(|token| state.bika.episodes(token, &id))
-            .await?;
+        let bika = state.bika_snapshot();
+        let mut detail = state.bika_call(|token| bika.detail(token, &id)).await?;
+        detail.episodes = state.bika_call(|token| bika.episodes(token, &id)).await?;
         detail
     } else {
         sources::niacg::detail(
@@ -324,8 +329,9 @@ async fn fetch_comic_images(
     state: State<'_, AppState>,
 ) -> Result<ComicImagesResult, String> {
     if source == "bika" {
+        let bika = state.bika_snapshot();
         return state
-            .bika_call(|token| state.bika.pictures(token, &id, ep_order, page + 1))
+            .bika_call(|token| bika.pictures(token, &id, ep_order, page + 1))
             .await;
     }
     let key = format!("niacg:images-{category_id}-{id}");
@@ -364,9 +370,9 @@ async fn fetch_image(
     state: State<'_, AppState>,
 ) -> Result<Response, String> {
     let client = if source == "bika" {
-        &state.bika.client
+        state.bika_snapshot().client
     } else {
-        &state.niacg
+        state.niacg.clone()
     };
     let bytes = client
         .get(url)
@@ -387,7 +393,7 @@ async fn bika_login(
     password: String,
     state: State<'_, AppState>,
 ) -> Result<BikaAccountStatus, String> {
-    let token = state.bika.sign_in(&email, &password).await?;
+    let token = state.bika_snapshot().sign_in(&email, &password).await?;
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         db::save_bika_account(&conn, &email, &password, &token)?;
@@ -425,6 +431,37 @@ fn bika_status(state: State<'_, AppState>) -> Result<BikaAccountStatus, String> 
             email: String::new(),
         },
     })
+}
+
+/// 从哔咔官方 init 端点同步可用分流地址
+#[tauri::command]
+async fn fetch_bika_addresses(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.bika_snapshot().fetch_addresses().await
+}
+
+/// 当前分流地址,空字符串表示不分流
+#[tauri::command]
+fn get_bika_address(state: State<'_, AppState>) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::bika_address(&conn)
+}
+
+/// 设置分流地址并重建哔咔客户端;空字符串表示恢复系统 DNS
+#[tauri::command]
+async fn set_bika_address(address: String, state: State<'_, AppState>) -> Result<(), String> {
+    let address = address.trim().to_string();
+    let api = BikaApi::new(if address.is_empty() {
+        None
+    } else {
+        Some(&address)
+    })?;
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::save_bika_address(&conn, &address)?;
+    }
+    *state.bika.write().map_err(|e| e.to_string())? = api;
+    state.clear_cache();
+    Ok(())
 }
 
 #[tauri::command]
@@ -479,5 +516,62 @@ fn update_blacklist(tag: String, mode: String, state: State<'_, AppState>) -> Re
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().setup(|app|{let dir=app.path().app_data_dir()?;std::fs::create_dir_all(&dir)?;let mut headers=HeaderMap::new();headers.insert(USER_AGENT,HeaderValue::from_static("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"));headers.insert(REFERER,HeaderValue::from_static(BASE));let niacg=reqwest::Client::builder().default_headers(headers).cookie_store(true).build()?;let bika=BikaApi::new()?;let conn=db::open(&dir.join("ygqd.db")).map_err(std::io::Error::other)?;app.manage(AppState{niacg,bika,bika_token:Mutex::new(None),db:Mutex::new(conn),cache:Mutex::new(HashMap::new()),niacg_search_gate:tokio::sync::Mutex::new(Instant::now()-Duration::from_secs(3600))});Ok(())}).invoke_handler(tauri::generate_handler![fetch_category,fetch_bika_categories,search_comics,fetch_comic,fetch_comic_images,fetch_image,bika_login,bika_logout,bika_status,fetch_follows,follow_author,unfollow_author,fetch_history,record_history,fetch_blacklist,add_blacklist,remove_blacklist,update_blacklist]).run(tauri::generate_context!()).expect("failed to run app")
+    tauri::Builder::default()
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir)?;
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                USER_AGENT,
+                HeaderValue::from_static(
+                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+                ),
+            );
+            headers.insert(REFERER, HeaderValue::from_static(BASE));
+            let niacg = reqwest::Client::builder()
+                .default_headers(headers)
+                .cookie_store(true)
+                .build()?;
+            let conn = db::open(&dir.join("ygqd.db")).map_err(std::io::Error::other)?;
+            let address = db::bika_address(&conn).unwrap_or_default();
+            let bika = BikaApi::new(if address.is_empty() {
+                None
+            } else {
+                Some(&address)
+            })?;
+            app.manage(AppState {
+                niacg,
+                bika: RwLock::new(bika),
+                bika_token: Mutex::new(None),
+                db: Mutex::new(conn),
+                cache: Mutex::new(HashMap::new()),
+                niacg_search_gate: tokio::sync::Mutex::new(Instant::now() - Duration::from_secs(3600)),
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            fetch_category,
+            fetch_bika_categories,
+            search_comics,
+            fetch_comic,
+            fetch_comic_images,
+            fetch_image,
+            bika_login,
+            bika_logout,
+            bika_status,
+            fetch_bika_addresses,
+            get_bika_address,
+            set_bika_address,
+            fetch_follows,
+            follow_author,
+            unfollow_author,
+            fetch_history,
+            record_history,
+            fetch_blacklist,
+            add_blacklist,
+            remove_blacklist,
+            update_blacklist
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to run app")
 }

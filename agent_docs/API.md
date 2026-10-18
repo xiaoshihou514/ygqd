@@ -5,12 +5,18 @@
 
 | Command | 参数 | 返回值 |
 |---|---|---|
-| `fetch_home` | — | `HomeSection[]` |
-| `fetch_category` | `category`, `page` | `{ items, pagination }` |
-| `search_comics` | `keyword`, `classid`, `show`, `page`, `cacheBuster?` | `SearchResult` |
-| `fetch_comic` | `categoryId`, `id` | `ComicDetail` |
-| `fetch_comic_metadata` | `categoryId`, `id` | `ComicMetadata` |
-| `fetch_image` | `url` | `ArrayBuffer` |
+| `fetch_category` | `source`, `category`, `page` | `{ items, pagination }` |
+| `fetch_bika_categories` | — | `string[]` |
+| `search_comics` | `source`, `keyword`, `classid`, `show`, `page`, `cacheBuster?` | `SearchResult` |
+| `fetch_comic` | `source`, `categoryId`, `id` | `ComicDetail` |
+| `fetch_comic_images` | `source`, `categoryId`, `id`, `epOrder`, `page` | `ComicImagesResult` |
+| `fetch_image` | `url`, `source` | `ArrayBuffer` |
+| `bika_login` | `email`, `password` | `BikaAccountStatus` |
+| `bika_logout` | — | `void` |
+| `bika_status` | — | `BikaAccountStatus` |
+| `fetch_bika_addresses` | — | `string[]`（从官方 init 端点同步分流 IP） |
+| `get_bika_address` | — | `string`（空串表示不分流） |
+| `set_bika_address` | `address` | `void`（重建哔咔客户端并清缓存） |
 | `fetch_follows` | — | `FollowedAuthor[]` |
 | `follow_author` | `author` | `FollowedAuthor` |
 | `unfollow_author` | `author` | `void` |

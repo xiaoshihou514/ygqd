@@ -8,6 +8,9 @@ use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const BASE: &str = "https://picaapi.picacomic.com";
+/// 哔咔官方分流地址列表端点(返回 Cloudflare 边缘 IP,用于绕过
+/// DNS 污染与部分节点的风控,参考 pikapika 的"分流地址"设置)
+const ADDRESS_INIT: &str = "http://68.183.234.72/init";
 const API_KEY: &str = "C69BAF41DA5ABD1FFEDC6D2FEA56B";
 const SECRET: &str = "~d}$Q7$eIni=V)9\\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn";
 
@@ -201,6 +204,7 @@ struct TokenDoc {
     token: String,
 }
 
+#[derive(Clone)]
 pub struct BikaApi {
     pub client: reqwest::Client,
 }
@@ -214,7 +218,9 @@ fn encode_query(pairs: &[(&str, &str)]) -> String {
 }
 
 impl BikaApi {
-    pub fn new() -> Result<Self, String> {
+    /// `address` 为分流地址("IP" 或 "IP:PORT"),None 时用系统 DNS。
+    /// 分流原理:SNI 仍是 picaapi.picacomic.com,只替换 TCP 连接的边缘 IP
+    pub fn new(address: Option<&str>) -> Result<Self, String> {
         let mut headers = HeaderMap::new();
         headers.insert("api-key", HeaderValue::from_static(API_KEY));
         headers.insert(
@@ -233,12 +239,49 @@ impl BikaApi {
             HeaderValue::from_static("application/json; charset=UTF-8"),
         );
         headers.insert(USER_AGENT, HeaderValue::from_static("okhttp/3.8.1"));
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
+        let mut builder = reqwest::Client::builder().default_headers(headers);
+        if let Some(address) = address {
+            // 补默认端口;resolve 只影响 TCP 层目标,TLS 的 SNI 仍为域名
+            let full = if address.contains(':') {
+                address.to_string()
+            } else {
+                format!("{address}:443")
+            };
+            let socket = full
+                .parse()
+                .map_err(|e| format!("无效的分流地址 {full:?}: {e}"))?;
+            builder = builder.resolve("picaapi.picacomic.com", socket);
+        }
+        let client = builder
             .cookie_store(true)
             .build()
             .map_err(|e| e.to_string())?;
         Ok(Self { client })
+    }
+
+    /// 从哔咔官方 init 端点同步可用分流地址(裸 IP,不带端口)
+    pub async fn fetch_addresses(&self) -> Result<Vec<String>, String> {
+        #[derive(Deserialize)]
+        struct InitDoc {
+            #[serde(default)]
+            addresses: Vec<String>,
+        }
+        let doc: InitDoc = self
+            .client
+            .get(ADDRESS_INIT)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(doc
+            .addresses
+            .into_iter()
+            .filter(|addr| !addr.is_empty())
+            .collect())
     }
 
     /// 返回 Err 以 "401" 开头表示 token 失效,调用方应重新登录后重试
@@ -532,7 +575,8 @@ mod tests {
         tokio::runtime::Runtime::new()
             .expect("tokio runtime")
             .block_on(async {
-                let api = BikaApi::new().expect("bika client");
+                let api = BikaApi::new(std::env::var("BIKA_ADDRESS").ok().as_deref())
+                    .expect("bika client");
                 let token = match std::env::var("BIKA_TOKEN") {
                     Ok(token) if !token.is_empty() => {
                         println!("using BIKA_TOKEN from env");
