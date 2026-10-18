@@ -40,7 +40,23 @@ fn now_secs() -> String {
 }
 
 fn nonce() -> String {
-    uuid::Uuid::new_v4().simple().to_string()
+    // 官方客户端使用 UUID v1(时间戳序,去掉连字符的 32 位 hex)。
+    // 手工构造 v1 布局以免引入 uuid crate 的 v1 特性依赖;
+    // 服务器只校验签名与 nonce 头一致,不解析其语义
+    let ticks = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+        / 100
+        + 0x01B2_1DD2_1381_4000; // 100ns 计数,含 1582-10-15 起始偏移
+    const NODE: [u8; 6] = [0x6b, 0x69, 0x61, 0x6b, 0x61, 0x61]; // "bikaaa"
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&(ticks as u32).to_be_bytes()); // time_low
+    bytes.extend_from_slice(&((ticks >> 32) as u16).to_be_bytes()); // time_mid
+    bytes.extend_from_slice(&(((ticks >> 48) as u16) | 0x1000).to_be_bytes()); // time_hi + version 1
+    bytes.extend_from_slice(&[0xb3, 0x2a]); // clock_seq(variant 10x)
+    bytes.extend_from_slice(&NODE);
+    hex_lower(&bytes)
 }
 
 // ---- PicaAPI 响应 DTO ----
@@ -205,12 +221,13 @@ impl BikaApi {
             ACCEPT,
             HeaderValue::from_static("application/vnd.picacomic.com.v1+json"),
         );
-        headers.insert("app-channel", HeaderValue::from_static("2"));
+        headers.insert("app-channel", HeaderValue::from_static("3"));
         headers.insert("app-version", HeaderValue::from_static("2.2.1.3.3.4"));
         headers.insert("app-uuid", HeaderValue::from_static("defaultUuid"));
         headers.insert("app-platform", HeaderValue::from_static("android"));
         headers.insert("app-build-version", HeaderValue::from_static("45"));
         headers.insert("image-quality", HeaderValue::from_static("original"));
+        headers.insert("version", HeaderValue::from_static("v1.4.1"));
         headers.insert(
             CONTENT_TYPE,
             HeaderValue::from_static("application/json; charset=UTF-8"),
@@ -254,7 +271,9 @@ impl BikaApi {
             .header("nonce", &nonce)
             .header("signature", signature);
         if let Some(token) = token {
-            request = request.bearer_auth(token);
+            // 官方客户端 authorization 为裸 JWT,不带 "Bearer " 前缀;
+            // 带 Bearer 会被哔咔当作无效凭据返回 401
+            request = request.header("authorization", token);
         }
         if let Some(body) = body {
             // 不能用 .json():它会把 Content-Type 覆盖为不带 charset 的版本,
@@ -290,14 +309,15 @@ impl BikaApi {
             .await
         {
             Ok(data) => data,
-            // 登录接口返回 200 但不带 data:哔咔防爆破的影子限流(错误密码同样如此)
+            // 登录接口返回 200 但不带 data:哔咔在风控/防爆破时返回这种影子响应,
+            // 错误密码同样如此,无法区分具体原因;社区经验是切换网络后重试
             Err(e) if e.contains("missing data") => {
-                return Err("哔咔登录暂时受限（防爆破保护），请过一段时间再试".into())
+                return Err("哔咔拒绝了本次登录（风控/防爆破），请切换网络（Wi-Fi 与流量互换）后重试，或稍后再试".into())
             }
             Err(e) => return Err(e),
         };
         if data.token.is_empty() {
-            return Err("哔咔登录暂时受限（防爆破保护），请过一段时间再试".into());
+            return Err("哔咔拒绝了本次登录（风控/防爆破），请切换网络（Wi-Fi 与流量互换）后重试，或稍后再试".into());
         }
         Ok(data.token)
     }
@@ -447,6 +467,21 @@ mod tests {
         assert_eq!(
             sig,
             "e1eba013d81de92db7ab7372b271861f2e928c893899eb727424451f8f4e1eb6"
+        );
+    }
+
+    #[test]
+    fn nonce_is_uuid_v1_shaped_hex() {
+        let n = nonce();
+        assert_eq!(n.len(), 32, "去连字符后应为 32 位 hex: {n}");
+        assert!(n.chars().all(|c| c.is_ascii_hexdigit()), "hex: {n}");
+        let version = n.as_bytes()[12] - b'0';
+        assert!(version <= 9, "版本位为 hex 数字");
+        assert_eq!(u32::from(version), 1, "版本应为 1: {n}");
+        let variant = u8::from_str_radix(&n[16..17], 16).expect("hex");
+        assert!(
+            (0x8..=0xB).contains(&variant),
+            "变体位应为 RFC 4122 (10x): {n}"
         );
     }
 
