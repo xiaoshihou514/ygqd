@@ -7,7 +7,8 @@ const CHINESE_NUM_MAP: Record<string, number> = {
 }
 
 function chineseNumToInt(s: string): number | null {
-  if (CHINESE_NUM_MAP[s]) return CHINESE_NUM_MAP[s]
+  const mappedNumber = CHINESE_NUM_MAP[s]
+  if (mappedNumber !== undefined) return mappedNumber
   if (s === '百') return 100
   if (s.length === 2 && s[0] === '十') {
     const unit = CHINESE_NUM_MAP[s[1] ?? '']
@@ -35,26 +36,23 @@ const COMPLETE_MARKERS = /(完本|全篇|END|\(完\)|完全版|全本|(?<!\w)完
 const EXTRA_MARKERS = /(番外|特别篇)/
 
 function findChapterSeparator(s: string): number {
-  const patterns: { regex: RegExp; adjust?: (m: RegExpExecArray) => number }[] = [
-    { regex: /第(\d+|[一二三四五六七八九十百]+)[话回章卷集]/g, adjust: (m) => m.index },
-    { regex: /[话回章卷集](\d+)/g, adjust: (m) => m.index },
-    { regex: /S2\s*(\d+)/g, adjust: (m) => m.index },
-    { regex: /第二部\s*(\d+)/g, adjust: (m) => m.index },
-    { regex: /续集\s*(\d+)/g, adjust: (m) => m.index },
-    { regex: /([一二三四五六七八九十百]+)(?:$|\s|-|,|，|、|\.)/g, adjust: (m) => m.index },
-    { regex: /(\d+-\d+(?:-\d+)?)/g, adjust: (m) => m.index },
-    { regex: /(?<!\w)(\d+)(?!\w|年|月|日|岁)/g, adjust: (m) => m.index },
+  const patterns: RegExp[] = [
+    /第(?:\d+\s*-\s*\d+|\d+|[零一二三四五六七八九十百]+)[话回章卷集]/g,
+    /[话回章卷集](\d+)/g,
+    /S2\s*(\d+)/g,
+    /第二部\s*(\d+)/g,
+    /续集\s*(\d+)/g,
+    /([零一二三四五六七八九十百]+)(?:$|\s|-|,|，|、|\.)/g,
+    /(\d+-\d+(?:-\d+)?)/g,
+    /(?<!\w)(\d+)(?!\w|年|月|日|岁)/g,
   ]
 
   let earliest = s.length
-  for (const { regex, adjust } of patterns) {
+  for (const regex of patterns) {
     regex.lastIndex = 0
-    let m: RegExpExecArray | null
-    while ((m = regex.exec(s)) !== null) {
-      const pos = adjust ? adjust(m) : m.index
-      if (pos < earliest) {
-        earliest = pos
-      }
+    let match: RegExpExecArray | null
+    while ((match = regex.exec(s)) !== null) {
+      earliest = Math.min(earliest, match.index)
     }
   }
 
@@ -62,63 +60,33 @@ function findChapterSeparator(s: string): number {
 }
 
 function parseChapterNumbers(infoStr: string): { chapters: number[]; hasExtra: boolean } {
-  const chapters: number[] = []
-  let hasExtra = false
+  const hasExtra = EXTRA_MARKERS.test(infoStr)
+  const chapterInfo = infoStr.replace(EXTRA_MARKERS, '')
+  const ranges = [...chapterInfo.matchAll(/(\d+)\s*-\s*(\d+)/g)]
+  const rangeChapters = ranges.flatMap(([, startText, endText]) => {
+    const start = Number.parseInt(startText!, 10)
+    const end = Number.parseInt(endText!, 10)
+    const firstChapter = Math.min(start, end)
+    const lastChapter = Math.max(start, end)
+    return Array.from(
+      { length: lastChapter - firstChapter + 1 },
+      (_, index) => firstChapter + index,
+    )
+  })
+  const remainingInfo = chapterInfo.replace(/(\d+)\s*-\s*(\d+)/g, '')
+  const numericChapters = [...remainingInfo.matchAll(/(\d+)/g)].map(([chapter]) =>
+    Number.parseInt(chapter!, 10),
+  )
+  const chineseChapters = [...remainingInfo.matchAll(/([零一二三四五六七八九十百]+)/g)]
+    .map(([, chapter]) => chineseNumToInt(chapter!))
+    .filter((chapter): chapter is number => chapter !== null)
 
-  if (EXTRA_MARKERS.test(infoStr)) {
-    hasExtra = true
-    infoStr = infoStr.replace(EXTRA_MARKERS, '')
+  return {
+    chapters: [...new Set([...rangeChapters, ...numericChapters, ...chineseChapters])].sort(
+      (a, b) => a - b,
+    ),
+    hasExtra,
   }
-
-  const rangeRegex = /(\d+)\s*-\s*(\d+)/g
-  let m: RegExpExecArray | null
-  while ((m = rangeRegex.exec(infoStr)) !== null) {
-    const a = parseInt(m[1]!, 10)
-    const b = parseInt(m[2]!, 10)
-    const start = Math.min(a, b)
-    const end = Math.max(a, b)
-    for (let i = start; i <= end; i++) {
-      chapters.push(i)
-    }
-    infoStr = infoStr.replace(m[0], '')
-  }
-
-  const singleDigitRegex = /(\d+)/g
-  while ((m = singleDigitRegex.exec(infoStr)) !== null) {
-    chapters.push(parseInt(m[1]!, 10))
-  }
-
-  const chineseRegex = /([一二三四五六七八九十百]+)/g
-  while ((m = chineseRegex.exec(infoStr)) !== null) {
-    const val = chineseNumToInt(m[1]!)
-    if (val !== null) {
-      chapters.push(val)
-    }
-  }
-
-  const dihuaRegex = /第(\d+)[话回章卷集]/g
-  while ((m = dihuaRegex.exec(infoStr)) !== null) {
-    chapters.push(parseInt(m[1]!, 10))
-  }
-  const dihuaChineseRegex = /第([一二三四五六七八九十百]+)[话回章卷集]/g
-  while ((m = dihuaChineseRegex.exec(infoStr)) !== null) {
-    const val = chineseNumToInt(m[1]!)
-    if (val !== null) {
-      chapters.push(val)
-    }
-  }
-
-  const s2Regex = /S2\s*(\d+)/g
-  while ((m = s2Regex.exec(infoStr)) !== null) {
-    chapters.push(parseInt(m[1]!, 10))
-  }
-
-  const dierbuRegex = /第二部\s*(\d+)/g
-  while ((m = dierbuRegex.exec(infoStr)) !== null) {
-    chapters.push(parseInt(m[1]!, 10))
-  }
-
-  return { chapters: [...new Set(chapters)].sort((a, b) => a - b), hasExtra }
 }
 
 function parseTitle(item: ComicItem): ParsedTitle {
@@ -213,19 +181,7 @@ function groupParsed(parsed: ParsedTitle[]): SplitGroup[] {
       }
     }
 
-    let isComplete = false
-    if (g.hasCompleteMark) {
-      isComplete = true
-    } else if (isStandalone) {
-      isComplete = true
-    } else if (knownChapters.length === 1) {
-      isComplete = false
-    } else if (missingChapters.length > 0) {
-      isComplete = false
-    } else {
-      isComplete = false
-    }
-
+    const isComplete = g.hasCompleteMark || isStandalone
     groups.push({
       author: g.author,
       workName: g.workName,
@@ -248,7 +204,7 @@ function groupParsed(parsed: ParsedTitle[]): SplitGroup[] {
   return groups
 }
 
-export function splitAndGroup(items: ComicItem[]): SplitGroup[] {
+export function splitAndGroup(items: readonly ComicItem[]): SplitGroup[] {
   const parsed = items.map(parseTitle)
   return groupParsed(parsed)
 }

@@ -125,14 +125,6 @@ impl AppState {
         }
     }
 }
-fn rewrite(items: &mut [ComicItem]) {
-    for v in items {
-        if v.source == "niacg" {
-            v.thumbnail = v.thumbnail.clone();
-        }
-    }
-}
-
 #[tauri::command]
 async fn fetch_category(
     source: String,
@@ -144,7 +136,7 @@ async fn fetch_category(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let mut out = if source == "bika" {
+    let out = if source == "bika" {
         let bika = state.bika_snapshot();
         state
             .bika_call(|token| bika.comics(token, &category, "", "", page + 1))
@@ -156,7 +148,6 @@ async fn fetch_category(
                 .await?,
         )
     };
-    rewrite(&mut out.items);
     state.put(key, &out);
     Ok(out)
 }
@@ -285,7 +276,6 @@ async fn search_comics(
     };
     out.pagination.current = page;
     out.pagination.has_prev = page > 0;
-    rewrite(&mut out.items);
     state.put(key, &out);
     Ok(out)
 }
