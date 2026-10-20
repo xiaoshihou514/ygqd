@@ -7,6 +7,7 @@ use crate::models::*;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use scraper::{ElementRef, Html, Selector};
 use std::sync::OnceLock;
+use tauri::Manager as _;
 
 const BASE: &str = "https://fs1.app";
 
@@ -189,8 +190,8 @@ impl VideoApi {
         })
     }
 
-    /// 详情:元数据 + 可播放的 m3u8。code 为小写番号。
-    pub async fn detail(&self, code: &str) -> Result<VideoDetail, String> {
+    /// fs1 侧详情:元数据 + fs1 的 m3u8。code 为小写番号。
+    async fn detail_fs1(&self, code: &str) -> Result<VideoDetail, String> {
         let html = self
             .get(&format!("/videos/{}/", code.to_lowercase()))
             .await?;
@@ -225,7 +226,40 @@ impl VideoApi {
             title,
             tags,
             m3u8: m3u8.ok_or_else(|| "未在详情页找到 m3u8".to_string())?,
+            provider: "fs1".into(),
         })
+    }
+
+    /// 详情(双源):元数据走 fs1(服务端渲染,稳定);播放地址优先
+    /// missav(经网关解码 eval packer,番号直达),失败回退 fs1。
+    /// missav 网关不可用时静默降级,不影响可看性。
+    pub async fn detail(&self, app: &tauri::AppHandle, code: &str) -> Result<VideoDetail, String> {
+        let mut detail = self.detail_fs1(code).await;
+        if detail.is_err() && app.try_state::<crate::GatewayManager>().is_none() {
+            return detail;
+        }
+        let manager = app.state::<crate::GatewayManager>();
+        let missav_url = format!("https://missav.ai/videos/{}", code.to_lowercase());
+        if let Ok(m3u8) =
+            crate::gateway::gateway_fetch_extract_m3u8(app, &manager, "missav", &missav_url).await
+        {
+            if !m3u8.is_empty() {
+                if let Ok(d) = detail.as_mut() {
+                    d.m3u8 = m3u8;
+                    d.provider = "missav".into();
+                } else {
+                    // fs1 元数据也失败:仅番号的纯播放模式
+                    detail = Ok(VideoDetail {
+                        code: code.to_lowercase(),
+                        title: code.to_uppercase(),
+                        tags: vec![],
+                        m3u8,
+                        provider: "missav".into(),
+                    });
+                }
+            }
+        }
+        detail
     }
 }
 
@@ -237,6 +271,8 @@ pub struct VideoDetail {
     pub title: String,
     pub tags: Vec<String>,
     pub m3u8: String,
+    /// 播放来源:"missav"(优先)或 "fs1"(回退)
+    pub provider: String,
 }
 
 #[cfg(test)]
@@ -271,7 +307,7 @@ mod tests {
                 assert!(!search.items.is_empty());
                 assert!(search.items.iter().all(|c| c.code.starts_with("ssis-")));
 
-                let detail = api.detail(&first.code).await.expect("detail");
+                let detail = api.detail_fs1(&first.code).await.expect("detail");
                 println!(
                     "detail: title={}.. tags={} m3u8={}",
                     detail.title.chars().take(20).collect::<String>(),

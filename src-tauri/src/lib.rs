@@ -291,17 +291,18 @@ async fn search_videos(
     Ok(out)
 }
 
-/// 视频详情(元数据 + m3u8),code 为小写番号
+/// 视频详情(元数据走 fs1,m3u8 优先 missav 网关,回退 fs1)
 #[tauri::command]
 async fn fetch_video_detail(
-    code: String,
+    app: AppHandle,
     state: State<'_, AppState>,
+    code: String,
 ) -> Result<VideoDetail, String> {
     let key = format!("video:detail-{code}");
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = state.video.detail(&code).await?;
+    let out = state.video.detail(&app, &code).await?;
     state.put(key, &out);
     Ok(out)
 }

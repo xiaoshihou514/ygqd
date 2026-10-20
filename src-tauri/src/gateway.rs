@@ -90,6 +90,27 @@ pub async fn gateway_fetch(
     label: &str,
     url: &str,
 ) -> Result<String, String> {
+    gateway_fetch_inner(app, manager, label, url, false).await
+}
+
+/// 同 gateway_fetch;extract_m3u8 为真时在页面上下文内执行
+/// missav 的 eval(packer) 混淆并从中提取首个 m3u8 地址
+pub async fn gateway_fetch_extract_m3u8(
+    app: &AppHandle,
+    manager: &GatewayManager,
+    label: &str,
+    url: &str,
+) -> Result<String, String> {
+    gateway_fetch_inner(app, manager, label, url, true).await
+}
+
+async fn gateway_fetch_inner(
+    app: &AppHandle,
+    manager: &GatewayManager,
+    label: &str,
+    url: &str,
+    extract_m3u8: bool,
+) -> Result<String, String> {
     let created = ensure_gateway(app, label)?;
     if created {
         // 新建窗口需要等首页加载完成(或挑战通过)后才具备 fetch 条件,
@@ -109,11 +130,26 @@ pub async fn gateway_fetch(
     let rx = manager.register(id.clone());
     let js_url = serde_json::to_string(url).map_err(|e| e.to_string())?;
     let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
+    let extract = if extract_m3u8 { "true" } else { "false" };
     let js = format!(
         r#"(async () => {{
   try {{
     const r = await fetch({js_url}, {{ credentials: "include" }});
-    const body = await r.text();
+    let body = await r.text();
+    if ({extract}) {{
+      // missav 的播放地址藏在 eval(p,a,c,k,e,d) packer 里;
+      // 页面上下文即 JS 环境,new Function 执行后抽取 m3u8
+      let found = "";
+      const blocks = body.match(/eval\(function\(p,a,c,k,e,d\)\{{[\s\S]*?\}}\)\)/g) || [];
+      for (const block of blocks) {{
+        try {{
+          const out = new Function("return " + block.replace(/^eval/, ""))();
+          const urls = String(out).match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/g);
+          if (urls && urls.length) {{ found = urls[0]; break; }}
+        }} catch (e) {{}}
+      }}
+      body = found;
+    }}
     window.__TAURI_INTERNALS__.invoke("gateway_result", {{
       id: {js_id}, status: r.status, body
     }});
@@ -134,6 +170,10 @@ pub async fn gateway_fetch(
     }
     if reply.status >= 400 {
         return Err(format!("网关源返回 HTTP {}", reply.status));
+    }
+    // 首次成功说明挑战/登录已就绪,隐藏窗口转为后台网关
+    if let Some(window) = app.get_webview_window(&format!("gateway_{label}")) {
+        let _ = window.hide();
     }
     Ok(reply.body)
 }

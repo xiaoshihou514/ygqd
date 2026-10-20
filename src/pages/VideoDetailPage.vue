@@ -99,6 +99,9 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="detail" class="meta-section">
+      <div class="provider-row">
+        <span class="provider-badge" :class="detail.provider">{{ detail.provider === 'missav' ? 'missav 优先线路' : 'fs1 线路' }}</span>
+      </div>
       <h1 class="video-title">{{ detail.title || detail.code.toUpperCase() }}</h1>
       <div class="video-tags">
         <span v-for="tag in detail.tags.slice(0, 30)" :key="tag" class="video-tag">
@@ -160,6 +163,23 @@ onBeforeUnmount(() => {
 
 .meta-section {
   padding: var(--spacing-md) var(--spacing-md) 0;
+}
+
+.provider-row {
+  margin-bottom: var(--spacing-xs);
+}
+
+.provider-badge {
+  padding: 2px 10px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 11px;
+  background: var(--color-divider-soft);
+  color: var(--color-text-secondary);
+}
+
+.provider-badge.missav {
+  background: var(--color-primary);
+  color: #fff;
 }
 
 .video-title {

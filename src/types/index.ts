@@ -154,6 +154,8 @@ export interface VideoDetail {
   title: string
   tags: string[]
   m3u8: string
+  /** 播放来源:missav(优先)或 fs1(回退) */
+  provider?: string
 }
 
 export interface NovelChapter {
