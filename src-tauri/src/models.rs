@@ -206,3 +206,34 @@ mod tests {
         assert_eq!(Source::Bika.to_string(), "bika");
     }
 }
+
+/// 小说系列(书架条目),chapters 为 JSON 存 SQLite
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelSeries {
+    pub id: String,
+    pub title: String,
+    pub author: String,
+    pub chapters: Vec<NovelChapter>,
+    pub added_at: i64,
+}
+
+/// 系列中的一个章节
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelChapter {
+    /// /n/{id} 的文章 id
+    pub id: String,
+    pub order: i64,
+    pub title: String,
+}
+
+/// 文章单页解析结果
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelPage {
+    pub title: String,
+    pub author: String,
+    pub text: String,
+    pub total_pages: i64,
+}

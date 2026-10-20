@@ -329,11 +329,16 @@ onUnmounted(() => {
 
       <VideoBrowser v-if="segment === 'video'" />
 
-      <EmptyState
-        v-else-if="segment === 'novel'"
-        title="小说板块准备中"
-        message="小说源(hlib.cc)接入后开放"
-      />
+      <div v-else-if="segment === 'novel'" class="novel-entry">
+        <EmptyState
+          title="小说书架"
+          message="hlib.cc 小说阅读:粘贴系列链接加入书架,首次使用需在弹出的窗口中登录"
+        >
+          <button class="retry-btn" @click="router.push('/novels')">
+            打开书架
+          </button>
+        </EmptyState>
+      </div>
 
       <template v-else>
       <div v-if="loading" class="home-loading">

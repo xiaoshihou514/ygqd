@@ -4,6 +4,7 @@ mod models;
 mod sources;
 
 use gateway::GatewayManager;
+use models::NovelPage;
 use models::*;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use rusqlite::Connection;
@@ -195,6 +196,62 @@ fn gateway_set_visible(app: AppHandle, label: String, visible: bool) -> Result<(
     } else {
         window.hide().map_err(|e| e.to_string())
     }
+}
+
+/// 添加小说系列到书架:输入 hlib 系列链接或纯 ID。
+/// 首次会弹出网关窗口,需用户完成一次登录/安全验证。
+#[tauri::command]
+async fn novel_add(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: String,
+) -> Result<NovelSeries, String> {
+    let id = sources::novel::parse_series_id(&input)?;
+    let mut series = sources::novel::fetch_series(&app, &id).await?;
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::novel_upsert(&conn, &series)?;
+        series.added_at = db::now();
+    }
+    Ok(series)
+}
+
+#[tauri::command]
+fn novel_shelf(state: State<'_, AppState>) -> Result<Vec<NovelSeries>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::novel_shelf(&conn)
+}
+
+#[tauri::command]
+fn novel_remove(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::novel_remove(&conn, &id)
+}
+
+/// 读取章节某页正文;网关直连 hlib,未登录/未验证时返回引导错误
+#[tauri::command]
+async fn novel_read(app: AppHandle, chapter_id: String, page: i64) -> Result<NovelPage, String> {
+    sources::novel::fetch_article_page(&app, &chapter_id, page).await
+}
+
+#[tauri::command]
+fn novel_progress(
+    series_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<(i64, i64)>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::novel_progress(&conn, &series_id)
+}
+
+#[tauri::command]
+fn novel_set_progress(
+    series_id: String,
+    chapter_order: i64,
+    page: i64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::novel_set_progress(&conn, &series_id, chapter_order, page)
 }
 
 /// 网关桥回传(由网关 webview 内的 JS 调用,不暴露给主窗口前端)
@@ -768,6 +825,12 @@ pub fn run() {
             gateway_fetch,
             gateway_set_visible,
             gateway_result,
+            novel_add,
+            novel_shelf,
+            novel_remove,
+            novel_read,
+            novel_progress,
+            novel_set_progress,
             bika_switch_like,
             bika_switch_favourite,
             fetch_favorites,

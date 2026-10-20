@@ -155,3 +155,24 @@ export interface VideoDetail {
   tags: string[]
   m3u8: string
 }
+
+export interface NovelChapter {
+  id: string
+  order: number
+  title: string
+}
+
+export interface NovelSeries {
+  id: string
+  title: string
+  author: string
+  chapters: NovelChapter[]
+  addedAt: number
+}
+
+export interface NovelPage {
+  title: string
+  author: string
+  text: string
+  totalPages: number
+}

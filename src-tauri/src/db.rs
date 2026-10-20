@@ -16,7 +16,9 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
       CREATE TABLE IF NOT EXISTS tag_blacklist(tag TEXT PRIMARY KEY, mode TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bika_account(id INTEGER PRIMARY KEY CHECK(id=1), email TEXT NOT NULL, password TEXT NOT NULL, token TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS bika_address(id INTEGER PRIMARY KEY CHECK(id=1), address TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS favorites(source TEXT NOT NULL, comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(source, comic_id));").map_err(|e| e.to_string())?;
+      CREATE TABLE IF NOT EXISTS favorites(source TEXT NOT NULL, comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(source, comic_id));
+      CREATE TABLE IF NOT EXISTS novel_series(id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL, chapters TEXT NOT NULL, added_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS novel_progress(series_id TEXT NOT NULL, chapter_order INTEGER NOT NULL, page INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(series_id));").map_err(|e| e.to_string())?;
     migrate_view_history(&db)?;
     Ok(db)
 }
@@ -251,4 +253,72 @@ pub fn is_favorite(db: &Connection, source: Source, comic_id: &str) -> Result<bo
         )
         .map_err(|e| e.to_string())?;
     Ok(count > 0)
+}
+
+pub fn novel_shelf(db: &Connection) -> Result<Vec<crate::models::NovelSeries>, String> {
+    let mut s = db
+        .prepare(
+            "SELECT id,title,author,chapters,added_at FROM novel_series ORDER BY added_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = s
+        .query_map([], |r| {
+            Ok(crate::models::NovelSeries {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                author: r.get(2)?,
+                chapters: serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or_default(),
+                added_at: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+pub fn novel_upsert(db: &Connection, series: &crate::models::NovelSeries) -> Result<(), String> {
+    let chapters = serde_json::to_string(&series.chapters).map_err(|e| e.to_string())?;
+    db.execute(
+        "INSERT INTO novel_series VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET title=?2,author=?3,chapters=?4",
+        params![series.id, series.title, series.author, chapters, now()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn novel_remove(db: &Connection, id: &str) -> Result<(), String> {
+    db.execute("DELETE FROM novel_series WHERE id=?1", [id])
+        .map_err(|e| e.to_string())?;
+    db.execute("DELETE FROM novel_progress WHERE series_id=?1", [id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn novel_progress(db: &Connection, series_id: &str) -> Result<Option<(i64, i64)>, String> {
+    db.query_row(
+        "SELECT chapter_order,page FROM novel_progress WHERE series_id=?1",
+        [series_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other),
+    })
+    .map_err(|e: rusqlite::Error| e.to_string())
+}
+
+pub fn novel_set_progress(
+    db: &Connection,
+    series_id: &str,
+    chapter_order: i64,
+    page: i64,
+) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO novel_progress VALUES(?1,?2,?3,?4) ON CONFLICT(series_id) DO UPDATE SET chapter_order=?2,page=?3,updated_at=?4",
+        params![series_id, chapter_order, page, now()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
