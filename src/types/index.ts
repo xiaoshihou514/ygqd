@@ -133,3 +133,25 @@ export interface BikaAccountStatus {
   loggedIn: boolean
   email: string
 }
+
+/** 视频卡片(fs1/Jable 系) */
+export interface VideoCard {
+  /** 番号(小写),详情 id */
+  code: string
+  title: string
+  thumbnail: string
+  views: string
+  likes: string
+}
+
+export interface VideoListResult {
+  items: VideoCard[]
+  pagination: PaginationInfo
+}
+
+export interface VideoDetail {
+  code: string
+  title: string
+  tags: string[]
+  m3u8: string
+}

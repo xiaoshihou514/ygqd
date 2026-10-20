@@ -9,12 +9,25 @@ import { HOME_TABS, normalizeCategoryLabel, type HomeTab } from '@/config/source
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import ComicGrid from '@/components/ComicGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import VideoBrowser from '@/components/VideoBrowser.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 defineOptions({ name: 'HomePage' })
 
 const HOME_STATE_KEY = 'home_page_state_v2'
 /** 「最新」混合流固定取 niacg 的漫画分类 */
+/** 内容分段:漫画/视频/小说(小说源接入前的占位) */
+type ContentSegment = 'comic' | 'video' | 'novel'
+const segment = ref<ContentSegment>('comic')
+const SEGMENTS: { key: ContentSegment; label: string }[] = [
+  { key: 'comic', label: '漫画' },
+  { key: 'video', label: '视频' },
+  { key: 'novel', label: '小说' },
+]
+function switchSegment(key: ContentSegment) {
+  segment.value = key
+}
+
 const MIX_NIACG_CATEGORY = '9'
 
 interface SourcePageState {
@@ -300,6 +313,29 @@ onUnmounted(() => {
 <template>
   <div class="home-page">
     <div class="container">
+      <div class="segment-bar" role="tablist" aria-label="内容板块">
+        <button
+          v-for="seg in SEGMENTS"
+          :key="seg.key"
+          class="segment-btn"
+          :class="{ active: segment === seg.key }"
+          role="tab"
+          :aria-selected="segment === seg.key"
+          @click="switchSegment(seg.key)"
+        >
+          {{ seg.label }}
+        </button>
+      </div>
+
+      <VideoBrowser v-if="segment === 'video'" />
+
+      <EmptyState
+        v-else-if="segment === 'novel'"
+        title="小说板块准备中"
+        message="小说源(hlib.cc)接入后开放"
+      />
+
+      <template v-else>
       <div v-if="loading" class="home-loading">
         <LoadingSpinner message="正在加载漫画列表..." />
       </div>
@@ -372,6 +408,7 @@ onUnmounted(() => {
         <div v-if="items.length === 0" class="home-empty">
           <EmptyState title="暂无内容" message="未能获取到漫画内容" />
         </div>
+      </template>
       </template>
     </div>
   </div>
@@ -524,5 +561,29 @@ onUnmounted(() => {
 
 .filter-input::placeholder {
   color: var(--color-text-muted);
+}
+.segment-bar {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.segment-btn {
+  flex: 1;
+  max-width: 120px;
+  padding: 6px 0;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.segment-btn.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
 }
 </style>

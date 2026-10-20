@@ -33,6 +33,16 @@ const router = createRouter({
       redirect: '/settings',
     },
     {
+      path: '/videos',
+      name: 'videos',
+      component: () => import('@/pages/VideoPage.vue'),
+    },
+    {
+      path: '/videos/:code',
+      name: 'video-detail',
+      component: () => import('@/pages/VideoDetailPage.vue'),
+    },
+    {
       path: '/following',
       name: 'following',
       component: () => import('@/pages/FollowingPage.vue'),

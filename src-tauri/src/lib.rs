@@ -6,6 +6,7 @@ use models::*;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use rusqlite::Connection;
 use sources::bika::BikaApi;
+use sources::video::{VideoApi, VideoDetail, VideoListResult};
 use std::{
     collections::HashMap,
     future::Future,
@@ -19,6 +20,7 @@ const BASE: &str = "https://www.niacg.com";
 const NIACG_SEARCH_INTERVAL: Duration = Duration::from_millis(5200);
 struct AppState {
     niacg: reqwest::Client,
+    video: VideoApi,
     /// 哔咔客户端在切换分流地址时整体重建,读锁短持有,clone 后异步使用
     bika: RwLock<BikaApi>,
     bika_token: Mutex<Option<String>>,
@@ -164,6 +166,52 @@ async fn fetch_bika_categories(state: State<'_, AppState>) -> Result<Vec<String>
         state.bika_call(|token| bika.categories(token)).await?
     };
     state.put(key.into(), &out);
+    Ok(out)
+}
+
+/// 视频列表(fs1 最新上市),page 从 1 开始
+#[tauri::command]
+async fn fetch_video_list(
+    page: i32,
+    state: State<'_, AppState>,
+) -> Result<VideoListResult, String> {
+    let key = format!("video:list-{page}");
+    if let Some(v) = state.cached(&key) {
+        return Ok(v);
+    }
+    let out = state.video.list(page).await?;
+    state.put(key, &out);
+    Ok(out)
+}
+
+/// 视频搜索(番号/标题),page 从 1 开始
+#[tauri::command]
+async fn search_videos(
+    keyword: String,
+    page: i32,
+    state: State<'_, AppState>,
+) -> Result<VideoListResult, String> {
+    let key = format!("video:search-{keyword}-{page}");
+    if let Some(v) = state.cached(&key) {
+        return Ok(v);
+    }
+    let out = state.video.search(&keyword, page).await?;
+    state.put(key, &out);
+    Ok(out)
+}
+
+/// 视频详情(元数据 + m3u8),code 为小写番号
+#[tauri::command]
+async fn fetch_video_detail(
+    code: String,
+    state: State<'_, AppState>,
+) -> Result<VideoDetail, String> {
+    let key = format!("video:detail-{code}");
+    if let Some(v) = state.cached(&key) {
+        return Ok(v);
+    }
+    let out = state.video.detail(&code).await?;
+    state.put(key, &out);
     Ok(out)
 }
 
@@ -656,6 +704,7 @@ pub fn run() {
                 .default_headers(headers)
                 .cookie_store(true)
                 .build()?;
+            let video = VideoApi::new()?;
             let conn = db::open(&dir.join("ygqd.db")).map_err(std::io::Error::other)?;
             let address = db::bika_address(&conn).unwrap_or_default();
             let bika = BikaApi::new(if address.is_empty() {
@@ -665,6 +714,7 @@ pub fn run() {
             })?;
             app.manage(AppState {
                 niacg,
+                video,
                 bika: RwLock::new(bika),
                 bika_token: Mutex::new(None),
                 db: Mutex::new(conn),
@@ -677,6 +727,9 @@ pub fn run() {
             fetch_category,
             fetch_bika_categories,
             fetch_bika_leaderboard,
+            fetch_video_list,
+            search_videos,
+            fetch_video_detail,
             bika_switch_like,
             bika_switch_favourite,
             fetch_favorites,
