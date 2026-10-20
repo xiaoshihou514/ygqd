@@ -439,7 +439,6 @@ onUnmounted(() => {
           </div>
         </template>
 
-        <template v-else>
         <template v-else-if="activeTab === 'works'">
           <EmptyState
             v-if="!followed.length"
