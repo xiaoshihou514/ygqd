@@ -2,6 +2,7 @@ mod db;
 mod gateway;
 mod models;
 mod sources;
+mod video_proxy;
 
 use gateway::GatewayManager;
 use models::NovelPage;
@@ -302,7 +303,9 @@ async fn fetch_video_detail(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = state.video.detail(&app, &code).await?;
+    let mut out = state.video.detail(&app, &code).await?;
+    // 播放器只接触代理地址(CDN 校验 Referer/TLS,直连必 403)
+    out.m3u8 = video_proxy::wrap(&out.m3u8);
     state.put(key, &out);
     Ok(out)
 }
@@ -781,6 +784,7 @@ fn update_blacklist(tag: String, mode: String, state: State<'_, AppState>) -> Re
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("stream", video_proxy::register)
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
