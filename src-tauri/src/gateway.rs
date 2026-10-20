@@ -115,7 +115,7 @@ async fn gateway_fetch_inner(
     if created {
         // 新建窗口需要等首页加载完成(或挑战通过)后才具备 fetch 条件,
         // 这里给出基础等待;调用方对首访失败可重试
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(6)).await;
     }
     let window = app
         .get_webview_window(&format!("gateway_{label}"))
