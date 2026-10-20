@@ -100,6 +100,17 @@ export const CAPABILITIES: Record<SourceId, ContentType[]> = {
 | P2 | niacg 视频接入 + VideoPlayer 打磨 | 需应用内探测 niacg 视频页结构（CF 拦截裸 curl，要用带 cookie 的共享 client 抓页面分析 selector） |
 | P3 | 小说全链路（详情/阅读器/进度）+ 搜索/收藏打通 | **阻塞：小说源未定** |
 
+## 八、实施侦察结论（已定案）
+
+### 视频板块（已完成一期,提交 1bb862d）
+- **fs1.app（Jable 系）**：服务端渲染,reqwest 直连可达。列表 `/new-release/{p}/`、搜索 `/search/{kw}/{p}/`、详情 `/videos/{番号}/` 均 HTML 直出；m3u8 内嵌详情页（hlsUrl）,CDN 无挑战可直接拉流。已实现后端 + 前端全链路。
+- **missav.ai**：CF 按 TLS 指纹拦截（reqwest 403,curl_cffi chrome 指纹 200）；列表页 JS 渲染拿不到,但番号直达 `/videos/{番号}` → 302 `/dm*/{番号}`,eval packer 里有三档清晰度 m3u8（surrit.com CDN）。**missav 播放增强走 WebView 网关**（见下）。
+
+### 小说板块（hlib.cc）
+- 全站 CF managed challenge + Turnstile 交互验证：curl_cffi(chrome 指纹)、playwright headless、playwright 有头+自动点击均被拒。**必须真浏览器人工通过一次**。
+- **定案：WebView 网关架构**——应用内嵌隐藏 WebView 加载 hlib,首次由用户点一次挑战,Android WebView cookie 持久化；此后所有抓取在该 webview 内执行 fetch(JS 网络栈 = 真 Chrome,永不再挑战),结果经 invoke 桥回传 Rust。missav 的番号直达播放同享此网关。
+- 实现要点:Tauri 2 WebviewWindow(隐藏) + initialization_script 注入桥 + 共享 invoke_handler + on_page_load 事件。
+
 ## 七、待决策（需要你确认）
 
 1. **小说源**：两个现有源都没有小说内容。接哪个站？（若是某个新站点，给我地址，我评估 HTML/API 可行性）
