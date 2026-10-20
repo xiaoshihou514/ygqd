@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchCategoryList, fetchBikaCategories } from '@/services/api'
+import { fetchCategoryList, fetchBikaCategories, fetchBikaLeaderboard } from '@/services/api'
 import type { ComicItem } from '@/types'
 import { parseLikes } from '@/utils/likes'
 import { appendDistinct, interleaveSources } from '@/utils/merge'
@@ -129,6 +129,12 @@ async function loadFirstPage() {
       state.mix = { niacg: { page: -1, hasNext: true }, bika: { page: -1, hasNext: true } }
       await loadMixPage(state, true)
       state.page = 0
+    } else if (tab.rank) {
+      // 排行榜无分页,一次返回整个榜
+      const result = await fetchBikaLeaderboard(tab.rank)
+      state.items = result.items
+      state.hasNext = false
+      state.page = 0
     } else {
       const result = await fetchCategoryList(tab.source, tab.category, 0)
       state.items = result.items
@@ -190,8 +196,14 @@ function goToSettings() {
 async function loadBikaTabs() {
   try {
     const categories = await fetchBikaCategories()
-    if (tabs.value.some((tab) => tab.key.startsWith('bika:'))) return
+    if (tabs.value.some((tab) => tab.source === 'bika')) return
+    const rankTabs: HomeTab[] = [
+      { key: 'bika-rank:H24', label: '日榜', source: 'bika', category: '', rank: 'H24' },
+      { key: 'bika-rank:D7', label: '周榜', source: 'bika', category: '', rank: 'D7' },
+      { key: 'bika-rank:D30', label: '月榜', source: 'bika', category: '', rank: 'D30' },
+    ]
     tabs.value.push(
+      ...rankTabs,
       ...categories.map((category) => ({
         key: `bika:${category}`,
         label: normalizeCategoryLabel(category),

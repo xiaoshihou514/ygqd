@@ -167,6 +167,26 @@ async fn fetch_bika_categories(state: State<'_, AppState>) -> Result<Vec<String>
     Ok(out)
 }
 
+/// 哔咔排行榜;tt 为 "H24"(日)/"D7"(周)/"D30"(月)
+#[tauri::command]
+async fn fetch_bika_leaderboard(
+    tt: String,
+    state: State<'_, AppState>,
+) -> Result<CategoryListResult, String> {
+    let key = format!("bika:leaderboard-{tt}");
+    if let Some(v) = state.cached(&key) {
+        return Ok(v);
+    }
+    let out = {
+        let bika = state.bika_snapshot();
+        state
+            .bika_call(|token| bika.leaderboard(token, &tt))
+            .await?
+    };
+    state.put(key, &out);
+    Ok(out)
+}
+
 #[tauri::command]
 async fn search_comics(
     source: Source,
@@ -551,6 +571,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fetch_category,
             fetch_bika_categories,
+            fetch_bika_leaderboard,
             search_comics,
             fetch_comic,
             fetch_comic_images,

@@ -22,14 +22,19 @@ export const SEARCH_SOURCE_OPTIONS: { id: SearchScope; label: string }[] = [
   { id: 'bika', label: '哔咔' },
 ]
 
+/** 哔咔排行榜时间维度:H24=日榜 D7=周榜 D30=月榜 */
+export type BikaRankTT = 'H24' | 'D7' | 'D30'
+
 export interface HomeTab {
   key: string
   label: string
   source: SourceId | 'mix'
   category: string
+  /** 哔咔排行榜 tab(与 category 互斥) */
+  rank?: BikaRankTT
 }
 
-/** 首页静态 tab;哔咔的分类 tab 在运行时从接口拉取后追加,统一按分类语言呈现 */
+/** 首页静态 tab;哔咔的分类与排行榜 tab 在运行时登录后追加 */
 export const HOME_TABS: HomeTab[] = [
   { key: 'mix:', label: '最新', source: 'mix', category: '' },
   { key: 'niacg:9', label: '漫画', source: 'niacg', category: '9' },

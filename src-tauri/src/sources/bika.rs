@@ -231,6 +231,14 @@ struct ComicsPageDoc {
     comics: Page<ComicDoc>,
 }
 
+/// 排行榜的 data.comics 为数组(无分页)
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LeaderboardDoc {
+    #[serde(default)]
+    comics: Vec<ComicDoc>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EpsPageDoc {
@@ -439,6 +447,30 @@ impl BikaApi {
             .filter(|doc| doc.active && !doc.is_web && !doc.title.is_empty())
             .map(|doc| doc.title)
             .collect())
+    }
+
+    /// 排行榜,tt 为 "H24"/"D7"/"D30"(过去 24 小时/7 天/30 天);
+    /// 参考 pikapika 的 RankingsScreen,ct 固定 "VC"(按观看数),无分页
+    pub async fn leaderboard(&self, token: String, tt: &str) -> Result<CategoryListResult, String> {
+        let query = encode_query(&[("tt", tt), ("ct", "VC")]);
+        let doc = self
+            .request::<LeaderboardDoc>(
+                "GET",
+                "/comics/leaderboard",
+                Some(query),
+                None,
+                Some(token.as_str()),
+            )
+            .await?;
+        Ok(CategoryListResult {
+            items: doc.comics.into_iter().map(Into::into).collect(),
+            pagination: PaginationInfo {
+                current: 0,
+                total: 1,
+                has_next: false,
+                has_prev: false,
+            },
+        })
     }
 
     /// 分类/标签/作者浏览,page 为 1-based
@@ -672,6 +704,22 @@ mod tests {
                 let categories = api.categories(token.clone()).await.expect("categories");
                 println!("categories({}): {:?}", categories.len(), categories);
                 assert!(!categories.is_empty(), "categories should not be empty");
+
+                for tt in ["H24", "D7", "D30"] {
+                    let board = api
+                        .leaderboard(token.clone(), tt)
+                        .await
+                        .expect("leaderboard");
+                    println!(
+                        "leaderboard[{tt}]: {} items, top1 = {}",
+                        board.items.len(),
+                        board.items.first().map(|i| i.title.as_str()).unwrap_or("?")
+                    );
+                    assert!(
+                        !board.items.is_empty(),
+                        "leaderboard {tt} should not be empty"
+                    );
+                }
 
                 let list = api
                     .comics(token.clone(), "", "", "", 1)

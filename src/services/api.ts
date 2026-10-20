@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { SourceId } from '@/config/sources'
+import type { BikaRankTT, SourceId } from '@/config/sources'
 import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, SearchParams, SearchResult, FollowedAuthor, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
+export const fetchBikaLeaderboard = (tt: BikaRankTT) => invoke<CategoryListResult>('fetch_bika_leaderboard', { tt })
 export const searchComics = (source: SourceId, params: SearchParams, page = 0, cacheBuster?: string) => invoke<SearchResult>('search_comics', { source, keyword: params.keyword, classid: params.classid, show: params.show || 'title,text,keyboard,ftitle', page, cacheBuster })
 export const fetchComicDetail = (source: SourceId, categoryId: number, id: string) => invoke<ComicDetail>('fetch_comic', { source, categoryId, id })
 export const fetchComicImages = (source: SourceId, categoryId: number, id: string, epOrder = 1, page = 0) => invoke<ComicImagesResult>('fetch_comic_images', { source, categoryId, id, epOrder, page })

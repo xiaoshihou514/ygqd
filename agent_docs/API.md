@@ -7,6 +7,7 @@
 |---|---|---|
 | `fetch_category` | `source`, `category`, `page` | `{ items, pagination }` |
 | `fetch_bika_categories` | — | `string[]` |
+| `fetch_bika_leaderboard` | `tt`（`H24`/`D7`/`D30`） | `{ items, pagination }`（无分页，一次返回整个榜） |
 | `search_comics` | `source`, `keyword`, `classid`, `show`, `page`, `cacheBuster?` | `SearchResult` |
 | `fetch_comic` | `source`, `categoryId`, `id` | `ComicDetail` |
 | `fetch_comic_images` | `source`, `categoryId`, `id`, `epOrder`, `page` | `ComicImagesResult` |
