@@ -1,7 +1,9 @@
 mod db;
+mod gateway;
 mod models;
 mod sources;
 
+use gateway::GatewayManager;
 use models::*;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use rusqlite::Connection;
@@ -13,7 +15,7 @@ use std::{
     sync::{Mutex, RwLock},
     time::{Duration, Instant},
 };
-use tauri::{ipc::Response, Manager, State};
+use tauri::{ipc::Response, AppHandle, Manager, State};
 
 const BASE: &str = "https://www.niacg.com";
 /// niacg 限制两次搜索至少间隔 5 秒,违反时返回无结果的提示页
@@ -21,6 +23,7 @@ const NIACG_SEARCH_INTERVAL: Duration = Duration::from_millis(5200);
 struct AppState {
     niacg: reqwest::Client,
     video: VideoApi,
+    gateway: GatewayManager,
     /// 哔咔客户端在切换分流地址时整体重建,读锁短持有,clone 后异步使用
     bika: RwLock<BikaApi>,
     bika_token: Mutex<Option<String>>,
@@ -167,6 +170,37 @@ async fn fetch_bika_categories(state: State<'_, AppState>) -> Result<Vec<String>
     };
     state.put(key.into(), &out);
     Ok(out)
+}
+
+/// 通过 WebView 网关抓取页面/接口(用于 CF 严防站点: hlib/missav)。
+/// 首次调用会创建可见网关窗口,若遇人机挑战需用户点一次。
+#[tauri::command]
+async fn gateway_fetch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    label: String,
+    url: String,
+) -> Result<String, String> {
+    gateway::gateway_fetch(&app, &state.gateway, &label, &url).await
+}
+
+/// 显示/隐藏网关窗口(挑战已过后隐藏)
+#[tauri::command]
+fn gateway_set_visible(app: AppHandle, label: String, visible: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window(&format!("gateway_{label}"))
+        .ok_or("网关窗口不存在")?;
+    if visible {
+        window.show().map_err(|e| e.to_string())
+    } else {
+        window.hide().map_err(|e| e.to_string())
+    }
+}
+
+/// 网关桥回传(由网关 webview 内的 JS 调用,不暴露给主窗口前端)
+#[tauri::command]
+fn gateway_result(state: State<'_, AppState>, result: gateway::GatewayReply) {
+    state.gateway.resolve(result);
 }
 
 /// 视频列表(fs1 最新上市),page 从 1 开始
@@ -715,6 +749,7 @@ pub fn run() {
             app.manage(AppState {
                 niacg,
                 video,
+                gateway: GatewayManager::new(),
                 bika: RwLock::new(bika),
                 bika_token: Mutex::new(None),
                 db: Mutex::new(conn),
@@ -730,6 +765,9 @@ pub fn run() {
             fetch_video_list,
             search_videos,
             fetch_video_detail,
+            gateway_fetch,
+            gateway_set_visible,
+            gateway_result,
             bika_switch_like,
             bika_switch_favourite,
             fetch_favorites,
