@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { fetchImage } from '@/services/api'
+import type { SourceId } from '@/config/sources'
 
-const props = defineProps<{ src: string; source?: string; alt?: string; loading?: 'eager' | 'lazy' }>()
+const props = defineProps<{ src: string; source?: SourceId; alt?: string; loading?: 'eager' | 'lazy' }>()
 const emit = defineEmits<{ error: [] }>()
 const objectUrl = ref('')
 let generation = 0

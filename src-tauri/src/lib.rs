@@ -127,7 +127,7 @@ impl AppState {
 }
 #[tauri::command]
 async fn fetch_category(
-    source: String,
+    source: Source,
     category: String,
     page: i32,
     state: State<'_, AppState>,
@@ -136,17 +136,18 @@ async fn fetch_category(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = if source == "bika" {
-        let bika = state.bika_snapshot();
-        state
-            .bika_call(|token| bika.comics(token, &category, "", "", page + 1))
-            .await?
-    } else {
-        sources::niacg::list(
+    let out = match source {
+        Source::Bika => {
+            let bika = state.bika_snapshot();
+            state
+                .bika_call(|token| bika.comics(token, &category, "", "", page + 1))
+                .await?
+        }
+        Source::Niacg => sources::niacg::list(
             &state
                 .niacg_get(&format!("/listinfo-{category}-{page}.html"))
                 .await?,
-        )
+        ),
     };
     state.put(key, &out);
     Ok(out)
@@ -168,7 +169,7 @@ async fn fetch_bika_categories(state: State<'_, AppState>) -> Result<Vec<String>
 
 #[tauri::command]
 async fn search_comics(
-    source: String,
+    source: Source,
     keyword: String,
     classid: i32,
     show: String,
@@ -183,94 +184,98 @@ async fn search_comics(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let mut out = if source == "bika" {
-        let bika = state.bika_snapshot();
-        let result = if show == "tags" {
-            state
-                .bika_call(|token| bika.comics(token, "", &keyword, "", page + 1))
-                .await?
-        } else if show == "writer" {
-            state
-                .bika_call(|token| bika.comics(token, "", "", &keyword, page + 1))
-                .await?
-        } else {
-            state
-                .bika_call(|token| bika.search(token, &keyword, page + 1))
-                .await?
-        };
-        SearchResult {
-            items: result.items,
-            pagination: result.pagination,
-            page_url_template: None,
-        }
-    } else {
-        // 全局限速:niacg 搜索间隔不足 5 秒会返回无结果的提示页
-        let _search_turn = state.niacg_search_turn().await;
-        if show == "tags" {
-            let html = state
-                .niacg_get(&format!(
-                    "/tags-{}-{page}.html",
-                    url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>()
-                ))
-                .await?;
-            let mut r = sources::niacg::search(&html);
-            let max = sources::niacg::tag_max_page(&html);
-            r.pagination = PaginationInfo {
-                current: page,
-                total: max + 1,
-                has_next: page < max,
-                has_prev: page > 0,
-            };
-            r
-        } else {
-            let body = [
-                ("classid", classid.to_string()),
-                ("keyboard", keyword),
-                ("show", show),
-                ("tempid", "1".into()),
-                ("Submit", "".into()),
-            ];
-            let html = state
-                .niacg
-                .post(format!("{BASE}/e/search/index.php"))
-                .form(&body)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?
-                .error_for_status()
-                .map_err(|e| e.to_string())?
-                .text()
-                .await
-                .map_err(|e| e.to_string())?;
-            let first = sources::niacg::search(&html);
-            let total_pages = first.pagination.total + 1;
-            if page == 0 {
-                SearchResult {
-                    pagination: PaginationInfo {
-                        current: 0,
-                        total: total_pages,
-                        has_next: total_pages > 1,
-                        has_prev: false,
-                    },
-                    ..first
-                }
+    let mut out = match source {
+        Source::Bika => {
+            let bika = state.bika_snapshot();
+            let result = if show == "tags" {
+                state
+                    .bika_call(|token| bika.comics(token, "", &keyword, "", page + 1))
+                    .await?
+            } else if show == "writer" {
+                state
+                    .bika_call(|token| bika.comics(token, "", "", &keyword, page + 1))
+                    .await?
             } else {
-                let template = first
-                    .page_url_template
-                    .clone()
-                    .ok_or("Search pagination URL unavailable")?;
-                let mut result = sources::niacg::search(
-                    &state
-                        .niacg_get(&template.replace("{}", &(page + 1).to_string()))
-                        .await?,
-                );
-                result.pagination = PaginationInfo {
+                state
+                    .bika_call(|token| bika.search(token, &keyword, page + 1))
+                    .await?
+            };
+            SearchResult {
+                items: result.items,
+                pagination: result.pagination,
+                page_url_template: None,
+            }
+        }
+        Source::Niacg => {
+            // 全局限速:niacg 搜索间隔不足 5 秒会返回无结果的提示页
+            let _search_turn = state.niacg_search_turn().await;
+            if show == "tags" {
+                let html = state
+                    .niacg_get(&format!(
+                        "/tags-{}-{page}.html",
+                        url::form_urlencoded::byte_serialize(keyword.as_bytes())
+                            .collect::<String>()
+                    ))
+                    .await?;
+                let mut r = sources::niacg::search(&html);
+                let max = sources::niacg::tag_max_page(&html);
+                r.pagination = PaginationInfo {
                     current: page,
-                    total: total_pages,
-                    has_next: page + 1 < total_pages,
-                    has_prev: true,
+                    total: max + 1,
+                    has_next: page < max,
+                    has_prev: page > 0,
                 };
-                result
+                r
+            } else {
+                let body = [
+                    ("classid", classid.to_string()),
+                    ("keyboard", keyword),
+                    ("show", show),
+                    ("tempid", "1".into()),
+                    ("Submit", "".into()),
+                ];
+                let html = state
+                    .niacg
+                    .post(format!("{BASE}/e/search/index.php"))
+                    .form(&body)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .error_for_status()
+                    .map_err(|e| e.to_string())?
+                    .text()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let first = sources::niacg::search(&html);
+                let total_pages = first.pagination.total + 1;
+                if page == 0 {
+                    SearchResult {
+                        pagination: PaginationInfo {
+                            current: 0,
+                            total: total_pages,
+                            has_next: total_pages > 1,
+                            has_prev: false,
+                        },
+                        ..first
+                    }
+                } else {
+                    let template = first
+                        .page_url_template
+                        .clone()
+                        .ok_or("Search pagination URL unavailable")?;
+                    let mut result = sources::niacg::search(
+                        &state
+                            .niacg_get(&template.replace("{}", &(page + 1).to_string()))
+                            .await?,
+                    );
+                    result.pagination = PaginationInfo {
+                        current: page,
+                        total: total_pages,
+                        has_next: page + 1 < total_pages,
+                        has_prev: true,
+                    };
+                    result
+                }
             }
         }
     };
@@ -282,7 +287,7 @@ async fn search_comics(
 
 #[tauri::command]
 async fn fetch_comic(
-    source: String,
+    source: Source,
     category_id: i32,
     id: String,
     state: State<'_, AppState>,
@@ -291,19 +296,20 @@ async fn fetch_comic(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = if source == "bika" {
-        let bika = state.bika_snapshot();
-        let mut detail = state.bika_call(|token| bika.detail(token, &id)).await?;
-        detail.episodes = state.bika_call(|token| bika.episodes(token, &id)).await?;
-        detail
-    } else {
-        sources::niacg::detail(
+    let out = match source {
+        Source::Bika => {
+            let bika = state.bika_snapshot();
+            let mut detail = state.bika_call(|token| bika.detail(token, &id)).await?;
+            detail.episodes = state.bika_call(|token| bika.episodes(token, &id)).await?;
+            detail
+        }
+        Source::Niacg => sources::niacg::detail(
             &state
                 .niacg_get(&format!("/moehome-{category_id}-{id}.html"))
                 .await?,
             category_id,
             id.clone(),
-        )
+        ),
     };
     state.put(key, &out);
     Ok(out)
@@ -311,58 +317,61 @@ async fn fetch_comic(
 
 #[tauri::command]
 async fn fetch_comic_images(
-    source: String,
+    source: Source,
     category_id: i32,
     id: String,
     ep_order: i32,
     page: i32,
     state: State<'_, AppState>,
 ) -> Result<ComicImagesResult, String> {
-    if source == "bika" {
-        let bika = state.bika_snapshot();
-        return state
-            .bika_call(|token| bika.pictures(token, &id, ep_order, page + 1))
-            .await;
+    match source {
+        Source::Bika => {
+            let bika = state.bika_snapshot();
+            state
+                .bika_call(|token| bika.pictures(token, &id, ep_order, page + 1))
+                .await
+        }
+        Source::Niacg => {
+            let key = format!("niacg:images-{category_id}-{id}");
+            if let Some(images) = state.cached::<Vec<String>>(&key) {
+                return Ok(ComicImagesResult {
+                    images,
+                    pagination: PaginationInfo {
+                        current: 0,
+                        total: 1,
+                        has_next: false,
+                        has_prev: false,
+                    },
+                });
+            }
+            let images = sources::niacg::images(
+                &state
+                    .niacg_get(&format!("/moeupup-{category_id}-{id}.html"))
+                    .await?,
+            );
+            state.put(key, &images);
+            Ok(ComicImagesResult {
+                pagination: PaginationInfo {
+                    current: 0,
+                    total: 1,
+                    has_next: false,
+                    has_prev: false,
+                },
+                images,
+            })
+        }
     }
-    let key = format!("niacg:images-{category_id}-{id}");
-    if let Some(images) = state.cached::<Vec<String>>(&key) {
-        return Ok(ComicImagesResult {
-            images,
-            pagination: PaginationInfo {
-                current: 0,
-                total: 1,
-                has_next: false,
-                has_prev: false,
-            },
-        });
-    }
-    let images = sources::niacg::images(
-        &state
-            .niacg_get(&format!("/moeupup-{category_id}-{id}.html"))
-            .await?,
-    );
-    state.put(key, &images);
-    Ok(ComicImagesResult {
-        pagination: PaginationInfo {
-            current: 0,
-            total: 1,
-            has_next: false,
-            has_prev: false,
-        },
-        images,
-    })
 }
 
 #[tauri::command]
 async fn fetch_image(
-    source: String,
+    source: Source,
     url: String,
     state: State<'_, AppState>,
 ) -> Result<Response, String> {
-    let client = if source == "bika" {
-        state.bika_snapshot().client
-    } else {
-        state.niacg.clone()
+    let client = match source {
+        Source::Bika => state.bika_snapshot().client,
+        Source::Niacg => state.niacg.clone(),
     };
     let bytes = client
         .get(url)

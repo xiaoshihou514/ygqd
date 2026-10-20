@@ -148,7 +148,7 @@ struct ComicDoc {
 impl From<ComicDoc> for ComicItem {
     fn from(doc: ComicDoc) -> Self {
         ComicItem {
-            source: "bika".into(),
+            source: Source::Bika,
             category: doc.categories.first().cloned().unwrap_or_default(),
             thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
             id: doc.id,
@@ -170,7 +170,7 @@ impl From<ComicDoc> for ComicDetail {
             }
         }
         ComicDetail {
-            source: "bika".into(),
+            source: Source::Bika,
             category: doc.categories.first().cloned().unwrap_or_default(),
             thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
             id: doc.id,
@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(item.category, "短篇");
         assert_eq!(item.tags, vec!["短篇", "全彩"]);
         assert_eq!(item.likes, "1200");
-        assert_eq!(item.source, "bika");
+        assert_eq!(item.source, Source::Bika);
     }
 
     #[test]

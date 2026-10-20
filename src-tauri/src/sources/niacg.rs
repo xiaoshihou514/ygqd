@@ -83,7 +83,7 @@ fn item(el: ElementRef<'_>) -> Option<ComicItem> {
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| category(category_id));
     Ok::<_, ()>(ComicItem {
-        source: "niacg".into(),
+        source: Source::Niacg,
         id,
         title,
         thumbnail: attr(
@@ -190,7 +190,7 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
         })
         .unwrap_or_default();
     ComicDetail {
-        source: "niacg".into(),
+        source: Source::Niacg,
         id,
         title: doc
             .select(&sel("h1, .panel-title"))

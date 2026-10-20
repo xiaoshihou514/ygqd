@@ -1,7 +1,17 @@
 export type SourceId = 'niacg' | 'bika'
 export type SearchScope = 'all' | SourceId
 
-export const SOURCE_LABELS: Record<string, string> = {
+/** 路由参数等不可信输入收敛为合法源,未知值回退 niacg */
+export function parseSourceId(value: string): SourceId {
+  return value === 'bika' ? 'bika' : 'niacg'
+}
+
+/** 路由查询等不可信输入收敛为合法搜索范围,未知值回退 all */
+export function parseSearchScope(value: string): SearchScope {
+  return value === 'niacg' || value === 'bika' ? value : 'all'
+}
+
+export const SOURCE_LABELS: Record<SourceId, string> = {
   niacg: 'ACG',
   bika: '哔咔',
 }
@@ -27,7 +37,7 @@ export const HOME_TABS: HomeTab[] = [
 ]
 
 export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source
+  return SOURCE_LABELS[parseSourceId(source)] ?? source
 }
 
 /** 哔咔分类为繁体,展示时归一化为简体;查询仍用原始值 */

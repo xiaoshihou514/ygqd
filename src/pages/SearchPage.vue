@@ -7,6 +7,8 @@ import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
+import type { SourceId } from '@/config/sources'
+import { parseSearchScope } from '@/config/sources'
 import SearchForm from '@/components/SearchForm.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -44,7 +46,7 @@ interface MergedSearchOutcome {
   errors: string[]
 }
 
-function sourcesFor(params: SearchParams): string[] {
+function sourcesFor(params: SearchParams): SourceId[] {
   return params.source === 'all' ? [...SEARCH_SOURCES] : [params.source]
 }
 
@@ -249,7 +251,7 @@ function restoreSearchState(): boolean {
     hasSearched.value = state.hasSearched ?? false
     const savedClassid = state.classid as string | undefined
     const savedShow = state.show as string | undefined
-    const savedSource = (state.source as string | undefined) || 'all'
+    const savedSource = parseSearchScope((state.source as string | undefined) || 'all')
     if (lastKeyword.value) {
       lastParams.value = {
         source: savedSource,
@@ -327,7 +329,7 @@ function searchFromQuery() {
   const keyword = route.query.keyword as string | undefined
   if (keyword) {
     const show = (route.query.show as string) || 'title,text,keyboard,ftitle'
-    const source = (route.query.source as string) || 'all'
+    const source = parseSearchScope((route.query.source as string) || 'all')
     handleSearch(
       { source, keyword, classid: 9, show, tempid: '1' },
       0,

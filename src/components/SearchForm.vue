@@ -2,7 +2,8 @@
 import { reactive, ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import type { SearchParams } from '@/types'
-import { SEARCH_SOURCE_OPTIONS } from '@/config/sources'
+import type { SearchScope } from '@/config/sources'
+import { SEARCH_SOURCE_OPTIONS, parseSearchScope } from '@/config/sources'
 import { useSearchHistory } from '@/composables/useSearchHistory'
 
 const emit = defineEmits<{
@@ -39,7 +40,7 @@ const SORT_OPTIONS = [
 
 const form = reactive({
   keyword: '',
-  source: 'all',
+  source: 'all' as SearchScope,
   classid: 9,
   show: 'title,text,keyboard,ftitle',
   minLikes: 0,
@@ -134,7 +135,7 @@ onMounted(() => {
   }
   const source = route.query.source as string | undefined
   if (source && SEARCH_SOURCE_OPTIONS.some((option) => option.id === source)) {
-    form.source = source
+    form.source = parseSearchScope(source)
   }
 })
 </script>

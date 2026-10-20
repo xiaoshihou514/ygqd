@@ -7,6 +7,7 @@ import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import { useViewHistory } from '@/composables/useViewHistory'
 import { extractAuthorFromTitle } from '@/utils/title'
+import { parseSourceId } from '@/config/sources'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ProxyImage from '@/components/ProxyImage.vue'
@@ -30,7 +31,7 @@ const { add, has } = useTagBlacklist()
 const { isFollowing, follow, unfollow } = useFollowedAuthors()
 const { record: recordHistory } = useViewHistory()
 
-const source = computed(() => (route.params.source as string) || 'niacg')
+const source = computed(() => parseSourceId((route.params.source as string) || 'niacg'))
 const isBika = computed(() => source.value === 'bika')
 
 const visibleImages = computed(() => images.value.slice(0, visibleCount.value))

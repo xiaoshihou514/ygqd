@@ -1,12 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { SourceId } from '@/config/sources'
 import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, SearchParams, SearchResult, FollowedAuthor, ViewHistoryEntry } from '../types'
 
-export const fetchCategoryList = (source: string, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
+export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
-export const searchComics = (source: string, params: SearchParams, page = 0, cacheBuster?: string) => invoke<SearchResult>('search_comics', { source, keyword: params.keyword, classid: params.classid, show: params.show || 'title,text,keyboard,ftitle', page, cacheBuster })
-export const fetchComicDetail = (source: string, categoryId: number, id: string) => invoke<ComicDetail>('fetch_comic', { source, categoryId, id })
-export const fetchComicImages = (source: string, categoryId: number, id: string, epOrder = 1, page = 0) => invoke<ComicImagesResult>('fetch_comic_images', { source, categoryId, id, epOrder, page })
-export const fetchImage = (url: string, source = 'niacg') => invoke<ArrayBuffer>('fetch_image', { url, source })
+export const searchComics = (source: SourceId, params: SearchParams, page = 0, cacheBuster?: string) => invoke<SearchResult>('search_comics', { source, keyword: params.keyword, classid: params.classid, show: params.show || 'title,text,keyboard,ftitle', page, cacheBuster })
+export const fetchComicDetail = (source: SourceId, categoryId: number, id: string) => invoke<ComicDetail>('fetch_comic', { source, categoryId, id })
+export const fetchComicImages = (source: SourceId, categoryId: number, id: string, epOrder = 1, page = 0) => invoke<ComicImagesResult>('fetch_comic_images', { source, categoryId, id, epOrder, page })
+export const fetchImage = (url: string, source: SourceId = 'niacg') => invoke<ArrayBuffer>('fetch_image', { url, source })
 export const bikaLogin = (email: string, password: string) => invoke<BikaAccountStatus>('bika_login', { email, password })
 export const bikaLogout = () => invoke<void>('bika_logout')
 export const bikaStatus = () => invoke<BikaAccountStatus>('bika_status')

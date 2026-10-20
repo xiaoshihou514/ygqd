@@ -1,9 +1,47 @@
 use serde::{Deserialize, Serialize};
 
+/// 漫画源标识。IPC 与 SQLite 中均以小写字符串("niacg"/"bika")表示
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Source {
+    Niacg,
+    Bika,
+}
+
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Source::Niacg => "niacg",
+            Source::Bika => "bika",
+        })
+    }
+}
+
+impl rusqlite::ToSql for Source {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Owned(
+            rusqlite::types::Value::Text(self.to_string()),
+        ))
+    }
+}
+
+impl rusqlite::types::FromSql for Source {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let text = value.as_str()?;
+        match text {
+            "niacg" => Ok(Source::Niacg),
+            "bika" => Ok(Source::Bika),
+            other => Err(rusqlite::types::FromSqlError::Other(
+                format!("未知的漫画源 {other:?}").into(),
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComicItem {
-    pub source: String,
+    pub source: Source,
     pub id: String,
     pub title: String,
     pub thumbnail: String,
@@ -17,7 +55,7 @@ pub struct ComicItem {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComicDetail {
-    pub source: String,
+    pub source: Source,
     pub id: String,
     pub title: String,
     pub thumbnail: String,
@@ -81,7 +119,7 @@ pub struct FollowedAuthor {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ViewHistoryEntry {
-    pub source: String,
+    pub source: Source,
     pub comic_id: String,
     pub title: String,
     pub thumbnail: String,
@@ -101,7 +139,7 @@ pub struct BlacklistEntry {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordHistory {
-    pub source: String,
+    pub source: Source,
     pub comic_id: String,
     pub title: String,
     pub thumbnail: String,
@@ -114,4 +152,26 @@ pub struct RecordHistory {
 pub struct BikaAccountStatus {
     pub logged_in: bool,
     pub email: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// IPC 与 SQLite 都以既有的小写串表示,序列化值不可变动
+    #[test]
+    fn source_serializes_to_stable_lowercase_strings() {
+        assert_eq!(serde_json::to_string(&Source::Niacg).unwrap(), "\"niacg\"");
+        assert_eq!(serde_json::to_string(&Source::Bika).unwrap(), "\"bika\"");
+        assert_eq!(
+            serde_json::from_str::<Source>("\"niacg\"").unwrap(),
+            Source::Niacg
+        );
+        assert_eq!(
+            serde_json::from_str::<Source>("\"bika\"").unwrap(),
+            Source::Bika
+        );
+        assert!(serde_json::from_str::<Source>("\"xxx\"").is_err());
+        assert_eq!(Source::Bika.to_string(), "bika");
+    }
 }

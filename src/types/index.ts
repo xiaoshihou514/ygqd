@@ -1,5 +1,7 @@
+import type { SearchScope, SourceId } from '@/config/sources'
+
 export interface ComicItem {
-  source: string
+  source: SourceId
   id: string
   title: string
   thumbnail: string
@@ -11,7 +13,7 @@ export interface ComicItem {
 }
 
 export interface ComicDetail {
-  source: string
+  source: SourceId
   id: string
   title: string
   thumbnail: string
@@ -44,7 +46,7 @@ export interface ComicImagesResult {
 }
 
 export interface SearchParams {
-  source: string
+  source: SearchScope
   keyword: string
   classid: number
   show?: string
@@ -103,7 +105,7 @@ export interface FollowedAuthor {
 }
 
 export interface ViewHistoryEntry {
-  source: string
+  source: SourceId
   comicId: string
   title: string
   thumbnail: string
