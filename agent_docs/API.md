@@ -8,6 +8,13 @@
 | `fetch_category` | `source`, `category`, `page` | `{ items, pagination }` |
 | `fetch_bika_categories` | — | `string[]` |
 | `fetch_bika_leaderboard` | `tt`（`H24`/`D7`/`D30`） | `{ items, pagination }`（无分页，一次返回整个榜） |
+| `bika_switch_like` | `id` | `void`（toggle） |
+| `bika_switch_favourite` | `id` | `void`（toggle） |
+| `fetch_favorites` | — | `FavoriteEntry[]` |
+| `is_favorite` | `source`, `comicId` | `bool` |
+| `add_favorite` | `entry` | `void`（bika 源同时同步服务器） |
+| `remove_favorite` | `source`, `comicId` | `void`（bika 源同时同步服务器） |
+| `sync_bika_favorites` | — | `number`（本次同步新增数） |
 | `search_comics` | `source`, `keyword`, `classid`, `show`, `page`, `cacheBuster?` | `SearchResult` |
 | `fetch_comic` | `source`, `categoryId`, `id` | `ComicDetail` |
 | `fetch_comic_images` | `source`, `categoryId`, `id`, `epOrder`, `page` | `ComicImagesResult` |

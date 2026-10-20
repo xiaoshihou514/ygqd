@@ -86,6 +86,7 @@ fn item(el: ElementRef<'_>) -> Option<ComicItem> {
         source: Source::Niacg,
         id,
         title,
+        author: String::new(),
         thumbnail: attr(
             el.select(&sel("img")).next(),
             &["data-src", "data-original", "src"],
@@ -218,6 +219,9 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
             .unwrap_or_default(),
         episodes: vec![],
         images: vec![],
+        // niacg 无账号体系,点赞/收藏状态恒为 false(收藏由本地表管理)
+        is_liked: false,
+        is_favourite: false,
     }
 }
 

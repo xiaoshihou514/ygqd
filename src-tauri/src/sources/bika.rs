@@ -143,6 +143,10 @@ struct ComicDoc {
     thumb: Option<RemoteImage>,
     #[serde(default)]
     likes_count: i64,
+    #[serde(default)]
+    is_liked: bool,
+    #[serde(default)]
+    is_favourite: bool,
 }
 
 impl From<ComicDoc> for ComicItem {
@@ -153,6 +157,7 @@ impl From<ComicDoc> for ComicItem {
             thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
             id: doc.id,
             title: doc.title,
+            author: doc.author,
             category_id: 0,
             tags: doc.categories,
             likes: doc.likes_count.to_string(),
@@ -183,6 +188,8 @@ impl From<ComicDoc> for ComicDetail {
             likes: doc.likes_count.to_string(),
             episodes: vec![],
             images: vec![],
+            is_liked: doc.is_liked,
+            is_favourite: doc.is_favourite,
         }
     }
 }
@@ -349,15 +356,15 @@ impl BikaApi {
             .collect())
     }
 
-    /// 返回 Err 以 "401" 开头表示 token 失效,调用方应重新登录后重试
-    async fn request<T: DeserializeOwned>(
+    /// 发送请求并返回 (HTTP 状态, 响应体文本)
+    async fn send(
         &self,
         method: &str,
         path: &str,
         query: Option<String>,
         body: Option<Value>,
         token: Option<&str>,
-    ) -> Result<T, String> {
+    ) -> Result<(reqwest::StatusCode, String), String> {
         let url = match &query {
             Some(query) => format!("{BASE}{path}?{query}"),
             None => format!("{BASE}{path}"),
@@ -399,6 +406,19 @@ impl BikaApi {
         let response = request.send().await.map_err(|e| e.to_string())?;
         let status = response.status();
         let text = response.text().await.map_err(|e| e.to_string())?;
+        Ok((status, text))
+    }
+
+    /// 返回 Err 以 "401" 开头表示 token 失效,调用方应重新登录后重试
+    async fn request<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        path: &str,
+        query: Option<String>,
+        body: Option<Value>,
+        token: Option<&str>,
+    ) -> Result<T, String> {
+        let (status, text) = self.send(method, path, query, body, token).await?;
         let envelope: Envelope<T> = serde_json::from_str(&text)
             .map_err(|e| format!("decode error: {e}; body: {}", &text[..text.len().min(200)]))?;
         if status.as_u16() == 401 {
@@ -410,6 +430,26 @@ impl BikaApi {
         envelope
             .data
             .ok_or_else(|| "bika response missing data".to_string())
+    }
+
+    /// toggle 类端点(点赞/收藏):code 200 即成功,不要求 data 存在
+    async fn request_toggle(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        token: Option<&str>,
+    ) -> Result<(), String> {
+        let (status, text) = self.send(method, path, None, body, token).await?;
+        let envelope: Envelope<serde::de::IgnoredAny> = serde_json::from_str(&text)
+            .map_err(|e| format!("decode error: {e}; body: {}", &text[..text.len().min(200)]))?;
+        if status.as_u16() == 401 {
+            return Err(format!("401 {}", envelope.message));
+        }
+        if !status.is_success() || envelope.code != 200 {
+            return Err(format!("{} ({})", envelope.message, status.as_u16()));
+        }
+        Ok(())
     }
 
     pub async fn sign_in(&self, email: &str, password: &str) -> Result<String, String> {
@@ -470,6 +510,51 @@ impl BikaApi {
                 has_next: false,
                 has_prev: false,
             },
+        })
+    }
+
+    /// 点赞/取消点赞(toggle,服务器端按当前状态翻转)
+    pub async fn switch_like(&self, token: String, id: &str) -> Result<(), String> {
+        self.request_toggle(
+            "POST",
+            &format!("/comics/{id}/like"),
+            Some(json!({})),
+            Some(token.as_str()),
+        )
+        .await
+    }
+
+    /// 收藏/取消收藏(toggle)
+    pub async fn switch_favourite(&self, token: String, id: &str) -> Result<(), String> {
+        self.request_toggle(
+            "POST",
+            &format!("/comics/{id}/favourite"),
+            Some(json!({})),
+            Some(token.as_str()),
+        )
+        .await
+    }
+
+    /// 服务器端收藏列表(用于同步到本地),page 为 1-based
+    pub async fn favourite_list(
+        &self,
+        token: String,
+        page: i32,
+    ) -> Result<CategoryListResult, String> {
+        let query = encode_query(&[("s", "dd"), ("page", &page.to_string())]);
+        let page_docs = self
+            .request::<ComicsPageDoc>(
+                "GET",
+                "/users/favourite",
+                Some(query),
+                None,
+                Some(token.as_str()),
+            )
+            .await?
+            .comics;
+        Ok(CategoryListResult {
+            pagination: page_docs.pagination(),
+            items: page_docs.docs.into_iter().map(Into::into).collect(),
         })
     }
 
@@ -751,8 +836,51 @@ mod tests {
                 let id = list.items[0].id.clone();
                 let detail = api.detail(token.clone(), &id).await.expect("detail");
                 println!(
-                    "detail: title={} author={} tags={:?}",
-                    detail.title, detail.author, detail.tags
+                    "detail: title={} author={} isLiked={} isFavourite={}",
+                    detail.title, detail.author, detail.is_liked, detail.is_favourite
+                );
+
+                // 点赞 toggle 两次还原;收藏 toggle 两次还原(不污染账号状态)
+                let liked_before = detail.is_liked;
+                let fav_before = detail.is_favourite;
+                api.switch_like(token.clone(), &id)
+                    .await
+                    .expect("switch_like");
+                api.switch_favourite(token.clone(), &id)
+                    .await
+                    .expect("switch_favourite");
+                let after = api
+                    .detail(token.clone(), &id)
+                    .await
+                    .expect("detail after toggle");
+                println!(
+                    "after toggle: isLiked={} isFavourite={}",
+                    after.is_liked, after.is_favourite
+                );
+                assert_eq!(after.is_liked, !liked_before, "点赞应翻转");
+                assert_eq!(after.is_favourite, !fav_before, "收藏应翻转");
+                api.switch_like(token.clone(), &id)
+                    .await
+                    .expect("switch_like restore");
+                api.switch_favourite(token.clone(), &id)
+                    .await
+                    .expect("switch_favourite restore");
+                let restored = api
+                    .detail(token.clone(), &id)
+                    .await
+                    .expect("detail restored");
+                assert_eq!(restored.is_liked, liked_before, "点赞应还原");
+                assert_eq!(restored.is_favourite, fav_before, "收藏应还原");
+                println!("like/favourite toggled and restored ok");
+
+                let favs = api
+                    .favourite_list(token.clone(), 1)
+                    .await
+                    .expect("favourite_list");
+                println!(
+                    "favourite_list page1: {} items, hasNext={}",
+                    favs.items.len(),
+                    favs.pagination.has_next
                 );
 
                 let episodes = api.episodes(token.clone(), &id).await.expect("episodes");

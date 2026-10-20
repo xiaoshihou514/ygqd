@@ -458,6 +458,111 @@ async fn fetch_bika_addresses(state: State<'_, AppState>) -> Result<Vec<String>,
     state.bika_snapshot().fetch_addresses().await
 }
 
+/// 哔咔漫画点赞/取消点赞(toggle)
+#[tauri::command]
+async fn bika_switch_like(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let bika = state.bika_snapshot();
+    state.bika_call(|token| bika.switch_like(token, &id)).await
+}
+
+/// 哔咔漫画收藏/取消收藏(toggle)
+#[tauri::command]
+async fn bika_switch_favourite(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let bika = state.bika_snapshot();
+    state
+        .bika_call(|token| bika.switch_favourite(token, &id))
+        .await
+}
+
+#[tauri::command]
+fn fetch_favorites(state: State<'_, AppState>) -> Result<Vec<FavoriteEntry>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::favorites(&conn)
+}
+
+#[tauri::command]
+fn is_favorite(
+    source: Source,
+    comic_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::is_favorite(&conn, source, &comic_id)
+}
+
+/// 收藏漫画:写入本地表;哔咔源同时同步到服务器(toggle 方向由
+/// 调用方当前状态决定,前端保证仅在未收藏时调用)
+#[tauri::command]
+async fn add_favorite(entry: RecordFavorite, state: State<'_, AppState>) -> Result<(), String> {
+    if entry.source == Source::Bika {
+        let bika = state.bika_snapshot();
+        let id = entry.comic_id.clone();
+        state
+            .bika_call(|token| bika.switch_favourite(token, &id))
+            .await?;
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::add_favorite(&conn, &entry)
+}
+
+/// 取消收藏:本地删除;哔咔源同时从服务器移除
+#[tauri::command]
+async fn remove_favorite(
+    source: Source,
+    comic_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if source == Source::Bika {
+        let bika = state.bika_snapshot();
+        state
+            .bika_call(|token| bika.switch_favourite(token, &comic_id))
+            .await?;
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::remove_favorite(&conn, source, &comic_id)
+}
+
+/// 把哔咔服务器端的收藏拉取并合并到本地表(官方 app 收的也能看到);
+/// 返回本次同步新增的条数
+#[tauri::command]
+async fn sync_bika_favorites(state: State<'_, AppState>) -> Result<usize, String> {
+    let before = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::favorites(&conn)?.len()
+    };
+    let bika = state.bika_snapshot();
+    let mut page = 1;
+    loop {
+        let result = state
+            .bika_call(|token| bika.favourite_list(token, page))
+            .await?;
+        let has_next = result.pagination.has_next;
+        {
+            let conn = state.db.lock().map_err(|e| e.to_string())?;
+            for item in &result.items {
+                let entry = RecordFavorite {
+                    source: Source::Bika,
+                    comic_id: item.id.clone(),
+                    title: item.title.clone(),
+                    thumbnail: item.thumbnail.clone(),
+                    category_id: item.category_id,
+                    author: item.author.clone(),
+                };
+                db::add_favorite(&conn, &entry)?;
+            }
+        }
+        if !has_next {
+            break;
+        }
+        page += 1;
+    }
+    let after = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        db::favorites(&conn)?.len()
+    };
+    Ok(after.saturating_sub(before))
+}
+
 /// 当前分流地址,空字符串表示不分流
 #[tauri::command]
 fn get_bika_address(state: State<'_, AppState>) -> Result<String, String> {
@@ -572,6 +677,13 @@ pub fn run() {
             fetch_category,
             fetch_bika_categories,
             fetch_bika_leaderboard,
+            bika_switch_like,
+            bika_switch_favourite,
+            fetch_favorites,
+            is_favorite,
+            add_favorite,
+            remove_favorite,
+            sync_bika_favorites,
             search_comics,
             fetch_comic,
             fetch_comic_images,

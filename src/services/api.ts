@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BikaRankTT, SourceId } from '@/config/sources'
-import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, SearchParams, SearchResult, FollowedAuthor, ViewHistoryEntry } from '../types'
+import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, SearchParams, SearchResult, FollowedAuthor, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
@@ -18,6 +18,13 @@ export const setBikaAddress = (address: string) => invoke<void>('set_bika_addres
 export const fetchFollowedAuthors = () => invoke<FollowedAuthor[]>('fetch_follows')
 export const followAuthor = (author: string) => invoke<FollowedAuthor>('follow_author', { author })
 export const unfollowAuthor = (author: string) => invoke<void>('unfollow_author', { author })
+export const bikaSwitchLike = (id: string) => invoke<void>('bika_switch_like', { id })
+export const bikaSwitchFavourite = (id: string) => invoke<void>('bika_switch_favourite', { id })
+export const fetchFavorites = () => invoke<FavoriteEntry[]>('fetch_favorites')
+export const isFavorite = (source: SourceId, comicId: string) => invoke<boolean>('is_favorite', { source, comicId })
+export const addFavorite = (entry: { source: SourceId; comicId: string; title: string; thumbnail: string; categoryId: number; author: string }) => invoke<void>('add_favorite', { entry })
+export const removeFavorite = (source: SourceId, comicId: string) => invoke<void>('remove_favorite', { source, comicId })
+export const syncBikaFavorites = () => invoke<number>('sync_bika_favorites')
 export const fetchViewHistory = (limit = 50) => invoke<ViewHistoryEntry[]>('fetch_history', { limit })
 export const recordViewHistory = (entry: { source: string; comicId: string; title: string; thumbnail: string; categoryId: number; author: string }) => invoke<void>('record_history', { entry })
 export const fetchBlacklist = () => invoke<BlacklistEntry[]>('fetch_blacklist')

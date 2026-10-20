@@ -2,12 +2,15 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
-import { searchComics } from '@/services/api'
+import { searchComics, fetchFavorites, removeFavorite, syncBikaFavorites } from '@/services/api'
 import { datedJsonFilename, exportJson, type ExportResult } from '@/utils/exportJson'
-import type { ComicItem, FollowedAuthor } from '@/types'
+import { comicPath } from '@/utils/comicPath'
+import { sourceLabel } from '@/config/sources'
+import type { ComicItem, FavoriteEntry, FollowedAuthor } from '@/types'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import ProxyImage from '@/components/ProxyImage.vue'
 
 const router = useRouter()
 const { followed, loading: loadingFollows, load, unfollow } = useFollowedAuthors()
@@ -15,11 +18,17 @@ const { followed, loading: loadingFollows, load, unfollow } = useFollowedAuthors
 const tabs = [
   { key: 'authors', label: '作者' },
   { key: 'works', label: '作品' },
+  { key: 'favorites', label: '收藏' },
 ] as const
 type FollowingTab = (typeof tabs)[number]['key']
 
 const activeTab = ref<FollowingTab>('authors')
-const tabScroll: Record<FollowingTab, number> = { authors: 0, works: 0 }
+const tabScroll: Record<FollowingTab, number> = { authors: 0, works: 0, favorites: 0 }
+
+const favorites = ref<FavoriteEntry[]>([])
+const favLoading = ref(false)
+/** 后台同步哔咔服务器收藏进行中(不阻塞本地列表展示) */
+const favSyncing = ref(false)
 
 interface SourcePageState {
   page: number
@@ -71,12 +80,52 @@ const hasMoreWorks = computed(() =>
 
 onMounted(async () => {
   await load()
+  void loadFavorites()
   if (followed.value.length > 0) {
     await loadAllAuthors()
     await nextTick()
     setupObserver()
   }
 })
+
+/** 收藏列表:本地表立即展示,哔咔登录时后台把服务器收藏合并进来 */
+async function loadFavorites(force = false) {
+  if (favLoading.value) return
+  favLoading.value = true
+  try {
+    favorites.value = await fetchFavorites()
+    if (force) {
+      favSyncing.value = true
+      try {
+        await syncBikaFavorites()
+        favorites.value = await fetchFavorites()
+      } catch {
+        // 服务器同步失败不影响本地列表
+      } finally {
+        favSyncing.value = false
+      }
+    }
+  } catch {
+    // 列表加载失败时保持空,视图会展示空态
+  } finally {
+    favLoading.value = false
+  }
+}
+
+async function unfavorite(fav: FavoriteEntry) {
+  try {
+    await removeFavorite(fav.source, fav.comicId)
+    favorites.value = favorites.value.filter(
+      (v) => !(v.source === fav.source && v.comicId === fav.comicId),
+    )
+  } catch (e) {
+    syncError.value = (e as Error).message || '取消收藏失败'
+  }
+}
+
+function goToComic(fav: FavoriteEntry) {
+  router.push(comicPath({ source: fav.source, categoryId: fav.categoryId, id: fav.comicId }))
+}
 
 async function fetchAuthorPage(
   follow: FollowedAuthor,
@@ -208,9 +257,23 @@ async function switchTab(tab: FollowingTab) {
   if (tab === activeTab.value) return
   tabScroll[activeTab.value] = window.scrollY
   activeTab.value = tab
+  if (tab === 'favorites') {
+    // 收藏视图无分页 observer,断开避免误触发 works 加载
+    observer?.disconnect()
+    void loadFavorites(true)
+  }
   await nextTick()
   window.scrollTo(0, tabScroll[tab])
   setupObserver()
+}
+
+/** 顶部刷新:按当前视图分流 */
+function handleRefresh() {
+  if (activeTab.value === 'favorites') {
+    void loadFavorites(true)
+  } else {
+    void loadAllAuthors(true)
+  }
 }
 
 function setupObserver() {
@@ -285,10 +348,10 @@ onUnmounted(() => {
         <div class="heading-actions">
           <button
             class="action-btn"
-            :disabled="syncing || loadingFollows"
-            @click="loadAllAuthors(true)"
+            :disabled="syncing || loadingFollows || favLoading || favSyncing"
+            @click="handleRefresh"
           >
-            刷新
+            {{ favSyncing ? '同步收藏中' : '刷新' }}
           </button>
           <button class="action-btn" :disabled="exporting" @click="handleExport">
             {{ exporting ? '导出中' : '导出' }}
@@ -298,12 +361,6 @@ onUnmounted(() => {
       <p v-if="exportStatus" class="export-status" aria-live="polite">{{ exportStatus }}</p>
 
       <LoadingSpinner v-if="loadingFollows" message="加载中..." />
-
-      <EmptyState
-        v-else-if="followed.length === 0"
-        title="还没有关注任何作者"
-        message="在漫画详情页点击作者旁的心形图标即可关注"
-      />
 
       <template v-else>
         <div class="content-tabs" role="tablist" aria-label="关注视图">
@@ -326,7 +383,12 @@ onUnmounted(() => {
         <p v-if="bikaHint && !syncing" class="sync-error">{{ bikaHint }}</p>
 
         <template v-if="activeTab === 'authors'">
-          <div class="following-list">
+          <EmptyState
+            v-if="!followed.length"
+            title="还没有关注任何作者"
+            message="在漫画详情页点击作者旁的心形图标即可关注"
+          />
+          <div v-else class="following-list">
             <div
               v-for="fa in followed"
               :key="fa.author"
@@ -378,20 +440,70 @@ onUnmounted(() => {
         </template>
 
         <template v-else>
-          <ComicGrid v-if="allWorks.length" :items="allWorks" />
-          <LoadingSpinner v-else-if="syncing" message="正在加载作品..." />
-          <EmptyState v-else title="暂无作品" message="未能获取到关注作者的作品" />
+        <template v-else-if="activeTab === 'works'">
+          <EmptyState
+            v-if="!followed.length"
+            title="还没有关注任何作者"
+            message="先关注作者,即可在这里看到他们的作品"
+          />
+          <template v-else>
+            <ComicGrid v-if="allWorks.length" :items="allWorks" />
+            <LoadingSpinner v-else-if="syncing" message="正在加载作品..." />
+            <EmptyState v-else title="暂无作品" message="未能获取到关注作者的作品" />
+
+            <div v-if="loadingMore" class="loading-more">
+              <LoadingSpinner message="正在加载更多..." />
+            </div>
+
+            <div v-if="!syncing && !loadingMore && !hasMoreWorks && allWorks.length" class="no-more">
+              <span>已加载全部作品</span>
+            </div>
+
+            <div v-if="hasMoreWorks && !syncing" class="scroll-sentinel" />
+          </template>
         </template>
 
-        <div v-if="loadingMore" class="loading-more">
-          <LoadingSpinner message="正在加载更多..." />
-        </div>
-
-        <div v-if="!syncing && !loadingMore && !hasMoreWorks && allWorks.length" class="no-more">
-          <span>已加载全部作品</span>
-        </div>
-
-        <div v-if="hasMoreWorks && !syncing" class="scroll-sentinel" />
+        <template v-else>
+          <LoadingSpinner v-if="favLoading" message="加载收藏..." />
+          <EmptyState
+            v-else-if="!favorites.length"
+            title="还没有收藏漫画"
+            message="在漫画详情页点击「收藏」,两个来源的漫画都可以收藏"
+          />
+          <div v-else class="favorite-list">
+            <p v-if="favSyncing" class="sync-progress">正在同步哔咔服务器收藏...</p>
+            <div
+              v-for="fav in favorites"
+              :key="`${fav.source}:${fav.comicId}`"
+              class="favorite-card"
+              @click="goToComic(fav)"
+            >
+              <ProxyImage
+                :src="fav.thumbnail"
+                :source="fav.source"
+                class="favorite-thumb"
+                loading="lazy"
+              />
+              <div class="favorite-info">
+                <span class="favorite-title">{{ fav.title }}</span>
+                <span class="favorite-meta">
+                  {{ sourceLabel(fav.source) }}<template v-if="fav.author"> · {{ fav.author }}</template> · {{ formatTime(fav.createdAt) }}
+                </span>
+              </div>
+              <div class="author-actions" @click.stop>
+                <button
+                  class="author-action-btn author-action-danger"
+                  :title="`取消收藏 ${fav.title}`"
+                  @click="unfavorite(fav)"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="currentColor" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
       </template>
     </div>
   </div>
@@ -504,6 +616,57 @@ onUnmounted(() => {
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
   overflow: hidden;
+}
+
+.favorite-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.favorite-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.favorite-thumb {
+  width: 48px;
+  height: 64px;
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--color-divider-soft);
+}
+
+.favorite-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.favorite-title {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.favorite-meta {
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .author-header {

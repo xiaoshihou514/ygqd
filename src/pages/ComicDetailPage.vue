@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, onActivated, nextTick, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
-import { fetchComicDetail, fetchComicImages } from '@/services/api'
+import { fetchComicDetail, fetchComicImages, bikaSwitchLike, addFavorite, removeFavorite, isFavorite } from '@/services/api'
 import type { ComicDetail } from '@/types'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
@@ -27,6 +27,11 @@ const imageHasNext = ref(false)
 const imageLoading = ref(false)
 const imageError = ref('')
 const activeEp = ref(1)
+/** 哔咔服务器端点赞状态(仅 bika) */
+const liked = ref(false)
+/** 本地收藏状态(双源统一;哔咔另有服务器端状态,以本地为准展示) */
+const favourited = ref(false)
+const actionBusy = ref(false)
 const { add, has } = useTagBlacklist()
 const { isFollowing, follow, unfollow } = useFollowedAuthors()
 const { record: recordHistory } = useViewHistory()
@@ -51,6 +56,49 @@ const lastEpOrder = computed(() => {
 })
 
 const hasNextEp = computed(() => isBika.value && activeEp.value < lastEpOrder.value)
+
+/** 哔咔点赞(toggle);失败时回滚显示状态 */
+async function toggleLike() {
+  if (!detail.value || !isBika.value || actionBusy.value) return
+  const next = !liked.value
+  actionBusy.value = true
+  try {
+    await bikaSwitchLike(detail.value.id)
+    liked.value = next
+    const count = Number(detail.value.likes) || 0
+    detail.value.likes = String(Math.max(0, count + (next ? 1 : -1)))
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    actionBusy.value = false
+  }
+}
+
+/** 收藏(双源):本地表为准,哔咔源同时同步服务器 */
+async function toggleFavourite() {
+  if (!detail.value || actionBusy.value) return
+  const next = !favourited.value
+  actionBusy.value = true
+  try {
+    if (next) {
+      await addFavorite({
+        source: source.value,
+        comicId: detail.value.id,
+        title: detail.value.title,
+        thumbnail: detail.value.thumbnail,
+        categoryId: detail.value.categoryId,
+        author: effectiveAuthor.value,
+      })
+    } else {
+      await removeFavorite(source.value, detail.value.id)
+    }
+    favourited.value = next
+  } catch (e) {
+    error.value = (e as Error).message
+  } finally {
+    actionBusy.value = false
+  }
+}
 
 async function loadImagesPage(reset = false) {
   if (!detail.value || imageLoading.value) return
@@ -143,6 +191,7 @@ async function loadComic(categoryId: number, id: string) {
   try {
     detail.value = await fetchComicDetail(source.value, categoryId, id)
     if (detail.value) {
+      liked.value = detail.value.isLiked ?? false
       recordHistory({
         source: detail.value.source,
         comicId: detail.value.id,
@@ -151,6 +200,14 @@ async function loadComic(categoryId: number, id: string) {
         categoryId: detail.value.categoryId,
         author: effectiveAuthor.value,
       })
+      // 本地收藏状态优先;哔咔若服务器已收藏(官方 app 操作)也视为已收藏
+      try {
+        favourited.value =
+          (await isFavorite(source.value, detail.value.id)) ||
+          (isBika.value && (detail.value.isFavourite ?? false))
+      } catch {
+        favourited.value = isBika.value && (detail.value.isFavourite ?? false)
+      }
       await loadImagesPage(true)
     }
   } catch (e) {
@@ -241,6 +298,31 @@ export default {
                 </svg>
                 {{ detail.likes }}
               </span>
+              <button
+                v-if="isBika"
+                class="meta-action"
+                :class="{ on: liked }"
+                :disabled="actionBusy"
+                :title="liked ? '取消点赞' : '点赞'"
+                @click="toggleLike"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" :fill="liked ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2">
+                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                </svg>
+                {{ liked ? '已赞' : '点赞' }}
+              </button>
+              <button
+                class="meta-action"
+                :class="{ on: favourited }"
+                :disabled="actionBusy"
+                :title="favourited ? '取消收藏' : '收藏'"
+                @click="toggleFavourite"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" :fill="favourited ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2">
+                  <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                </svg>
+                {{ favourited ? '已收藏' : '收藏' }}
+              </button>
             </div>
             <div v-if="effectiveAuthor" class="detail-tag-row">
               <span class="tag-label">作者</span>
@@ -529,6 +611,30 @@ export default {
   gap: 4px;
   font-size: var(--font-size-fine-print);
   color: var(--color-text-secondary);
+}
+
+.meta-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.meta-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.meta-action.on {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .detail-tags {

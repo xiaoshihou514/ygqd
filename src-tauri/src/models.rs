@@ -44,6 +44,8 @@ pub struct ComicItem {
     pub source: Source,
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub author: String,
     pub thumbnail: String,
     pub category: String,
     pub category_id: i32,
@@ -68,6 +70,11 @@ pub struct ComicDetail {
     pub likes: String,
     pub episodes: Vec<Episode>,
     pub images: Vec<String>,
+    /// 当前账号是否已点赞/收藏(哔咔服务器状态;niacg 恒 false)
+    #[serde(default)]
+    pub is_liked: bool,
+    #[serde(default)]
+    pub is_favourite: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -152,6 +159,30 @@ pub struct RecordHistory {
 pub struct BikaAccountStatus {
     pub logged_in: bool,
     pub email: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteEntry {
+    pub source: Source,
+    pub comic_id: String,
+    pub title: String,
+    pub thumbnail: String,
+    pub category_id: i32,
+    pub author: String,
+    pub created_at: i64,
+}
+
+/// 收藏写入参数(时间戳由后端补全)
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordFavorite {
+    pub source: Source,
+    pub comic_id: String,
+    pub title: String,
+    pub thumbnail: String,
+    pub category_id: i32,
+    pub author: String,
 }
 
 #[cfg(test)]

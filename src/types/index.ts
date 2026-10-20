@@ -4,6 +4,8 @@ export interface ComicItem {
   source: SourceId
   id: string
   title: string
+  /** 列表项可能拿不到作者(niacg 为空) */
+  author?: string
   thumbnail: string
   category: string
   categoryId: number
@@ -26,6 +28,9 @@ export interface ComicDetail {
   likes: string
   episodes: Episode[]
   images: string[]
+  /** 哔咔服务器端点赞/收藏状态;niacg 恒 false */
+  isLiked?: boolean
+  isFavourite?: boolean
 }
 
 export interface Episode {
@@ -112,6 +117,16 @@ export interface ViewHistoryEntry {
   categoryId: number
   author: string
   viewedAt: number
+}
+
+export interface FavoriteEntry {
+  source: SourceId
+  comicId: string
+  title: string
+  thumbnail: string
+  categoryId: number
+  author: string
+  createdAt: number
 }
 
 export interface BikaAccountStatus {

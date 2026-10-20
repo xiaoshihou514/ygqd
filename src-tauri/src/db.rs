@@ -15,7 +15,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
       CREATE TABLE IF NOT EXISTS view_history(comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, viewed_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS tag_blacklist(tag TEXT PRIMARY KEY, mode TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bika_account(id INTEGER PRIMARY KEY CHECK(id=1), email TEXT NOT NULL, password TEXT NOT NULL, token TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS bika_address(id INTEGER PRIMARY KEY CHECK(id=1), address TEXT NOT NULL);").map_err(|e| e.to_string())?;
+      CREATE TABLE IF NOT EXISTS bika_address(id INTEGER PRIMARY KEY CHECK(id=1), address TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS favorites(source TEXT NOT NULL, comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(source, comic_id));").map_err(|e| e.to_string())?;
     migrate_view_history(&db)?;
     Ok(db)
 }
@@ -198,4 +199,56 @@ pub fn update_blacklist(db: &Connection, tag: &str, mode: &str) -> Result<(), St
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub fn favorites(db: &Connection) -> Result<Vec<FavoriteEntry>, String> {
+    let mut s = db
+        .prepare("SELECT source,comic_id,title,thumbnail,category_id,author,created_at FROM favorites ORDER BY created_at DESC")
+        .map_err(|e| e.to_string())?;
+    let rows = s
+        .query_map([], |r| {
+            Ok(FavoriteEntry {
+                source: r.get(0)?,
+                comic_id: r.get(1)?,
+                title: r.get(2)?,
+                thumbnail: r.get(3)?,
+                category_id: r.get(4)?,
+                author: r.get(5)?,
+                created_at: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// 插入或刷新收藏(同步服务器列表时也走这里,保留已有 created_at)
+pub fn add_favorite(db: &Connection, v: &RecordFavorite) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO favorites VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(source,comic_id) DO UPDATE SET title=?3,thumbnail=?4,category_id=?5,author=?6",
+        params![v.source, v.comic_id, v.title, v.thumbnail, v.category_id, v.author, now()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn remove_favorite(db: &Connection, source: Source, comic_id: &str) -> Result<(), String> {
+    db.execute(
+        "DELETE FROM favorites WHERE source=?1 AND comic_id=?2",
+        params![source, comic_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn is_favorite(db: &Connection, source: Source, comic_id: &str) -> Result<bool, String> {
+    let count: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM favorites WHERE source=?1 AND comic_id=?2",
+            params![source, comic_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
 }
