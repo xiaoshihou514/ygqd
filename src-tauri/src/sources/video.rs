@@ -1,15 +1,29 @@
 //! 视频板块:fs1.app(Jable 系,服务端渲染,reqwest 直连可达)。
 //! 列表/搜索/详情解析;m3u8 直接内嵌在详情页 HTML。
-//! missav.ai 按 TLS 指纹拦截 reqwest(403),按番号直达的播放
-//! 增强后续走 WebView 方案,当前播放统一用 fs1 的 m3u8。
+//! missav.ai 按 TLS 指纹拦截 reqwest(403),播放地址仅在 fs1 失效时
+//! 经 WebView 网关兜底,常规播放使用 fs1 的 m3u8。
 
 use crate::models::*;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use scraper::{Html, Selector};
-use std::sync::OnceLock;
+use std::{sync::OnceLock, time::Duration};
 use tauri::Manager as _;
 
 const BASE: &str = "https://fs1.app";
+
+fn absolute_url(value: &str) -> String {
+    if value.starts_with("https://") || value.starts_with("http://") {
+        value.to_string()
+    } else if value.starts_with("//") {
+        format!("https:{value}")
+    } else if value.starts_with('/') {
+        format!("{BASE}{value}")
+    } else if value.is_empty() {
+        String::new()
+    } else {
+        format!("{BASE}/{value}")
+    }
+}
 
 fn sel(value: &str) -> Selector {
     Selector::parse(value).expect("static selector")
@@ -73,6 +87,8 @@ impl VideoApi {
         headers.insert(REFERER, HeaderValue::from_static(BASE));
         let client = reqwest::Client::builder()
             .default_headers(headers)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| e.to_string())?;
         Ok(Self { client })
@@ -136,8 +152,8 @@ impl VideoApi {
                         .attr("data-src")
                         .or_else(|| img.value().attr("src"))
                 })
-                .unwrap_or_default()
-                .to_string();
+                .map(absolute_url)
+                .unwrap_or_default();
             // sub-title 形如 "315 903 ❤ 1403"(svg 图标分隔的观看数与点赞数)
             let (views, likes) = card
                 .select(sub_sel)
@@ -249,7 +265,10 @@ impl VideoApi {
             .filter_map(|seg| {
                 let end = seg.find(|c: char| c == '"' || c == '\'' || c.is_whitespace())?;
                 let url = format!("https://{}", &seg[..end]);
-                if url.ends_with(".m3u8") && url.contains("/hls/") {
+                let is_playlist = url::Url::parse(&url)
+                    .ok()
+                    .is_some_and(|parsed| parsed.path().ends_with(".m3u8"));
+                if is_playlist && url.contains("/hls/") {
                     Some(url)
                 } else {
                     None
@@ -266,54 +285,52 @@ impl VideoApi {
         })
     }
 
-    /// 详情(双源):元数据走 fs1(服务端渲染,稳定);播放地址优先
-    /// missav(经网关解码 eval packer,番号直达),失败回退 fs1。
-    /// 两端均优先 {code}-chinese-subtitle 中字变体。
-    /// missav 网关不可用时静默降级,不影响可看性。
+    /// 优先使用已验证可直连的 fs1 播放地址,失败后再以 missav 兜底。
+    /// 两端均优先尝试中文字幕版本。
     pub async fn detail(&self, app: &tauri::AppHandle, code: &str) -> Result<VideoDetail, String> {
-        let mut detail = self.detail_fs1(code).await;
-        let manager = app.state::<crate::GatewayManager>();
-        let lower = code.to_lowercase();
-        // missav 优先中字变体,404/无流则回退普通番号页
-        let missav_cs = crate::gateway::gateway_fetch_extract_m3u8(
-            app,
-            &manager,
-            "missav",
-            &format!("https://missav.ai/videos/{lower}-chinese-subtitle"),
-        )
-        .await;
-        let missav_plain = if missav_cs.is_ok() {
-            missav_cs.clone()
-        } else {
-            crate::gateway::gateway_fetch_extract_m3u8(
-                app,
-                &manager,
-                "missav",
-                &format!("https://missav.ai/videos/{lower}"),
-            )
-            .await
-        };
-        let chinese = missav_cs.is_ok();
-        if let Ok(m3u8) = missav_plain {
-            if !m3u8.is_empty() {
-                if let Ok(d) = detail.as_mut() {
-                    d.m3u8 = m3u8;
-                    d.provider = "missav".into();
-                    d.chinese = d.chinese || chinese;
-                } else {
-                    // fs1 元数据也失败:仅番号的纯播放模式
-                    detail = Ok(VideoDetail {
+        match self.detail_fs1(code).await {
+            Ok(detail) => Ok(detail),
+            Err(fs1_error) => {
+                let manager = app.state::<crate::GatewayManager>();
+                let lower = code.to_lowercase();
+                let missav_cs = crate::gateway::gateway_fetch_extract_m3u8(
+                    app,
+                    &manager,
+                    "missav",
+                    &format!("https://missav.ai/videos/{lower}-chinese-subtitle"),
+                )
+                .await;
+                let (missav, chinese) = match missav_cs {
+                    Ok(m3u8) if !m3u8.is_empty() => (Ok(m3u8), true),
+                    _ => (
+                        crate::gateway::gateway_fetch_extract_m3u8(
+                            app,
+                            &manager,
+                            "missav",
+                            &format!("https://missav.ai/videos/{lower}"),
+                        )
+                        .await,
+                        false,
+                    ),
+                };
+                match missav {
+                    Ok(m3u8) if !m3u8.is_empty() => Ok(VideoDetail {
                         code: lower,
                         title: code.to_uppercase(),
                         tags: vec![],
                         m3u8,
                         provider: "missav".into(),
                         chinese,
-                    });
+                    }),
+                    Ok(_) => Err(format!(
+                        "fs1 播放地址不可用({fs1_error}); missav 未返回播放地址"
+                    )),
+                    Err(missav_error) => Err(format!(
+                        "fs1 播放地址不可用({fs1_error}); missav 兜底失败({missav_error})"
+                    )),
                 }
             }
         }
-        detail
     }
 }
 
@@ -325,7 +342,7 @@ pub struct VideoDetail {
     pub title: String,
     pub tags: Vec<String>,
     pub m3u8: String,
-    /// 播放来源:"missav"(优先)或 "fs1"(回退)
+    /// 播放来源:"fs1"(优先)或 "missav"(兜底)
     pub provider: String,
     /// 是否中文字幕版本
     pub chinese: bool,
@@ -334,6 +351,22 @@ pub struct VideoDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_video_cover_urls() {
+        assert_eq!(
+            absolute_url("//cdn.example/cover.webp"),
+            "https://cdn.example/cover.webp"
+        );
+        assert_eq!(
+            absolute_url("/images/cover.jpg"),
+            "https://fs1.app/images/cover.jpg"
+        );
+        assert_eq!(
+            absolute_url("https://cdn.example/cover.jpg"),
+            "https://cdn.example/cover.jpg"
+        );
+    }
 
     #[test]
     #[ignore = "真实 API 联调(fs1 直连可达)"]
@@ -361,6 +394,15 @@ mod tests {
                 assert!(first.code.contains('-'), "番号格式: {}", first.code);
                 assert!(!first.thumbnail.is_empty(), "封面不应为空");
                 assert!(!first.title.is_empty(), "卡片标题不应为空");
+                let cover = api
+                    .client
+                    .get(&first.thumbnail)
+                    .send()
+                    .await
+                    .expect("cover request")
+                    .error_for_status()
+                    .expect("cover status");
+                println!("cover fetch: {}", cover.status());
 
                 let search = api.search("ssis", 1).await.expect("search");
                 println!("search[ssis]: {} cards", search.items.len());
@@ -375,17 +417,19 @@ mod tests {
                     &detail.m3u8[..detail.m3u8.len().min(60)]
                 );
                 assert!(detail.m3u8.starts_with("https://"), "m3u8 应为绝对地址");
-                assert!(detail.m3u8.ends_with(".m3u8"));
+                assert!(url::Url::parse(&detail.m3u8)
+                    .unwrap()
+                    .path()
+                    .ends_with(".m3u8"));
 
-                // m3u8 实际可达(CDN 不做 CF 挑战)
-                let resp = api
-                    .client
-                    .get(&detail.m3u8)
-                    .send()
+                // 验证上游清单可读,且代理能正确改写相对地址。
+                let (content_type, proxied) = crate::video_proxy::process(detail.m3u8.clone())
                     .await
-                    .expect("m3u8 request");
-                println!("m3u8 fetch: {}", resp.status());
-                assert!(resp.status().is_success(), "m3u8 应可下载");
+                    .expect("proxy m3u8");
+                assert_eq!(content_type, "application/vnd.apple.mpegurl");
+                let playlist = String::from_utf8(proxied).expect("playlist utf-8");
+                assert!(playlist.starts_with("#EXTM3U"));
+                assert!(playlist.contains("stream://hls/"));
             });
     }
 }

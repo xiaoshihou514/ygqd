@@ -25,7 +25,6 @@ const NIACG_SEARCH_INTERVAL: Duration = Duration::from_millis(5200);
 struct AppState {
     niacg: reqwest::Client,
     video: VideoApi,
-    gateway: GatewayManager,
     /// 哔咔客户端在切换分流地址时整体重建,读锁短持有,clone 后异步使用
     bika: RwLock<BikaApi>,
     bika_token: Mutex<Option<String>>,
@@ -179,11 +178,11 @@ async fn fetch_bika_categories(state: State<'_, AppState>) -> Result<Vec<String>
 #[tauri::command]
 async fn gateway_fetch(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, GatewayManager>,
     label: String,
     url: String,
 ) -> Result<String, String> {
-    gateway::gateway_fetch(&app, &state.gateway, &label, &url).await
+    gateway::gateway_fetch(&app, &state, &label, &url).await
 }
 
 /// 打开网关窗口(不存在则创建):供用户登录站点/完成人机验证,
@@ -283,8 +282,8 @@ fn novel_set_progress(
 
 /// 网关桥回传(由网关 webview 内的 JS 调用,不暴露给主窗口前端)
 #[tauri::command]
-fn gateway_result(state: State<'_, AppState>, result: gateway::GatewayReply) {
-    state.gateway.resolve(result);
+fn gateway_result(state: State<'_, GatewayManager>, result: gateway::GatewayReply) {
+    state.resolve(result);
 }
 
 /// 视频列表(fs1 最新上市),page 从 1 开始
@@ -318,7 +317,7 @@ async fn search_videos(
     Ok(out)
 }
 
-/// 视频详情(元数据走 fs1,m3u8 优先 missav 网关,回退 fs1)
+/// 视频详情(元数据与播放优先走 fs1,不可用时由 missav 网关兜底)
 #[tauri::command]
 async fn fetch_video_detail(
     app: AppHandle,
@@ -552,16 +551,7 @@ async fn fetch_comic_images(
     }
 }
 
-#[tauri::command]
-async fn fetch_image(
-    source: Source,
-    url: String,
-    state: State<'_, AppState>,
-) -> Result<Response, String> {
-    let client = match source {
-        Source::Bika => state.bika_snapshot().client,
-        Source::Niacg => state.niacg.clone(),
-    };
+async fn fetch_image_with_client(client: reqwest::Client, url: String) -> Result<Response, String> {
     let bytes = client
         .get(url)
         .send()
@@ -573,6 +563,25 @@ async fn fetch_image(
         .await
         .map_err(|e| e.to_string())?;
     Ok(Response::new(bytes.to_vec()))
+}
+
+#[tauri::command]
+async fn fetch_image(
+    source: Source,
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<Response, String> {
+    let client = match source {
+        Source::Bika => state.bika_snapshot().client,
+        Source::Niacg => state.niacg.clone(),
+    };
+    fetch_image_with_client(client, url).await
+}
+
+/// 视频封面由 fs1 提供,需沿用其客户端请求头(尤其是 Referer)
+#[tauri::command]
+async fn fetch_video_image(url: String, state: State<'_, AppState>) -> Result<Response, String> {
+    fetch_image_with_client(state.video.client.clone(), url).await
 }
 
 #[tauri::command]
@@ -834,10 +843,10 @@ pub fn run() {
             } else {
                 Some(&address)
             })?;
+            app.manage(GatewayManager::new());
             app.manage(AppState {
                 niacg,
                 video,
-                gateway: GatewayManager::new(),
                 bika: RwLock::new(bika),
                 bika_token: Mutex::new(None),
                 db: Mutex::new(conn),
@@ -876,6 +885,7 @@ pub fn run() {
             fetch_comic,
             fetch_comic_images,
             fetch_image,
+            fetch_video_image,
             bika_login,
             bika_logout,
             bika_status,

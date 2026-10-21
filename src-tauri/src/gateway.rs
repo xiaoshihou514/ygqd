@@ -90,7 +90,25 @@ pub async fn gateway_fetch(
     label: &str,
     url: &str,
 ) -> Result<String, String> {
-    gateway_fetch_inner(app, manager, label, url, false).await
+    gateway_fetch_inner(app, manager, label, url, false, None).await
+}
+
+/// 在 hlib 页面上下文中提交站内搜索表单,沿用用户的登录状态。
+pub async fn gateway_search(
+    app: &AppHandle,
+    manager: &GatewayManager,
+    label: &str,
+    keyword: &str,
+) -> Result<String, String> {
+    gateway_fetch_inner(
+        app,
+        manager,
+        label,
+        "https://hlib.cc/",
+        false,
+        Some(keyword),
+    )
+    .await
 }
 
 /// 同 gateway_fetch;extract_m3u8 为真时在页面上下文内执行
@@ -101,7 +119,7 @@ pub async fn gateway_fetch_extract_m3u8(
     label: &str,
     url: &str,
 ) -> Result<String, String> {
-    gateway_fetch_inner(app, manager, label, url, true).await
+    gateway_fetch_inner(app, manager, label, url, true, None).await
 }
 
 async fn gateway_fetch_inner(
@@ -110,6 +128,7 @@ async fn gateway_fetch_inner(
     label: &str,
     url: &str,
     extract_m3u8: bool,
+    search_keyword: Option<&str>,
 ) -> Result<String, String> {
     let created = ensure_gateway(app, label)?;
     if created {
@@ -131,28 +150,106 @@ async fn gateway_fetch_inner(
     let js_url = serde_json::to_string(url).map_err(|e| e.to_string())?;
     let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
     let extract = if extract_m3u8 { "true" } else { "false" };
+    let search = if search_keyword.is_some() {
+        "true"
+    } else {
+        "false"
+    };
+    let js_keyword = search_keyword
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "null".into());
     let js = format!(
         r#"(async () => {{
+  let status = 0;
+  let body = "";
   try {{
-    const r = await fetch({js_url}, {{ credentials: "include" }});
-    let body = await r.text();
-    if ({extract}) {{
-      // missav 的播放地址藏在 eval(p,a,c,k,e,d) packer 里;
-      // 页面上下文即 JS 环境,new Function 执行后抽取 m3u8
-      let found = "";
-      const blocks = body.match(/eval\(function\(p,a,c,k,e,d\)\{{[\s\S]*?\}}\)\)/g) || [];
-      for (const block of blocks) {{
-        try {{
-          const out = new Function("return " + block.replace(/^eval/, ""))();
-          const urls = String(out).match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/g);
-          if (urls && urls.length) {{ found = urls[0]; break; }}
-        }} catch (e) {{}}
+    if ({search}) {{
+      const keyword = {js_keyword};
+      const findSearchForm = (doc) => {{
+        const fieldPattern = /search|keyword|query|(^|[^a-z])q([^a-z]|$)|(^|[^a-z])kw([^a-z]|$)|key|word|title|author|搜索|关键字|关键词|书名|作者/i;
+        const forms = Array.from(doc.forms).map((form) => {{
+          const fields = Array.from(form.querySelectorAll("input"))
+            .filter((input) => input.name && !["hidden", "password", "submit", "button", "checkbox", "radio"].includes(input.type));
+          const action = form.getAttribute("action") || "";
+          const explicit = fields.find((input) => input.type === "search" || fieldPattern.test(
+            [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" ")
+          ));
+          const fallback = /search|find|query|搜索/i.test(action + " " + form.id + " " + form.className)
+            ? fields[0]
+            : null;
+          return {{ form, input: explicit || fallback, explicit: Boolean(explicit) }};
+        }}).filter((item) => item.input);
+        forms.sort((a, b) => Number(b.explicit) - Number(a.explicit));
+        return forms[0] || null;
+      }};
+
+      let doc = document;
+      let baseUrl = location.href;
+      let found = findSearchForm(doc);
+      if (!found) {{
+        const home = await fetch("https://hlib.cc/", {{ credentials: "include" }});
+        const html = await home.text();
+        status = home.status;
+        body = html;
+        if (home.ok) {{
+          doc = new DOMParser().parseFromString(html, "text/html");
+          baseUrl = home.url;
+          found = findSearchForm(doc);
+        }}
       }}
-      body = found;
+      if (found) {{
+        const {{ form, input }} = found;
+        const formData = new FormData(form);
+        formData.set(input.name, keyword);
+        const submit = form.querySelector('button[type="submit"], input[type="submit"]');
+        if (submit && submit.name && !formData.has(submit.name)) formData.set(submit.name, submit.value || "");
+        const action = new URL(form.getAttribute("action") || baseUrl, baseUrl);
+        if (action.origin !== location.origin) throw new Error("hlib 搜索表单地址不在本站");
+        const method = (form.method || "GET").toUpperCase();
+        const options = {{ method, credentials: "include" }};
+        if (method === "GET" || method === "HEAD") {{
+          for (const [key, value] of formData.entries()) {{
+            if (typeof value === "string") action.searchParams.append(key, value);
+          }}
+        }} else if (form.enctype.includes("multipart/form-data")) {{
+          options.body = formData;
+        }} else {{
+          const encoded = new URLSearchParams();
+          for (const [key, value] of formData.entries()) {{
+            if (typeof value === "string") encoded.append(key, value);
+          }}
+          options.headers = {{ "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }};
+          options.body = encoded.toString();
+        }}
+        const result = await fetch(action.toString(), options);
+        status = result.status;
+        body = await result.text();
+      }} else if (!/请稍候|Just a moment|正在进行安全验证|security verification/i.test(body)) {{
+        // 未找到表单时交给 Rust 侧继续尝试已知路径。
+        body = "";
+      }}
+    }} else {{
+      const r = await fetch({js_url}, {{ credentials: "include" }});
+      status = r.status;
+      body = await r.text();
+      if ({extract}) {{
+        // missav 的播放地址藏在 eval(p,a,c,k,e,d) packer 里;
+        // 页面上下文即 JS 环境,new Function 执行后抽取 m3u8
+        let found = "";
+        const blocks = body.match(/eval\(function\(p,a,c,k,e,d\)\{{[\s\S]*?\}}\)\)/g) || [];
+        for (const block of blocks) {{
+          try {{
+            const out = new Function("return " + block.replace(/^eval/, ""))();
+            const urls = String(out).match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/g);
+            if (urls && urls.length) {{ found = urls[0]; break; }}
+          }} catch (e) {{}}
+        }}
+        body = found;
+      }}
     }}
-    window.__TAURI_INTERNALS__.invoke("gateway_result", {{
-      id: {js_id}, status: r.status, body
-    }});
+    window.__TAURI_INTERNALS__.invoke("gateway_result", {{ id: {js_id}, status, body }});
   }} catch (e) {{
     window.__TAURI_INTERNALS__.invoke("gateway_result", {{
       id: {js_id}, status: 0, body: String(e)

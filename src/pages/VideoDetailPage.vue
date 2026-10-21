@@ -18,6 +18,8 @@ let videoEl: HTMLVideoElement | null = null
 let hls: Hls | null = null
 
 async function load() {
+  hls?.destroy()
+  hls = null
   loading.value = true
   error.value = ''
   detail.value = null
@@ -42,22 +44,44 @@ async function setupPlayer(m3u8: string) {
     check()
   })
   const el = videoEl!
-  // 统一走 hls.js(MSE):其 fetch/XHR 必经 webview 拦截,从而走
-  // stream:// 代理;原生 <video src> 走系统播放器会绕过代理直连
-  // CDN(Referer 校验 403),不可用
-  if (Hls.isSupported()) {
-    hls = new Hls({ maxBufferLength: 30 })
-    hls.loadSource(m3u8)
-    hls.attachMedia(el)
-  } else {
-    throw new Error('当前环境不支持 HLS 播放(需 MSE)')
-  }
   el.addEventListener('playing', () => {
     playing.value = true
   })
   el.addEventListener('pause', () => {
     playing.value = false
   })
+  el.addEventListener('error', () => {
+    if (!error.value) error.value = '播放器无法读取视频流，请检查网络后重试'
+  })
+
+  if (Hls.isSupported()) {
+    const player = new Hls({
+      maxBufferLength: 30,
+      manifestLoadingMaxRetry: 2,
+      levelLoadingMaxRetry: 2,
+      fragLoadingMaxRetry: 2,
+      manifestLoadingTimeOut: 20000,
+      levelLoadingTimeOut: 20000,
+      fragLoadingTimeOut: 20000,
+    })
+    hls = player
+    player.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return
+      error.value = data.type === Hls.ErrorTypes.NETWORK_ERROR
+        ? '视频流连接失败，请检查网络或稍后重试'
+        : '视频流解析或解码失败，请稍后重试'
+      player.destroy()
+      if (hls === player) hls = null
+    })
+    player.loadSource(m3u8)
+    player.attachMedia(el)
+  } else if (el.canPlayType('application/vnd.apple.mpegurl')) {
+    // 少数 WebView 不支持 Media Source Extensions,尝试系统 HLS 播放器。
+    el.src = m3u8
+    el.load()
+  } else {
+    throw new Error('当前设备不支持 HLS 播放')
+  }
 }
 
 function retry() {
@@ -99,7 +123,7 @@ onBeforeUnmount(() => {
 
     <div v-if="detail" class="meta-section">
       <div class="provider-row">
-        <span class="provider-badge" :class="detail.provider">{{ detail.provider === 'missav' ? 'missav 优先线路' : 'fs1 线路' }}</span>
+        <span class="provider-badge" :class="detail.provider">{{ detail.provider === 'missav' ? 'missav 备用线路' : 'fs1 线路' }}</span>
         <span v-if="detail.chinese" class="provider-badge chinese">中文字幕</span>
       </div>
       <h1 class="video-title">{{ detail.title || detail.code.toUpperCase() }}</h1>

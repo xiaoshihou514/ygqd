@@ -11,6 +11,7 @@
 //! 播放器无需理解真实网络。CDN 域 -> Referer 映射内置。
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine as _};
+use std::{sync::OnceLock, time::Duration};
 use tauri::http::StatusCode;
 type HttpResponse = tauri::http::Response<std::borrow::Cow<'static, [u8]>>;
 
@@ -39,14 +40,50 @@ fn proxy_url(real: &str) -> String {
     format!("stream://hls/{}", encode(real))
 }
 
-/// 把 m3u8 文本中的子列表/分片 URL 重写为代理地址。
-/// 非注释行即 URI 行;URI 行也可能是绝对地址。
+/// 重写 HLS 标签属性中的 URI(密钥、初始化分片等)。
+fn rewrite_uri_attributes(line: &str, base: &str) -> String {
+    let mut out = String::with_capacity(line.len() + 96);
+    let mut cursor = 0;
+    while let Some(relative) = line[cursor..].find("URI=") {
+        let marker = cursor + relative;
+        let value_start = marker + 4;
+        let Some(&quote) = line.as_bytes().get(value_start) else {
+            break;
+        };
+        if quote != b'"' && quote != b'\'' {
+            cursor = value_start;
+            continue;
+        }
+        let content_start = value_start + 1;
+        let Some(end_relative) = line[content_start..].find(quote as char) else {
+            break;
+        };
+        let content_end = content_start + end_relative;
+        let uri = &line[content_start..content_end];
+        out.push_str(&line[cursor..content_start]);
+        if uri.starts_with("stream://") || uri.starts_with("data:") {
+            out.push_str(uri);
+        } else {
+            out.push_str(&proxy_url(&resolve(uri, base)));
+        }
+        out.push(quote as char);
+        cursor = content_end + 1;
+    }
+    out.push_str(&line[cursor..]);
+    out
+}
+
+/// 把 m3u8 中的子播放清单、分片和 URI 属性统一改写为代理地址。
 fn rewrite_playlist(text: &str, base: &str) -> String {
     let mut out = String::with_capacity(text.len() + 256);
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if trimmed.is_empty() {
             out.push_str(line);
+        } else if trimmed.starts_with('#') {
+            out.push_str(&rewrite_uri_attributes(line, base));
+        } else if trimmed.starts_with("stream://") {
+            out.push_str(trimmed);
         } else {
             // 相对/绝对地址统一解析为绝对
             let absolute = resolve(trimmed, base);
@@ -69,25 +106,38 @@ fn resolve(uri: &str, base: &str) -> String {
     }
 }
 
-async fn fetch_media(url: &str) -> Result<(String, Vec<u8>), String> {
+static MEDIA_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+
+fn media_client() -> Result<&'static reqwest::Client, String> {
+    MEDIA_CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .user_agent(
+                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+                )
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+async fn fetch_media(url: &str) -> Result<(String, String, Vec<u8>), String> {
     let host = url::Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(str::to_string))
         .unwrap_or_default();
     let referer = referer_for(&host);
-    let client = reqwest::Client::builder()
-        .user_agent(
-            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
-        )
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
+    let resp = media_client()?
         .get(url)
         .header("Referer", referer)
         .send()
         .await
         .map_err(|e| e.to_string())?;
     let status = resp.status();
+    let final_url = resp.url().to_string();
     let content_type = resp
         .headers()
         .get("content-type")
@@ -98,22 +148,24 @@ async fn fetch_media(url: &str) -> Result<(String, Vec<u8>), String> {
     if !status.is_success() {
         return Err(format!("CDN 返回 {}", status.as_u16()));
     }
-    Ok((content_type, bytes.to_vec()))
+    Ok((content_type, final_url, bytes.to_vec()))
 }
 
-async fn process(real: String) -> Result<(String, Vec<u8>), String> {
+pub(crate) async fn process(real: String) -> Result<(String, Vec<u8>), String> {
     match fetch_media(&real).await {
-        Ok((ct, bytes)) => {
+        Ok((ct, final_url, bytes)) => {
             let head = &bytes[..bytes.len().min(7)];
-            let is_playlist = ct.contains("mpegurl")
-                || ct.contains("m3u8")
-                || real.ends_with(".m3u8")
-                || (ct.is_empty() && head == b"#EXTM3U");
+            let is_playlist = ct.to_ascii_lowercase().contains("mpegurl")
+                || ct.to_ascii_lowercase().contains("m3u8")
+                || url::Url::parse(&final_url)
+                    .ok()
+                    .is_some_and(|parsed| parsed.path().ends_with(".m3u8"))
+                || head == b"#EXTM3U";
             if is_playlist {
                 if let Ok(text) = String::from_utf8(bytes.clone()) {
                     return Ok((
                         "application/vnd.apple.mpegurl".to_string(),
-                        rewrite_playlist(&text, &real).into_bytes(),
+                        rewrite_playlist(&text, &final_url).into_bytes(),
                     ));
                 }
             }
@@ -191,6 +243,26 @@ mod tests {
         let b64 = line.trim_start_matches("stream://hls/");
         let real = decode(b64).expect("可解码");
         assert_eq!(real, "https://surrit.com/abc/1280x720/video.m3u8");
+    }
+
+    #[test]
+    fn rewrites_key_map_and_segment_uris() {
+        let playlist = concat!(
+            "#EXTM3U\n",
+            "#EXT-X-KEY:METHOD=AES-128,URI=\"keys/key.bin\"\n",
+            "#EXT-X-MAP:URI='init.mp4'\n",
+            "segment-001.ts\n",
+        );
+        let out = rewrite_playlist(playlist, "https://cdn.example/path/master.m3u8");
+        assert!(out.contains(&format!(
+            "URI=\"{}\"",
+            proxy_url("https://cdn.example/path/keys/key.bin")
+        )));
+        assert!(out.contains(&format!(
+            "URI='{}'",
+            proxy_url("https://cdn.example/path/init.mp4")
+        )));
+        assert!(out.contains(&proxy_url("https://cdn.example/path/segment-001.ts")));
     }
 
     #[test]

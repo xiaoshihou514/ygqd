@@ -118,7 +118,7 @@ onUnmounted(() => {
           @click="router.push(`/videos/${card.code}`)"
         >
           <div class="video-thumb-wrap">
-            <ProxyImage :src="card.thumbnail" source="niacg" class="video-thumb" loading="lazy" />
+            <ProxyImage :src="card.thumbnail" source="video" class="video-thumb" loading="lazy" />
             <span v-if="card.views" class="video-views">▶ {{ card.views }}</span>
           </div>
           <div class="video-card-body">

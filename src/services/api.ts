@@ -9,6 +9,7 @@ export const searchComics = (source: SourceId, params: SearchParams, page = 0, c
 export const fetchComicDetail = (source: SourceId, categoryId: number, id: string) => invoke<ComicDetail>('fetch_comic', { source, categoryId, id })
 export const fetchComicImages = (source: SourceId, categoryId: number, id: string, epOrder = 1, page = 0) => invoke<ComicImagesResult>('fetch_comic_images', { source, categoryId, id, epOrder, page })
 export const fetchImage = (url: string, source: SourceId = 'niacg') => invoke<ArrayBuffer>('fetch_image', { url, source })
+export const fetchVideoImage = (url: string) => invoke<ArrayBuffer>('fetch_video_image', { url })
 export const bikaLogin = (email: string, password: string) => invoke<BikaAccountStatus>('bika_login', { email, password })
 export const bikaLogout = () => invoke<void>('bika_logout')
 export const bikaStatus = () => invoke<BikaAccountStatus>('bika_status')

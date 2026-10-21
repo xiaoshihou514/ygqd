@@ -21,16 +21,28 @@ fn sel(v: &str) -> Selector {
     Selector::parse(v).expect("static selector")
 }
 
+fn show_hlib_gateway(app: &AppHandle) {
+    use tauri::Manager as _;
+    if let Some(window) = app.get_webview_window("gateway_hlib") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 async fn fetch_html(app: &AppHandle, url: &str) -> Result<String, String> {
     use tauri::Manager as _;
     let manager = app.state::<crate::GatewayManager>();
-    let html = gateway::gateway_fetch(app, &manager, LABEL, url).await?;
+    let html = match gateway::gateway_fetch(app, &manager, LABEL, url).await {
+        Ok(html) => html,
+        Err(error) if error.contains("HTTP 403") => {
+            show_hlib_gateway(app);
+            return Err("hlib 拒绝了请求:请在弹出窗口确认已登录并完成安全验证后重试".into());
+        }
+        Err(error) => return Err(error),
+    };
     if is_challenge(&html) {
         // 会话失效:把网关窗口弹回前台,用户当场重新验证/登录
-        if let Some(window) = app.get_webview_window("gateway_hlib") {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+        show_hlib_gateway(app);
         return Err("hlib 安全验证未通过:已在弹出窗口中打开 hlib,请完成验证/登录后重试".into());
     }
     Ok(html)
@@ -226,28 +238,41 @@ pub struct NovelHit {
     pub title: String,
 }
 
+/// 从站内任意形式的系列链接(/s/{id})提取标识,兼容绝对与相对地址。
+fn series_id_from_href(href: &str) -> Option<String> {
+    let base = url::Url::parse("https://hlib.cc/").ok()?;
+    let url = base.join(href).ok()?;
+    let host = url.host_str()?;
+    if host != "hlib.cc" && host != "www.hlib.cc" {
+        return None;
+    }
+    let mut segments = url.path_segments()?;
+    if segments.next()? != "s" {
+        return None;
+    }
+    let id = segments.next()?.to_string();
+    (!id.is_empty()).then_some(id)
+}
+
 /// 从任意 HTML 提取系列链接(/s/{id} -> 链接文本)。
 /// 不依赖具体页面结构,列表/搜索/首页通用。
 fn extract_series(html: &str) -> Vec<NovelHit> {
     let doc = Html::parse_document(html);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for a in doc.select(&sel("a[href^='/s/']")) {
-        let Some(id) = a
-            .value()
-            .attr("href")
-            .and_then(|h| h.strip_prefix("/s/"))
-            .map(|s| s.split(['?', '#']).next().unwrap_or("").to_string())
-        else {
+    for a in doc.select(&sel("a[href*='/s/']")) {
+        let Some(id) = a.value().attr("href").and_then(series_id_from_href) else {
             continue;
         };
-        if id.is_empty() || !seen.insert(id.clone()) {
+        if !seen.insert(id.clone()) {
             continue;
         }
         let title = normalize_text(&a.text().collect::<String>());
-        if title.is_empty() {
-            continue;
-        }
+        let title = if title.is_empty() {
+            a.value().attr("title").unwrap_or(&id).to_string()
+        } else {
+            title
+        };
         out.push(NovelHit { id, title });
     }
     out
@@ -266,13 +291,36 @@ const SEARCH_TEMPLATES: [&str; 4] = [
 ];
 
 pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHit>, String> {
+    use tauri::Manager as _;
     let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
-    // 命中过的端点直接用;否则依次探测全量形态
+    let manager = app.state::<crate::GatewayManager>();
+
+    // 先读取站点当前搜索表单并在同一 WebView 会话中提交,避免猜测已变更的路径和参数名。
+    let mut last_err = match gateway::gateway_search(app, &manager, LABEL, keyword).await {
+        Ok(html) if is_challenge(&html) => {
+            show_hlib_gateway(app);
+            return Err("hlib 安全验证未通过:已在弹出窗口中打开 hlib,请完成验证/登录后重试".into());
+        }
+        Ok(html) => {
+            let hits = extract_series(&html);
+            if !hits.is_empty() {
+                return Ok(hits);
+            }
+            "站点搜索表单未返回系列链接".into()
+        }
+        Err(e) => {
+            if e.contains("403") {
+                show_hlib_gateway(app);
+            }
+            e
+        }
+    };
+
+    // 兼容没有公开搜索表单或表单脚本提交的站点版本。
     let templates: Vec<&str> = match SEARCH_ENDPOINT.get() {
         Some(known) => vec![known.as_str()],
         None => SEARCH_TEMPLATES.to_vec(),
     };
-    let mut last_err = String::new();
     for tpl in &templates {
         let url = tpl.replace("{}", &encoded);
         match fetch_html(app, &url).await {
@@ -303,4 +351,24 @@ pub async fn latest_series(app: &AppHandle) -> Result<Vec<NovelHit>, String> {
         return Err("首页未解析到系列链接".into());
     }
     Ok(hits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_relative_and_absolute_series_links() {
+        let html = r#"
+            <a href="/s/relative-1">相对链接系列</a>
+            <a href="https://hlib.cc/s/absolute-2?from=search">绝对链接系列</a>
+            <a href="https://other.example/s/not-hlib">外站链接</a>
+            <a href="/s/relative-1">重复系列</a>
+        "#;
+        let hits = extract_series(html);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, "relative-1");
+        assert_eq!(hits[0].title, "相对链接系列");
+        assert_eq!(hits[1].id, "absolute-2");
+    }
 }
