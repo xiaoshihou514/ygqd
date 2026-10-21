@@ -19,7 +19,8 @@ fn sel(value: &str) -> Selector {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoCard {
-    /// 番号,如 "mida-829"(小写),同时作为详情 id
+    /// 番号,如 "mida-829"(小写),同时作为详情 id;
+    /// 中字变体的 code 为 "mida-829-chinese-subtitle"
     pub code: String,
     pub title: String,
     pub thumbnail: String,
@@ -27,6 +28,13 @@ pub struct VideoCard {
     pub views: String,
     /// 点赞数
     pub likes: String,
+    /// 是否中文字幕变体
+    pub chinese: bool,
+}
+
+/// 基础番号:去掉 -chinese-subtitle 后缀
+fn base_code(code: &str) -> &str {
+    code.strip_suffix("-chinese-subtitle").unwrap_or(code)
 }
 
 /// 视频列表响应
@@ -146,15 +154,30 @@ impl VideoApi {
                     )
                 })
                 .unwrap_or_default();
+            let code = link.0;
+            let chinese = code.ends_with("-chinese-subtitle");
             out.push(VideoCard {
-                code: link.0,
+                code,
                 title,
                 thumbnail,
                 views,
                 likes,
+                chinese,
             });
         }
-        out
+        // 同番号的普通版与中字版只留一张,优先中字
+        let mut dedup: Vec<VideoCard> = Vec::with_capacity(out.len());
+        for card in out {
+            let base = base_code(&card.code);
+            if let Some(existing) = dedup.iter_mut().find(|c| base_code(&c.code) == base) {
+                if card.chinese && !existing.chinese {
+                    *existing = card;
+                }
+            } else {
+                dedup.push(card);
+            }
+        }
+        dedup
     }
 
     /// 最新上市列表,page 从 1 开始

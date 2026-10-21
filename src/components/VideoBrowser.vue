@@ -122,7 +122,10 @@ onUnmounted(() => {
             <span v-if="card.views" class="video-views">▶ {{ card.views }}</span>
           </div>
           <div class="video-card-body">
-            <span class="video-code">{{ card.code.toUpperCase() }}</span>
+            <span class="video-code-row">
+              <span class="video-code">{{ card.code.replace('-chinese-subtitle', '').toUpperCase() }}</span>
+              <span v-if="card.chinese" class="video-cs-badge">中字</span>
+            </span>
             <span class="video-card-title">{{ card.title || card.code }}</span>
           </div>
         </button>
@@ -225,10 +228,25 @@ onUnmounted(() => {
   padding: 8px 10px;
 }
 
+.video-code-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .video-code {
   font-size: var(--font-size-caption);
   font-weight: 600;
   color: var(--color-primary);
+}
+
+.video-cs-badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #e8590c;
+  color: #fff;
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
 .video-card-title {

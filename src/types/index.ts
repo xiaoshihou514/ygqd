@@ -136,12 +136,14 @@ export interface BikaAccountStatus {
 
 /** 视频卡片(fs1/Jable 系) */
 export interface VideoCard {
-  /** 番号(小写),详情 id */
+  /** 番号(小写),详情 id;中字变体带 -chinese-subtitle 后缀 */
   code: string
   title: string
   thumbnail: string
   views: string
   likes: string
+  /** 中文字幕变体 */
+  chinese?: boolean
 }
 
 export interface VideoListResult {
