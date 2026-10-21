@@ -24,7 +24,16 @@ fn sel(v: &str) -> Selector {
 async fn fetch_html(app: &AppHandle, url: &str) -> Result<String, String> {
     use tauri::Manager as _;
     let manager = app.state::<crate::GatewayManager>();
-    gateway::gateway_fetch(app, &manager, LABEL, url).await
+    let html = gateway::gateway_fetch(app, &manager, LABEL, url).await?;
+    if is_challenge(&html) {
+        // 会话失效:把网关窗口弹回前台,用户当场重新验证/登录
+        if let Some(window) = app.get_webview_window("gateway_hlib") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        return Err("hlib 安全验证未通过:已在弹出窗口中打开 hlib,请完成验证/登录后重试".into());
+    }
+    Ok(html)
 }
 
 /// 从用户输入提取系列 id:"https://hlib.cc/s/abc?x" 或 "/s/abc" 或 "abc"
@@ -140,7 +149,7 @@ pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, Stri
         };
         let html = fetch_html(app, &url).await?;
         if is_challenge(&html) {
-            return Err("hlib 安全验证未通过:请先在弹出的网关窗口完成验证/登录".into());
+            return Err("hlib 安全验证未通过:请在网关窗口完成验证/登录后重试".into());
         }
         let (t, a, chapters) = parse_series_page(&html);
         if title.is_empty() {
@@ -179,7 +188,7 @@ pub async fn fetch_article_page(app: &AppHandle, id: &str, page: i64) -> Result<
     let url = format!("https://hlib.cc/n/{id}?p={page}");
     let html = fetch_html(app, &url).await?;
     if is_challenge(&html) {
-        return Err("hlib 安全验证未通过:请先在弹出的网关窗口完成验证/登录".into());
+        return Err("hlib 安全验证未通过:请在网关窗口完成验证/登录后重试".into());
     }
     let doc = Html::parse_document(&html);
     let content = doc
