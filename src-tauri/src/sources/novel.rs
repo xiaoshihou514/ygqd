@@ -208,3 +208,80 @@ pub async fn fetch_article_page(app: &AppHandle, id: &str, page: i64) -> Result<
         total_pages: tp,
     })
 }
+
+/// 搜索/发现命中的系列
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelHit {
+    pub id: String,
+    pub title: String,
+}
+
+/// 从任意 HTML 提取系列链接(/s/{id} -> 链接文本)。
+/// 不依赖具体页面结构,列表/搜索/首页通用。
+fn extract_series(html: &str) -> Vec<NovelHit> {
+    let doc = Html::parse_document(html);
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for a in doc.select(&sel("a[href^='/s/']")) {
+        let Some(id) = a
+            .value()
+            .attr("href")
+            .and_then(|h| h.strip_prefix("/s/"))
+            .map(|s| s.split(['?', '#']).next().unwrap_or("").to_string())
+        else {
+            continue;
+        };
+        if id.is_empty() || !seen.insert(id.clone()) {
+            continue;
+        }
+        let title = normalize_text(&a.text().collect::<String>());
+        if title.is_empty() {
+            continue;
+        }
+        out.push(NovelHit { id, title });
+    }
+    out
+}
+
+/// 站内搜索:搜索端点结构未知(CF 挡侦察),对常见形态自适应探测,
+/// 首个返回有效系列链接的即采用。挑战页返回引导错误。
+pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHit>, String> {
+    let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
+    let candidates = [
+        format!("https://hlib.cc/search?q={encoded}"),
+        format!("https://hlib.cc/search/{encoded}"),
+        format!("https://hlib.cc/search?keyword={encoded}"),
+        format!("https://hlib.cc/s?kw={encoded}"),
+    ];
+    let mut last_err = String::new();
+    for url in &candidates {
+        match fetch_html(app, url).await {
+            Ok(html) => {
+                if is_challenge(&html) {
+                    return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
+                }
+                let hits = extract_series(&html);
+                if !hits.is_empty() {
+                    return Ok(hits);
+                }
+                last_err = "搜索端点无结果".into();
+            }
+            Err(e) => last_err = e,
+        }
+    }
+    Err(format!("未能找到可用的搜索端点({last_err})"))
+}
+
+/// 发现:首页提取最新系列(不依赖具体列表结构)
+pub async fn latest_series(app: &AppHandle) -> Result<Vec<NovelHit>, String> {
+    let html = fetch_html(app, "https://hlib.cc/").await?;
+    if is_challenge(&html) {
+        return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
+    }
+    let hits = extract_series(&html);
+    if hits.is_empty() {
+        return Err("首页未解析到系列链接".into());
+    }
+    Ok(hits)
+}

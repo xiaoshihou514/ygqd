@@ -228,6 +228,21 @@ async fn novel_add(
     Ok(series)
 }
 
+/// 站内搜索系列(端点自适应;首次需网关完成验证/登录)
+#[tauri::command]
+async fn novel_search(
+    app: AppHandle,
+    keyword: String,
+) -> Result<Vec<sources::novel::NovelHit>, String> {
+    sources::novel::search_series(&app, &keyword).await
+}
+
+/// 发现:首页最新系列
+#[tauri::command]
+async fn novel_latest(app: AppHandle) -> Result<Vec<sources::novel::NovelHit>, String> {
+    sources::novel::latest_series(&app).await
+}
+
 #[tauri::command]
 fn novel_shelf(state: State<'_, AppState>) -> Result<Vec<NovelSeries>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -843,6 +858,8 @@ pub fn run() {
             gateway_set_visible,
             gateway_result,
             novel_add,
+            novel_search,
+            novel_latest,
             novel_shelf,
             novel_remove,
             novel_read,

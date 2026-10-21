@@ -176,6 +176,11 @@ export interface NovelSeries {
   addedAt: number
 }
 
+export interface NovelHit {
+  id: string
+  title: string
+}
+
 export interface NovelPage {
   title: string
   author: string
