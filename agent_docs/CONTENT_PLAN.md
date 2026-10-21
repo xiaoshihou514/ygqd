@@ -116,3 +116,19 @@ export const CAPABILITIES: Record<SourceId, ContentType[]> = {
 1. **小说源**：两个现有源都没有小说内容。接哪个站？（若是某个新站点，给我地址，我评估 HTML/API 可行性）
 2. **bika games 区的定位**：它是"视频 + App 下载"混合区。只搬视频部分，还是整个 games 区都进视频板块（含下载链接）？
 3. **niacg 视频**：需要一次应用内探测（手机上打开视频板块确认 URL 形态），或者你直接告诉我板块入口路径
+
+
+## 九、实施完成状态(截至 714bc9b)
+
+小说(hlib.cc)与视频(missav 优先/fs1 回退)已全部实现并推送,流水线双绿。
+
+| 模块 | 实现 | 验证 |
+|---|---|---|
+| 视频列表/搜索 | fs1 HTML 解析(标题 h6/中字去重) | 联调实测 |
+| 视频播放 | stream:// 流代理(CDN Referer/TLS 双拦的解法),hls.js 统一 | 单测+联调+wry 源码确认 secure scheme |
+| missav 优先 | 网关 eval packer 解码(中字变体优先),失败回退 fs1 | headless chromium 端到端 |
+| 小说网关 | WebView 常驻会话(关闭改隐藏),挑战自动弹回 | 编译+单测 |
+| 小说搜索/发现 | 端点自适应探测 + 首页通用提取 | 编译(待真实会话验证) |
+| 书架/阅读器 | SQLite 存储+进度记忆,章节抽屉/翻页/续读 | 编译+单测 |
+
+待办:用户端到端实测确认(桌面端/Android nightly)。
