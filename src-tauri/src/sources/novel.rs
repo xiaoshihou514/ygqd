@@ -255,23 +255,33 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
 
 /// 站内搜索:搜索端点结构未知(CF 挡侦察),对常见形态自适应探测,
 /// 首个返回有效系列链接的即采用。挑战页返回引导错误。
+/// 探测成功的搜索端点模板({} 为关键词占位),进程内记忆避免逐次重试
+static SEARCH_ENDPOINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+const SEARCH_TEMPLATES: [&str; 4] = [
+    "https://hlib.cc/search?q={}",
+    "https://hlib.cc/search/{}",
+    "https://hlib.cc/search?keyword={}",
+    "https://hlib.cc/s?kw={}",
+];
+
 pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHit>, String> {
     let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
-    let candidates = [
-        format!("https://hlib.cc/search?q={encoded}"),
-        format!("https://hlib.cc/search/{encoded}"),
-        format!("https://hlib.cc/search?keyword={encoded}"),
-        format!("https://hlib.cc/s?kw={encoded}"),
-    ];
+    // 命中过的端点直接用;否则依次探测全量形态
+    let templates: Vec<&str> = match SEARCH_ENDPOINT.get() {
+        Some(known) => vec![known.as_str()],
+        None => SEARCH_TEMPLATES.to_vec(),
+    };
     let mut last_err = String::new();
-    for url in &candidates {
-        match fetch_html(app, url).await {
+    for tpl in &templates {
+        let url = tpl.replace("{}", &encoded);
+        match fetch_html(app, &url).await {
             Ok(html) => {
-                if is_challenge(&html) {
-                    return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
-                }
                 let hits = extract_series(&html);
                 if !hits.is_empty() {
+                    if templates.len() > 1 {
+                        let _ = SEARCH_ENDPOINT.set(tpl.to_string());
+                    }
                     return Ok(hits);
                 }
                 last_err = "搜索端点无结果".into();
