@@ -186,6 +186,17 @@ async fn gateway_fetch(
     gateway::gateway_fetch(&app, &state.gateway, &label, &url).await
 }
 
+/// 打开网关窗口(不存在则创建):供用户登录站点/完成人机验证,
+/// 或在网关内直接浏览站点内容
+#[tauri::command]
+fn gateway_open(app: AppHandle, label: String) -> Result<(), String> {
+    gateway::ensure_gateway(&app, &label)?;
+    let window = app
+        .get_webview_window(&format!("gateway_{label}"))
+        .ok_or("网关窗口不存在")?;
+    window.show().map_err(|e| e.to_string())
+}
+
 /// 显示/隐藏网关窗口(挑战已过后隐藏)
 #[tauri::command]
 fn gateway_set_visible(app: AppHandle, label: String, visible: bool) -> Result<(), String> {
@@ -828,6 +839,7 @@ pub fn run() {
             search_videos,
             fetch_video_detail,
             gateway_fetch,
+            gateway_open,
             gateway_set_visible,
             gateway_result,
             novel_add,

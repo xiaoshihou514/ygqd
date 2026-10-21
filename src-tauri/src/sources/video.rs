@@ -5,7 +5,7 @@
 
 use crate::models::*;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
-use scraper::{ElementRef, Html, Selector};
+use scraper::{Html, Selector};
 use std::sync::OnceLock;
 use tauri::Manager as _;
 
@@ -114,13 +114,11 @@ impl VideoApi {
             if !seen.insert(link.0.clone()) {
                 continue;
             }
+            // Jable 卡片标题在 h6(或 .title)内,文本含"番号 完整标题"
             let title = card
-                .select(link_sel)
-                .find_map(|a| {
-                    let t = ElementRef::wrap(a.parent()?)?; // h6 容器
-                    let _ = t;
-                    a.value().attr("title").map(str::to_string)
-                })
+                .select(&sel("h6, .title"))
+                .next()
+                .map(|h| h.text().collect::<String>().trim().to_string())
                 .unwrap_or_default();
             let thumbnail = card
                 .select(img_sel)
@@ -191,10 +189,24 @@ impl VideoApi {
     }
 
     /// fs1 侧详情:元数据 + fs1 的 m3u8。code 为小写番号。
+    /// 优先尝试中文字幕变体(/videos/{code}-chinese-subtitle/),不存在回退原路径
     async fn detail_fs1(&self, code: &str) -> Result<VideoDetail, String> {
-        let html = self
-            .get(&format!("/videos/{}/", code.to_lowercase()))
-            .await?;
+        let code = code.to_lowercase();
+        let plain = self.detail_fs1_path(&format!("{code}/"), &code).await;
+        match self
+            .detail_fs1_path(&format!("{code}-chinese-subtitle/"), &code)
+            .await
+        {
+            Ok(mut cs) => {
+                cs.chinese = true;
+                Ok(cs)
+            }
+            Err(_) => plain,
+        }
+    }
+
+    async fn detail_fs1_path(&self, path: &str, code: &str) -> Result<VideoDetail, String> {
+        let html = self.get(&format!("/videos/{path}")).await?;
         let doc = Html::parse_document(&html);
         let title = doc
             .select(&sel("h4"))
@@ -222,39 +234,58 @@ impl VideoApi {
             })
             .next();
         Ok(VideoDetail {
-            code: code.to_lowercase(),
+            code: code.to_string(),
             title,
             tags,
             m3u8: m3u8.ok_or_else(|| "未在详情页找到 m3u8".to_string())?,
             provider: "fs1".into(),
+            chinese: false,
         })
     }
 
     /// 详情(双源):元数据走 fs1(服务端渲染,稳定);播放地址优先
     /// missav(经网关解码 eval packer,番号直达),失败回退 fs1。
+    /// 两端均优先 {code}-chinese-subtitle 中字变体。
     /// missav 网关不可用时静默降级,不影响可看性。
     pub async fn detail(&self, app: &tauri::AppHandle, code: &str) -> Result<VideoDetail, String> {
         let mut detail = self.detail_fs1(code).await;
-        if detail.is_err() && app.try_state::<crate::GatewayManager>().is_none() {
-            return detail;
-        }
         let manager = app.state::<crate::GatewayManager>();
-        let missav_url = format!("https://missav.ai/videos/{}", code.to_lowercase());
-        if let Ok(m3u8) =
-            crate::gateway::gateway_fetch_extract_m3u8(app, &manager, "missav", &missav_url).await
-        {
+        let lower = code.to_lowercase();
+        // missav 优先中字变体,404/无流则回退普通番号页
+        let missav_cs = crate::gateway::gateway_fetch_extract_m3u8(
+            app,
+            &manager,
+            "missav",
+            &format!("https://missav.ai/videos/{lower}-chinese-subtitle"),
+        )
+        .await;
+        let missav_plain = if missav_cs.is_ok() {
+            missav_cs.clone()
+        } else {
+            crate::gateway::gateway_fetch_extract_m3u8(
+                app,
+                &manager,
+                "missav",
+                &format!("https://missav.ai/videos/{lower}"),
+            )
+            .await
+        };
+        let chinese = missav_cs.is_ok();
+        if let Ok(m3u8) = missav_plain {
             if !m3u8.is_empty() {
                 if let Ok(d) = detail.as_mut() {
                     d.m3u8 = m3u8;
                     d.provider = "missav".into();
+                    d.chinese = d.chinese || chinese;
                 } else {
                     // fs1 元数据也失败:仅番号的纯播放模式
                     detail = Ok(VideoDetail {
-                        code: code.to_lowercase(),
+                        code: lower,
                         title: code.to_uppercase(),
                         tags: vec![],
                         m3u8,
                         provider: "missav".into(),
+                        chinese,
                     });
                 }
             }
@@ -273,6 +304,8 @@ pub struct VideoDetail {
     pub m3u8: String,
     /// 播放来源:"missav"(优先)或 "fs1"(回退)
     pub provider: String,
+    /// 是否中文字幕版本
+    pub chinese: bool,
 }
 
 #[cfg(test)]
@@ -296,11 +329,15 @@ mod tests {
                 assert!(!list.items.is_empty(), "list should not be empty");
                 let first = list.items[0].clone();
                 println!(
-                    "first: code={} views={} likes={}",
-                    first.code, first.views, first.likes
+                    "first: code={} title={} views={} likes={}",
+                    first.code,
+                    first.title.chars().take(18).collect::<String>(),
+                    first.views,
+                    first.likes
                 );
                 assert!(first.code.contains('-'), "番号格式: {}", first.code);
                 assert!(!first.thumbnail.is_empty(), "封面不应为空");
+                assert!(!first.title.is_empty(), "卡片标题不应为空");
 
                 let search = api.search("ssis", 1).await.expect("search");
                 println!("search[ssis]: {} cards", search.items.len());

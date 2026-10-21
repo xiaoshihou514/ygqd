@@ -101,6 +101,7 @@ onBeforeUnmount(() => {
     <div v-if="detail" class="meta-section">
       <div class="provider-row">
         <span class="provider-badge" :class="detail.provider">{{ detail.provider === 'missav' ? 'missav 优先线路' : 'fs1 线路' }}</span>
+        <span v-if="detail.chinese" class="provider-badge chinese">中文字幕</span>
       </div>
       <h1 class="video-title">{{ detail.title || detail.code.toUpperCase() }}</h1>
       <div class="video-tags">
@@ -175,6 +176,11 @@ onBeforeUnmount(() => {
   font-size: 11px;
   background: var(--color-divider-soft);
   color: var(--color-text-secondary);
+}
+
+.provider-badge.chinese {
+  background: #e8590c;
+  color: #fff;
 }
 
 .provider-badge.missav {

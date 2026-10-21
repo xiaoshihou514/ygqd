@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { novelAdd, novelRemove, novelShelf, novelProgress } from '@/services/api'
+import { gatewayOpen, novelAdd, novelRemove, novelShelf, novelProgress } from '@/services/api'
 import type { NovelSeries } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -28,6 +28,12 @@ async function refresh() {
   } finally {
     loading.value = false
   }
+}
+
+async function openHlib() {
+  try {
+    await gatewayOpen('hlib')
+  } catch { /* 网关创建失败忽略,用户可重试 */ }
 }
 
 async function handleAdd() {
@@ -66,7 +72,10 @@ onMounted(refresh)
 <template>
   <div class="novel-page">
     <div class="container">
-      <h2 class="page-title">小说书架</h2>
+      <div class="page-heading">
+        <h2 class="page-title">小说书架</h2>
+        <button class="hlib-btn" @click="openHlib">登录 / 浏览 hlib</button>
+      </div>
 
       <form class="add-bar" @submit.prevent="handleAdd">
         <input
@@ -87,8 +96,10 @@ onMounted(refresh)
       <EmptyState
         v-else-if="!shelf.length"
         title="书架还是空的"
-        message="粘贴 hlib.cc 的系列链接加入书架;首次使用请在弹出的窗口中登录并完成安全验证"
-      />
+        message="点右上「登录 / 浏览 hlib」,在弹出的窗口中登录并浏览;找到喜欢的系列后复制地址栏中的链接,回到这里粘贴添加"
+      >
+        <button class="hlib-btn" @click="openHlib">打开 hlib</button>
+      </EmptyState>
       <div v-else class="shelf-list">
         <div
           v-for="s in shelf"
@@ -126,6 +137,24 @@ onMounted(refresh)
   font-weight: var(--font-weight-bold);
   color: var(--color-text-primary);
   margin-bottom: var(--spacing-md);
+}
+
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.hlib-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
 }
 
 .add-bar {

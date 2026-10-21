@@ -156,6 +156,8 @@ export interface VideoDetail {
   m3u8: string
   /** 播放来源:missav(优先)或 fs1(回退) */
   provider?: string
+  /** 中文字幕版本 */
+  chinese?: boolean
 }
 
 export interface NovelChapter {

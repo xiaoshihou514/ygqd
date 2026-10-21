@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [vue(), vueDevTools()],
   server: {
     watch: {
-      ignored: ['**/src-tauri/**'],
+      ignored: ['**/src-tauri/**', '**/.scratch/**'],
     },
   },
   resolve: {
