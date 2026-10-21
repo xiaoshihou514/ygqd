@@ -42,16 +42,15 @@ async function setupPlayer(m3u8: string) {
     check()
   })
   const el = videoEl!
-  // Android WebView 原生支持 HLS,直接设 src;桌面 Chromium 用 hls.js
-  const canNative = el.canPlayType('application/vnd.apple.mpegurl') !== ''
-  if (canNative) {
-    el.src = m3u8
-  } else if (Hls.isSupported()) {
+  // 统一走 hls.js(MSE):其 fetch/XHR 必经 webview 拦截,从而走
+  // stream:// 代理;原生 <video src> 走系统播放器会绕过代理直连
+  // CDN(Referer 校验 403),不可用
+  if (Hls.isSupported()) {
     hls = new Hls({ maxBufferLength: 30 })
     hls.loadSource(m3u8)
     hls.attachMedia(el)
   } else {
-    throw new Error('当前环境不支持 HLS 播放')
+    throw new Error('当前环境不支持 HLS 播放(需 MSE)')
   }
   el.addEventListener('playing', () => {
     playing.value = true
