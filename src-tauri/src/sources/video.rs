@@ -422,14 +422,13 @@ mod tests {
                     .path()
                     .ends_with(".m3u8"));
 
-                // 验证上游清单可读,且代理能正确改写相对地址。
-                let (content_type, proxied) = crate::video_proxy::process(detail.m3u8.clone())
+                // 验证上游清单可读,且 hls_fetch 能正确改写相对地址。
+                let (is_playlist, playlist, _bytes) = crate::video_proxy::fetch_hls(&detail.m3u8)
                     .await
-                    .expect("proxy m3u8");
-                assert_eq!(content_type, "application/vnd.apple.mpegurl");
-                let playlist = String::from_utf8(proxied).expect("playlist utf-8");
+                    .expect("hls_fetch");
+                assert!(is_playlist);
                 assert!(playlist.starts_with("#EXTM3U"));
-                assert!(playlist.contains("stream://hls/"));
+                assert!(!playlist.contains("\n1280x"), "相对地址应解析为绝对");
             });
     }
 }
