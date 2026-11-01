@@ -314,7 +314,19 @@ async fn search_videos(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = state.video.search(&app, &keyword, page).await?;
+    let out = match state.video.search(&app, &keyword, page).await {
+        Ok(v) => {
+            gateway::diag(
+                &app,
+                &format!("search ok kw={keyword} items={}", v.items.len()),
+            );
+            v
+        }
+        Err(e) => {
+            gateway::diag(&app, &format!("search FAIL kw={keyword} err={e}"));
+            return Err(e);
+        }
+    };
     state.put(key, &out);
     Ok(out)
 }

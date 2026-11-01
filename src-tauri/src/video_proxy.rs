@@ -94,8 +94,20 @@ pub async fn fetch_hls(url: &str) -> Result<(bool, String, Vec<u8>), String> {
 /// hls.js 自定义 loader 的后端:真实地址 -> (是播放列表, 文本或二进制)。
 /// 播放列表返回重写后文本;分片返回原始字节。
 #[tauri::command]
-pub async fn hls_fetch(url: String) -> Result<HlsPayload, String> {
-    let (is_playlist, text, bytes) = fetch_hls(&url).await?;
+pub async fn hls_fetch(app: tauri::AppHandle, url: String) -> Result<HlsPayload, String> {
+    let result = fetch_hls(&url).await;
+    match &result {
+        Ok((is_playlist, _, _)) => {
+            crate::gateway::diag(
+                &app,
+                &format!("hls_fetch ok url={url} playlist={is_playlist}"),
+            );
+        }
+        Err(e) => {
+            crate::gateway::diag(&app, &format!("hls_fetch FAIL url={url} err={e}"));
+        }
+    }
+    let (is_playlist, text, bytes) = result?;
     if is_playlist {
         Ok(HlsPayload {
             playlist: Some(text),

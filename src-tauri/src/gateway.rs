@@ -13,6 +13,28 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::oneshot;
 
+/// 诊断日志:追加到应用数据目录 diag.log(release 构建无 logcat 输出,
+/// 此文件是唯一可靠的问题定位通道;adb pull 后读取)
+pub fn diag(app: &AppHandle, msg: &str) {
+    use std::io::Write;
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("diag.log"))
+    else {
+        return;
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let _ = writeln!(f, "{ts} {msg}");
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct GatewayReply {
     pub id: String,
