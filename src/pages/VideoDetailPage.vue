@@ -26,7 +26,9 @@ async function load() {
   detail.value = null
   try {
     const code = String(route.params.code || '').toLowerCase()
+    console.log('[video] detail', code)
     detail.value = await fetchVideoDetail(code)
+    console.log('[video] m3u8 provider=', detail.value.provider, 'url=', detail.value.m3u8.slice(0, 60))
     void recordVideoWatched(code)
     await setupPlayer(detail.value.m3u8)
   } catch (e) {
