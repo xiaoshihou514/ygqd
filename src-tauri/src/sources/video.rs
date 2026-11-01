@@ -3,7 +3,9 @@
 //! missav.ai 按 TLS 指纹拦截 reqwest(403),播放地址仅在 fs1 失效时
 //! 经 WebView 网关兜底,常规播放使用 fs1 的 m3u8。
 
+use crate::gateway;
 use crate::models::*;
+use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use scraper::{Html, Selector};
 use std::{sync::OnceLock, time::Duration};
@@ -211,8 +213,66 @@ impl VideoApi {
         })
     }
 
-    /// 按关键词(番号/标题)搜索
-    pub async fn search(&self, keyword: &str, page: i32) -> Result<VideoListResult, String> {
+    /// 按关键词搜索:默认双源合并——fs1 直连(番号/日文词,带完整元数据)
+    /// + missav 网关(收录更全,支持中文词);fs1 在前,按基础番号去重。
+    /// missav 网关未就绪时静默降级为单源。
+    pub async fn search(
+        &self,
+        app: &tauri::AppHandle,
+        keyword: &str,
+        page: i32,
+    ) -> Result<VideoListResult, String> {
+        use tauri::Manager as _;
+        let fs1_fut = self.search_fs1(keyword, page);
+        let missav_fut = async {
+            let manager = app.state::<crate::GatewayManager>();
+            let encoded =
+                url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
+            let html = gateway::gateway_fetch(
+                app,
+                &manager,
+                "missav",
+                &format!("https://missav.ai/dm539/search/{encoded}"),
+            )
+            .await?;
+            Ok::<_, String>(Self::parse_missav_search(&html))
+        };
+        let fs1_res = fs1_fut.await;
+        let missav_res = missav_fut.await.unwrap_or_default();
+
+        let mut fs1 = match fs1_res {
+            Ok(v) => v.items,
+            Err(e) => {
+                if missav_res.is_empty() {
+                    return Err(e);
+                }
+                Vec::new()
+            }
+        };
+        // missav 结果追加,同基础番号以 fs1 为准(fs1 有完整元数据)
+        fn base(code: &str) -> &str {
+            code.strip_suffix("-chinese-subtitle").unwrap_or(code)
+        }
+        for card in missav_res {
+            if fs1.iter().any(|c| base(&c.code) == base(&card.code)) {
+                continue;
+            }
+            fs1.push(card);
+        }
+        let has_next = fs1.len() >= 20;
+        Ok(VideoListResult {
+            pagination: PaginationInfo {
+                current: page - 1,
+                total: 0,
+                has_next,
+                has_prev: page > 1,
+            },
+            items: fs1,
+        })
+    }
+
+    /// fs1 侧搜索(番号/日文词;中文词在 fs1 索引中常无结果)
+    async fn search_fs1(&self, keyword: &str, page: i32) -> Result<VideoListResult, String> {
         let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
         let html = self.get(&format!("/search/{encoded}/{page}/")).await?;
         let items = Self::parse_cards(&html);
@@ -225,6 +285,73 @@ impl VideoApi {
             },
             items,
         })
+    }
+
+    /// 解析 missav 搜索结果页:href={code} 锚点 + fourhoi 规律封面 +
+    /// 标题为锚点后窗口内以「番号大写 」开头的文本节点(卡片网格中
+    /// 标题集中在图块之后,需按番号前缀归属)
+    fn parse_missav_search(html: &str) -> Vec<VideoCard> {
+        let re_href =
+            Regex::new(r#"href="https://missav\.ai/([a-z0-9-]+)""#).expect("static regex");
+        let is_video_code = |code: &str| {
+            Regex::new(r"^([a-z]{2,6}-\d{2,5}(-chinese-subtitle)?|fc2-ppv-\d+)$")
+                .unwrap()
+                .is_match(code)
+        };
+        let anchors: Vec<(usize, String)> = re_href
+            .captures_iter(html)
+            .filter_map(|c| {
+                let code = c.get(1)?.as_str().to_string();
+                if !is_video_code(&code) {
+                    return None;
+                }
+                Some((c.get(0)?.start(), code))
+            })
+            .collect();
+
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for (_index, (pos, code)) in anchors.iter().enumerate() {
+            if !seen.insert(code.clone()) {
+                continue;
+            }
+            // 标题窗口:锚点后 9000 字符内找「番号大写 」开头的文本节点
+            let upper = code.to_uppercase();
+            let re_t = Regex::new(&format!(
+                r#">\s*{}\s([^<>]{{5,200}})\s*<"#,
+                regex::escape(&upper)
+            ))
+            .expect("static regex");
+            let window = &html[*pos..(*pos + 9000).min(html.len())];
+            let title = re_t
+                .captures(window)
+                .map(|c| {
+                    c.get(1)
+                        .map(|t| {
+                            t.as_str()
+                                .split(" - ")
+                                .next()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string()
+                        })
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            out.push(VideoCard {
+                code: code.clone(),
+                title: if title.is_empty() {
+                    code.to_uppercase()
+                } else {
+                    title
+                },
+                thumbnail: format!("https://fourhoi.com/{code}/cover-t.jpg"),
+                views: String::new(),
+                likes: String::new(),
+                chinese: code.ends_with("-chinese-subtitle"),
+            });
+        }
+        out
     }
 
     /// fs1 侧详情:元数据 + fs1 的 m3u8。code 为小写番号。
@@ -353,6 +480,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_missav_search_cards() {
+        // 最小卡片形态 fixture(不含敏感标题正文,占位文本代替)
+        let html = r#"
+          <a href="https://missav.ai/abc-123" alt="abc-123" >
+            <img data-src="https://fourhoi.com/abc-123/cover-t.jpg">
+          </a>
+          <p class="x"> ABC-123 示例标题文本占位 - 演员名 </p>
+          <a href="https://missav.ai/dm539/new">分页</a>
+          <a href="https://missav.ai/fc2-ppv-5000463" alt="fc2">
+        "#;
+        let cards = super::VideoApi::parse_missav_search(html);
+        assert_eq!(cards.len(), 2, "应解析出两个视频卡: {cards:?}");
+        assert_eq!(cards[0].code, "abc-123");
+        assert_eq!(
+            cards[0].title, "示例标题文本占位",
+            "应取番号后的标题并去演员后缀"
+        );
+        assert!(cards[0].thumbnail.ends_with("cover-t.jpg"));
+        assert_eq!(cards[1].code, "fc2-ppv-5000463");
+    }
+
+    #[test]
     fn normalizes_video_cover_urls() {
         assert_eq!(
             absolute_url("//cdn.example/cover.webp"),
@@ -404,8 +553,8 @@ mod tests {
                     .expect("cover status");
                 println!("cover fetch: {}", cover.status());
 
-                let search = api.search("ssis", 1).await.expect("search");
-                println!("search[ssis]: {} cards", search.items.len());
+                let search = api.search_fs1("ssis", 1).await.expect("search");
+                println!("search_fs1[ssis]: {} cards", search.items.len());
                 assert!(!search.items.is_empty());
                 assert!(search.items.iter().all(|c| c.code.starts_with("ssis-")));
 

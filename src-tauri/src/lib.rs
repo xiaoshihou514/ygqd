@@ -305,15 +305,16 @@ async fn fetch_video_list(
 /// 视频搜索(番号/标题),page 从 1 开始
 #[tauri::command]
 async fn search_videos(
+    app: AppHandle,
+    state: State<'_, AppState>,
     keyword: String,
     page: i32,
-    state: State<'_, AppState>,
 ) -> Result<VideoListResult, String> {
     let key = format!("video:search-{keyword}-{page}");
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = state.video.search(&keyword, page).await?;
+    let out = state.video.search(&app, &keyword, page).await?;
     state.put(key, &out);
     Ok(out)
 }
