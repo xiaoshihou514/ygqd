@@ -5,6 +5,8 @@ import ComicCard from './ComicCard.vue'
 defineProps<{
   items: ComicItem[]
   loading?: boolean
+  /** 已读集合(source:id),命中的卡片显示角标 */
+  viewedIds?: Set<string>
 }>()
 </script>
 
@@ -24,6 +26,7 @@ defineProps<{
         v-for="item in items"
         :key="item.id + item.categoryId"
         :item="item"
+        :viewed="viewedIds?.has(`${item.source}:${item.id}`) ?? false"
       />
     </template>
   </div>

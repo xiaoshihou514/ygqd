@@ -10,6 +10,7 @@ defineOptions({ name: 'ComicCard' })
 
 const props = defineProps<{
   item: ComicItem
+  viewed?: boolean
 }>()
 
 const router = useRouter()
@@ -361,5 +362,16 @@ onBeforeUnmount(() => {
   gap: var(--spacing-xxs);
   font-size: var(--font-size-fine-print);
   color: var(--color-text-secondary);
+}
+.viewed-badge {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  z-index: 1;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #9be9a8;
+  font-size: 11px;
 }
 </style>

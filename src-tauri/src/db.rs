@@ -18,7 +18,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
       CREATE TABLE IF NOT EXISTS bika_address(id INTEGER PRIMARY KEY CHECK(id=1), address TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS favorites(source TEXT NOT NULL, comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(source, comic_id));
       CREATE TABLE IF NOT EXISTS novel_series(id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL, chapters TEXT NOT NULL, added_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS novel_progress(series_id TEXT NOT NULL, chapter_order INTEGER NOT NULL, page INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(series_id));").map_err(|e| e.to_string())?;
+      CREATE TABLE IF NOT EXISTS novel_progress(series_id TEXT NOT NULL, chapter_order INTEGER NOT NULL, page INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(series_id));
+      CREATE TABLE IF NOT EXISTS video_watched(code TEXT PRIMARY KEY, watched_at INTEGER NOT NULL);").map_err(|e| e.to_string())?;
     migrate_view_history(&db)?;
     Ok(db)
 }
@@ -321,4 +322,54 @@ pub fn novel_set_progress(
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 视频观看记录
+pub fn record_video_watched(db: &Connection, code: &str) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO video_watched VALUES(?1,?2) ON CONFLICT(code) DO UPDATE SET watched_at=?2",
+        params![code, now()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 批量查询哪些视频看过(返回入集中已看的 code)
+pub fn video_watched_ids(db: &Connection, codes: &[String]) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for code in codes {
+        let count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM video_watched WHERE code=?1",
+                params![code],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if count > 0 {
+            out.push(code.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// 批量查询漫画是否看过(view_history,返回入集中已看的 id)
+pub fn comic_viewed_ids(
+    db: &Connection,
+    source: crate::models::Source,
+    ids: &[String],
+) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for id in ids {
+        let count: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM view_history WHERE source=?1 AND comic_id=?2",
+                params![source, id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if count > 0 {
+            out.push(id.clone());
+        }
+    }
+    Ok(out)
 }

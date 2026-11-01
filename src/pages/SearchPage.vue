@@ -7,6 +7,7 @@ import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
+import { useComicViewedIds } from '@/composables/useComicViewedIds'
 import type { SourceId } from '@/config/sources'
 import { parseSearchScope } from '@/config/sources'
 import SearchForm from '@/components/SearchForm.vue'
@@ -24,6 +25,7 @@ const route = useRoute()
 const router = useRouter()
 
 const items = ref<ComicItem[]>([])
+const viewedIds = useComicViewedIds(items)
 const loading = ref(false)
 const loadingMore = ref(false)
 const error = ref('')
@@ -430,7 +432,7 @@ function goToSplit() {
             </button>
           </div>
 
-          <ComicGrid v-if="visibleItems.length > 0" :items="visibleItems" />
+          <ComicGrid v-if="visibleItems.length > 0" :items="visibleItems" :viewed-ids="viewedIds" />
 
           <div v-if="hasMoreLocal || hasNextPage" class="scroll-sentinel" />
 

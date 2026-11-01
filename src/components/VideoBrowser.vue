@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchVideoList, searchVideos } from '@/services/api'
+import { fetchVideoList, searchVideos, fetchVideoWatchedIds } from '@/services/api'
 import type { VideoCard } from '@/types'
 import ProxyImage from '@/components/ProxyImage.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -16,6 +16,7 @@ const keyword = ref('')
 const activeKeyword = ref('')
 const page = ref(1)
 const hasNext = ref(true)
+const watched = ref<Set<string>>(new Set())
 let sentinel: HTMLElement | null = null
 let observer: IntersectionObserver | null = null
 
@@ -39,6 +40,11 @@ async function load(reset: boolean) {
       items.value.push(...result.items.filter((v) => !seen.has(v.code)))
     }
     hasNext.value = result.pagination.hasNext
+    // 批量查询已看,卡片标灰角标
+    try {
+      const ids = await fetchVideoWatchedIds(items.value.map((v) => v.code))
+      watched.value = new Set(ids)
+    } catch { /* 查询失败不影响列表 */ }
     page.value += 1
   } catch (e) {
     error.value = (e as Error).message || '加载失败'
@@ -120,6 +126,7 @@ onUnmounted(() => {
           <div class="video-thumb-wrap">
             <ProxyImage :src="card.thumbnail" source="video" class="video-thumb" loading="lazy" />
             <span v-if="card.views" class="video-views">▶ {{ card.views }}</span>
+            <span v-if="watched.has(card.code)" class="video-watched">已看</span>
           </div>
           <div class="video-card-body">
             <span class="video-code-row">
@@ -208,6 +215,17 @@ onUnmounted(() => {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.video-watched {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #9be9a8;
+  font-size: 11px;
 }
 
 .video-views {

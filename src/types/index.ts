@@ -1,4 +1,5 @@
 import type { SearchScope, SourceId } from '@/config/sources'
+export type { SourceId, SearchScope }
 
 export interface ComicItem {
   source: SourceId

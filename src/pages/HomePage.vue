@@ -7,6 +7,7 @@ import { parseLikes } from '@/utils/likes'
 import { appendDistinct, interleaveSources } from '@/utils/merge'
 import { HOME_TABS, normalizeCategoryLabel, type HomeTab } from '@/config/sources'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
+import { useComicViewedIds } from '@/composables/useComicViewedIds'
 import ComicGrid from '@/components/ComicGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import VideoBrowser from '@/components/VideoBrowser.vue'
@@ -85,6 +86,8 @@ const filteredItems = computed(() => {
   result = filterItems(result)
   return result
 })
+
+const viewedIds = useComicViewedIds(filteredItems)
 
 /** 混合流:两个源同页并发交错;哔咔不可用时安静降级为单源 */
 async function loadMixPage(state: TabState, reset: boolean) {
@@ -388,7 +391,7 @@ onUnmounted(() => {
           <button class="mix-notice-btn" @click="goToSettings">去设置</button>
         </div>
 
-        <ComicGrid :items="filteredItems" />
+        <ComicGrid :items="filteredItems" :viewed-ids="viewedIds" />
 
         <div v-if="loadingMore" class="loading-more">
           <LoadingSpinner message="正在加载更多..." />

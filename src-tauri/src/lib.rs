@@ -767,6 +767,33 @@ async fn set_bika_address(address: String, state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
+fn record_video_watched(code: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::record_video_watched(&conn, &code)
+}
+
+/// 批量查询视频已看集合(入集中已看的 code)
+#[tauri::command]
+fn fetch_video_watched_ids(
+    codes: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::video_watched_ids(&conn, &codes)
+}
+
+/// 批量查询漫画已看集合(入集中已看的 id,基于浏览历史)
+#[tauri::command]
+fn fetch_comic_viewed_ids(
+    source: Source,
+    ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::comic_viewed_ids(&conn, source, &ids)
+}
+
+#[tauri::command]
 fn fetch_follows(state: State<'_, AppState>) -> Result<Vec<FollowedAuthor>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     db::follows(&conn)
@@ -877,6 +904,9 @@ pub fn run() {
             bika_switch_like,
             bika_switch_favourite,
             fetch_favorites,
+            record_video_watched,
+            fetch_video_watched_ids,
+            fetch_comic_viewed_ids,
             is_favorite,
             add_favorite,
             remove_favorite,

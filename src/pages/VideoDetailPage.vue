@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
-import { fetchVideoDetail } from '@/services/api'
+import { fetchVideoDetail, recordVideoWatched } from '@/services/api'
 import type { VideoDetail } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -26,6 +26,7 @@ async function load() {
   try {
     const code = String(route.params.code || '').toLowerCase()
     detail.value = await fetchVideoDetail(code)
+    void recordVideoWatched(code)
     await setupPlayer(detail.value.m3u8)
   } catch (e) {
     error.value = (e as Error).message || '加载失败'
