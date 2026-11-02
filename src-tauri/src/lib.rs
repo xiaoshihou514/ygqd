@@ -281,6 +281,29 @@ fn novel_set_progress(
     db::novel_set_progress(&conn, &series_id, chapter_order, page)
 }
 
+/// 完成网关操作(用户点了网关内「完成返回」栏):隐藏网关回主界面
+#[tauri::command]
+fn gateway_finish(app: AppHandle, label: String) -> Result<(), String> {
+    gateway::finish(&app, &label)
+}
+
+/// 读取诊断日志(应用内查看)
+#[tauri::command]
+fn diag_read(app: AppHandle) -> Result<String, String> {
+    use tauri::Manager as _;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(std::fs::read_to_string(dir.join("diag.log")).unwrap_or_default())
+}
+
+/// 清空诊断日志
+#[tauri::command]
+fn diag_clear(app: AppHandle) -> Result<(), String> {
+    use tauri::Manager as _;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(dir.join("diag.log"));
+    Ok(())
+}
+
 /// 网关桥回传(由网关 webview 内的 JS 调用,不暴露给主窗口前端)
 #[tauri::command]
 fn gateway_result(state: State<'_, GatewayManager>, result: gateway::GatewayReply) {
@@ -905,6 +928,9 @@ pub fn run() {
             gateway_fetch,
             gateway_open,
             gateway_set_visible,
+            gateway_finish,
+            diag_read,
+            diag_clear,
             gateway_result,
             novel_add,
             novel_search,

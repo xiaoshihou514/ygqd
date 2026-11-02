@@ -92,6 +92,14 @@ function retry() {
   void load()
 }
 
+async function copyError() {
+  try {
+    await navigator.clipboard.writeText(error.value)
+  } catch {
+    // 剪贴板不可用时忽略
+  }
+}
+
 onMounted(() => {
   void load()
 })
@@ -117,10 +125,22 @@ onBeforeUnmount(() => {
         />
         <EmptyState
           v-if="error && !loading"
-          :title="'播放失败'"
+          title="播放失败"
           :message="error"
         >
+          <button
+            class="retry-btn ghost"
+            @click="copyError"
+          >
+            复制错误信息
+          </button>
           <button class="retry-btn" @click="retry">重试</button>
+          <button
+            class="retry-btn ghost"
+            @click="copyError"
+          >
+            复制错误
+          </button>
         </EmptyState>
       </div>
     </div>
@@ -177,6 +197,12 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   background: #000;
+}
+
+.retry-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  color: var(--color-text-primary);
 }
 
 .retry-btn {

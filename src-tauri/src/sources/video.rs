@@ -228,11 +228,13 @@ impl VideoApi {
             let manager = app.state::<crate::GatewayManager>();
             let encoded =
                 url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
-            let html = gateway::gateway_fetch(
+            // 导航式抓取:网关窗口直接跳搜索页,浏览器完整处理 CF 与 JS 渲染
+            let html = gateway::navigate_and_dump(
                 app,
                 &manager,
                 "missav",
                 &format!("https://missav.ai/dm539/search/{encoded}"),
+                4500,
             )
             .await?;
             Ok::<_, String>(Self::parse_missav_search(&html))

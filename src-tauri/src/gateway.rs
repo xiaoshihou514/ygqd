@@ -13,10 +13,11 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::oneshot;
 
-/// 诊断日志:追加到应用数据目录 diag.log(release 构建无 logcat 输出,
-/// 此文件是唯一可靠的问题定位通道;adb pull 后读取)
+/// 诊断日志:写应用内部数据目录 diag.log;查看走应用内入口
+/// (release 无法 run-as/logcat,应用内读取是唯一通道)
 pub fn diag(app: &AppHandle, msg: &str) {
     use std::io::Write;
+    use tauri::Manager as _;
     let Ok(dir) = app.path().app_data_dir() else {
         return;
     };
@@ -95,13 +96,63 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
     let url: tauri::Url = start_url
         .parse()
         .map_err(|e| format!("无效网关地址: {e}"))?;
-    let builder = WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(url))
+    let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"hlib\"".into());
+    // gateway_result 命令注册在 app 级 invoke_handler,所有 webview 共享。
+    // initialization_script 注入悬浮「完成返回」栏:Android 上网关窗口会
+    // 占据前台,用户完成验证/登录后点它回到主应用,否则流程被打断。
+    let window = WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(url))
         .title(title)
         .inner_size(400.0, 720.0)
         // 首次创建时可见:若遇 CF 交互挑战,用户点一次即可,cookie 持久化
-        .visible(true);
-    // gateway_result 命令注册在 app 级 invoke_handler,所有 webview 共享
-    builder.build().map_err(|e| format!("创建网关失败: {e}"))?;
+        .visible(true)
+        .on_page_load({
+            let label_json = label_json.clone();
+            move |webview, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                let _ = webview.eval(&format!(
+                    r#"(function() {{
+                      var label = {label_json};
+                      function ensureBar() {{
+                        if (document.getElementById('ygwd-gw-bar')) return;
+                        var bar = document.createElement('div');
+                        bar.id = 'ygwd-gw-bar';
+                        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px;text-align:center;font-size:16px;font-weight:600;cursor:pointer';
+                        bar.textContent = '\u2713 完成,返回应用';
+                        bar.addEventListener('click', function() {{
+                          window.__TAURI_INTERNALS__.invoke('gateway_finish', {{ label: label }});
+                        }});
+                        var host = document.body || document.documentElement;
+                        host.appendChild(bar);
+                      }}
+                      ensureBar();
+                      setInterval(ensureBar, 1500);
+                    }})();"#
+                ));
+            }
+            }
+        })
+        .initialization_script(&format!(
+            r#"(function() {{
+              var label = {label_json};
+              function ensureBar() {{
+                if (document.getElementById('ygwd-gw-bar')) return;
+                var bar = document.createElement('div');
+                bar.id = 'ygwd-gw-bar';
+                bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px;text-align:center;font-size:16px;font-weight:600;cursor:pointer';
+                bar.textContent = '\u2713 完成,返回应用';
+                bar.addEventListener('click', function() {{
+                  window.__TAURI_INTERNALS__.invoke('gateway_finish', {{ label: label }});
+                }});
+                var host = document.body || document.documentElement;
+                host.appendChild(bar);
+              }}
+              ensureBar();
+              setInterval(ensureBar, 1500);
+            }})();"#
+        ))
+        .build()
+        .map_err(|e| format!("创建网关失败: {e}"))?;
+    let _ = &window;
     Ok(true)
 }
 
@@ -152,25 +203,17 @@ async fn gateway_fetch_inner(
     extract_m3u8: bool,
     search_keyword: Option<&str>,
 ) -> Result<String, String> {
+    use tauri::Manager as _;
     let created = ensure_gateway(app, label)?;
-    if created {
-        // 新建窗口需要等首页加载完成(或挑战通过)后才具备 fetch 条件,
-        // 这里给出基础等待;调用方对首访失败可重试
-        tokio::time::sleep(Duration::from_secs(6)).await;
-    }
     let window = app
         .get_webview_window(&format!("gateway_{label}"))
         .ok_or("网关窗口不存在")?;
-    let id = format!(
-        "g{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    );
-    let rx = manager.register(id.clone());
+    if created {
+        // 新建网关:站点可能停在 CF 挑战/登录页,等用户完成(最长 150 秒)
+        wait_until_ready(&window, 150).await;
+    }
+
     let js_url = serde_json::to_string(url).map_err(|e| e.to_string())?;
-    let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
     let extract = if extract_m3u8 { "true" } else { "false" };
     let search = if search_keyword.is_some() {
         "true"
@@ -182,8 +225,22 @@ async fn gateway_fetch_inner(
         .transpose()
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| "null".into());
-    let js = format!(
-        r#"(async () => {{
+
+    // 发起一次网关 fetch:注册回传 id -> eval JS -> JS 经 invoke 回传结果
+    let dispatch = |window: &tauri::WebviewWindow,
+                    manager: &GatewayManager|
+     -> Result<tokio::sync::oneshot::Receiver<GatewayReply>, String> {
+        let id = format!(
+            "g{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let rx = manager.register(id.clone());
+        let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
+        let js = format!(
+            r#"(async () => {{
   let status = 0;
   let body = "";
   try {{
@@ -213,86 +270,213 @@ async fn gateway_fetch_inner(
       if (!found) {{
         const home = await fetch("https://hlib.cc/", {{ credentials: "include" }});
         const html = await home.text();
-        status = home.status;
-        body = html;
-        if (home.ok) {{
-          doc = new DOMParser().parseFromString(html, "text/html");
-          baseUrl = home.url;
-          found = findSearchForm(doc);
-        }}
+        doc = new DOMParser().parseFromString(html, "text/html");
+        baseUrl = home.url;
       }}
-      if (found) {{
-        const {{ form, input }} = found;
-        const formData = new FormData(form);
-        formData.set(input.name, keyword);
-        const submit = form.querySelector('button[type="submit"], input[type="submit"]');
-        if (submit && submit.name && !formData.has(submit.name)) formData.set(submit.name, submit.value || "");
-        const action = new URL(form.getAttribute("action") || baseUrl, baseUrl);
-        if (action.origin !== location.origin) throw new Error("hlib 搜索表单地址不在本站");
-        const method = (form.method || "GET").toUpperCase();
-        const options = {{ method, credentials: "include" }};
-        if (method === "GET" || method === "HEAD") {{
-          for (const [key, value] of formData.entries()) {{
-            if (typeof value === "string") action.searchParams.append(key, value);
-          }}
-        }} else if (form.enctype.includes("multipart/form-data")) {{
-          options.body = formData;
-        }} else {{
-          const encoded = new URLSearchParams();
-          for (const [key, value] of formData.entries()) {{
-            if (typeof value === "string") encoded.append(key, value);
-          }}
-          options.headers = {{ "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" }};
-          options.body = encoded.toString();
-        }}
-        const result = await fetch(action.toString(), options);
-        status = result.status;
-        body = await result.text();
-      }} else if (!/请稍候|Just a moment|正在进行安全验证|security verification/i.test(body)) {{
-        // 未找到表单时交给 Rust 侧继续尝试已知路径。
-        body = "";
+      if (!found) found = findSearchForm(doc);
+      if (!found) throw new Error("未找到搜索表单");
+      const target = new URL(found.form.getAttribute("action") || baseUrl, baseUrl);
+      found.input.value = keyword;
+      const hidden = Array.from(found.form.querySelectorAll('input[type="hidden"]'))
+        .map((h) => h.name + "=" + encodeURIComponent(h.value))
+        .join("&");
+      const method = (found.form.getAttribute("method") || "GET").toUpperCase();
+      const fetchInit = {{ method: method, credentials: "include" }};
+      if (method === "POST") {{
+        fetchInit.headers = {{ "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" }};
+        fetchInit.body = hidden
+          ? hidden + "&" + found.input.name + "=" + encodeURIComponent(keyword)
+          : found.input.name + "=" + encodeURIComponent(keyword);
       }}
-    }} else {{
-      const r = await fetch({js_url}, {{ credentials: "include" }});
+      const r = await fetch(target.href, fetchInit);
       status = r.status;
       body = await r.text();
+      window.__TAURI_INTERNALS__.invoke("gateway_result", {{
+        id: {js_id}, status: status, body: body
+      }});
+    }} else {{
+      const r = await fetch({js_url}, {{ credentials: "include" }});
+      let body = await r.text();
       if ({extract}) {{
-        // missav 的播放地址藏在 eval(p,a,c,k,e,d) packer 里;
-        // 页面上下文即 JS 环境,new Function 执行后抽取 m3u8
         let found = "";
-        const blocks = body.match(/eval\(function\(p,a,c,k,e,d\)\{{[\s\S]*?\}}\)\)/g) || [];
+        const blocks = body.match(/eval\\(function\\(p,a,c,k,e,d\\)\\{{[\\s\\S]*?\\}}\\)\\)/g) || [];
         for (const block of blocks) {{
           try {{
             const out = new Function("return " + block.replace(/^eval/, ""))();
-            const urls = String(out).match(/https?:\/\/[^"'\s]+\.m3u8[^"'\s]*/g);
+            const urls = String(out).match(/https?:\\/\\/[^"'\\s]+\\.m3u8[^"'\\s]*/g);
             if (urls && urls.length) {{ found = urls[0]; break; }}
           }} catch (e) {{}}
         }}
         body = found;
       }}
+      status = r.status;
+      window.__TAURI_INTERNALS__.invoke("gateway_result", {{
+        id: {js_id}, status: status, body: body
+      }});
     }}
-    window.__TAURI_INTERNALS__.invoke("gateway_result", {{ id: {js_id}, status, body }});
   }} catch (e) {{
     window.__TAURI_INTERNALS__.invoke("gateway_result", {{
       id: {js_id}, status: 0, body: String(e)
     }});
   }}
 }})();"#
-    );
-    window.eval(&js).map_err(|e| format!("网关执行失败: {e}"))?;
-    let reply = tokio::time::timeout(Duration::from_secs(30), rx)
-        .await
-        .map_err(|_| "网关请求超时".to_string())
-        .and_then(|r| r.map_err(|_| "网关回传中断".to_string()))?;
-    if reply.status == 0 {
-        return Err(format!("网关 fetch 失败: {}", reply.body));
+        );
+        window.eval(&js).map_err(|e| format!("网关执行失败: {e}"))?;
+        Ok(rx)
+    };
+
+    // 主循环:发请求 -> 判定挑战/失败 -> 弹网关等用户 -> 重试(最多 4 次)
+    let mut rx_opt = Some(dispatch(&window, manager)?);
+    let mut last: Option<(u16, String)> = None;
+    for attempt in 0..4 {
+        let rxi = rx_opt.take().expect("rx present");
+        let reply = match tokio::time::timeout(Duration::from_secs(60), rxi).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(_)) => return Err("网关回传中断".into()),
+            Err(_) => return Err("网关请求超时(网关可能未完成验证)".into()),
+        };
+        let status = reply.status;
+        // 挑战判定从紧:仅认 403 状态或短小的挑战标题页。
+        // 不做正文包含判断——正常站点页面也会引用 challenge-platform 脚本,
+        // 误报会导致网关反复抢前台把用户按在站点页面
+        let body_for_check = reply.body.clone();
+        let is_challenge = status == 403
+            || (body_for_check.len() < 6000
+                && (body_for_check.contains("Just a moment") || body_for_check.contains("请稍候")));
+        last = Some((status, reply.body));
+        if !is_challenge {
+            break;
+        }
+        // 静默重试:不抢前台(用户可能正在主界面看结果);
+        // 全部重试失败后在最终错误里引导用户打开网关
+        wait_until_ready(&window, 45).await;
+        rx_opt = Some(dispatch(&window, manager)?);
+        let _ = attempt;
     }
-    if reply.status >= 400 {
-        return Err(format!("网关源返回 HTTP {}", reply.status));
+    let Some((status, body)) = last else {
+        return Err("网关无回传".into());
+    };
+    if status == 0 {
+        return Err(format!("网关 fetch 失败: {body}"));
     }
-    // 首次成功说明挑战/登录已就绪,隐藏窗口转为后台网关
+    if status >= 400 {
+        return Err(format!("网关源返回 HTTP {status}"));
+    }
+    // 成功:隐藏网关转后台(会话保留)
+    let _ = window.hide();
+    Ok(body)
+}
+
+/// 完成网关操作:隐藏网关并把主窗口带回前台
+pub fn finish(app: &AppHandle, label: &str) -> Result<(), String> {
+    use tauri::Manager as _;
     if let Some(window) = app.get_webview_window(&format!("gateway_{label}")) {
         let _ = window.hide();
     }
-    Ok(reply.body)
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    Ok(())
+}
+
+/// 判断网关当前页面是否仍在 CF 挑战/未就绪
+async fn page_not_ready(window: &tauri::WebviewWindow) -> bool {
+    window
+        .eval(
+            r#"(function() {
+              var t = document.title || '';
+              var b = (document.body && document.body.innerText) || '';
+              var cf = !!(document.querySelector('iframe[src*="challenges.cloudflare"]') || document.getElementById('challenge-form'));
+              window.__YGWD_READY__ = !( /请稍候|Just a moment/i.test(t) || /正在进行安全验证|security verification|Verifying you are human/i.test(b) || cf );
+            })();"#,
+        )
+        .is_err()
+}
+
+/// 轮询等待网关站点就绪(挑战通过),timeout_secs 总上限
+async fn wait_until_ready(window: &tauri::WebviewWindow, timeout_secs: u64) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if !page_not_ready(window).await {
+            return;
+        }
+    }
+}
+
+/// 导航式抓取:让网关窗口直接导航到目标页(浏览器完整处理 CF,
+/// 包括 JS 渲染),等待渲染稳定后取 outerHTML。
+/// 若落在挑战页:保持网关在前台等用户点验证,期间轮询直到出现
+/// 真实内容或超时。
+pub async fn navigate_and_dump(
+    app: &AppHandle,
+    manager: &GatewayManager,
+    label: &str,
+    url: &str,
+    settle_ms: u64,
+) -> Result<String, String> {
+    use tauri::Manager as _;
+    ensure_gateway(app, label)?;
+    let window = app
+        .get_webview_window(&format!("gateway_{label}"))
+        .ok_or("网关窗口不存在")?;
+    // 前台显示(用户可能需要过验证)
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    let url_json = serde_json::to_string(url).map_err(|e| e.to_string())?;
+    window
+        .eval(&format!("window.location.href = {url_json};"))
+        .map_err(|e| format!("导航失败: {e}"))?;
+
+    // 等待导航+渲染稳定(settle 毫秒),期间检测挑战页;挑战时等用户操作
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(150);
+    loop {
+        tokio::time::sleep(Duration::from_millis(settle_ms)).await;
+        let id = format!(
+            "nav{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let rx = manager.register(id.clone());
+        let id_json = serde_json::to_string(&id).map_err(|e| e.to_string())?;
+        window
+            .eval(&format!(
+                r#"window.__TAURI_INTERNALS__.invoke('gateway_result', {{
+                  id: {id_json},
+                  status: 200,
+                  body: document.documentElement.outerHTML
+                }});"#
+            ))
+            .map_err(|e| format!("取页面失败: {e}"))?;
+        let reply = tokio::time::timeout(Duration::from_secs(30), rx)
+            .await
+            .map_err(|_| "取页面超时".to_string())
+            .and_then(|r| r.map_err(|_| "回传中断".to_string()))?;
+        let html = reply.body;
+        let challenged = html.len() < 20000
+            && (html.contains("Just a moment")
+                || html.contains("请稍候")
+                || html.contains("challenge-platform"));
+        if !challenged {
+            // 拿到真实内容:隐藏网关回主界面
+            let _ = window.hide();
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.set_focus();
+            }
+            return Ok(html);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("网关页面仍在安全验证中,请稍后重试".into());
+        }
+        // 继续等用户点验证(网关保持在最前台)
+        let _ = window.show();
+    }
 }

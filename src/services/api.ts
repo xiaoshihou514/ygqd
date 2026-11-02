@@ -47,3 +47,6 @@ export const novelSetProgress = (seriesId: string, chapterOrder: number, page: n
 export const recordVideoWatched = (code: string) => invoke<void>('record_video_watched', { code })
 export const fetchVideoWatchedIds = (codes: string[]) => invoke<string[]>('fetch_video_watched_ids', { codes })
 export const fetchComicViewedIds = (source: SourceId, ids: string[]) => invoke<string[]>('fetch_comic_viewed_ids', { source, ids })
+export const gatewayFinish = (label: string) => invoke<void>('gateway_finish', { label })
+export const diagRead = () => invoke<string>('diag_read')
+export const diagClear = () => invoke<void>('diag_clear')
