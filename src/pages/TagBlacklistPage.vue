@@ -6,6 +6,8 @@ import {
   bikaLogin,
   bikaLogout,
   bikaStatus,
+  diagRead,
+  diagClear,
   fetchBikaAddresses,
   getBikaAddress,
   setBikaAddress,
@@ -35,6 +37,8 @@ const bikaAddress = ref('')
 const bikaAddressOptions = ref<string[]>([])
 const bikaAddressSyncing = ref(false)
 const bikaAddressError = ref('')
+const diagText = ref('')
+const diagOpen = ref(false)
 
 /** 可选地址 = 同步到的列表,并保留当前已设置(可能来自旧列表)的地址 */
 const addressChoices = computed(() => {
@@ -86,6 +90,32 @@ async function handleSelectAddress(address: string) {
   } catch (e) {
     bikaAddressError.value = (e as Error).message || '设置分流地址失败'
   }
+}
+
+async function toggleDiag() {
+  if (diagOpen.value) {
+    diagOpen.value = false
+    return
+  }
+  try {
+    diagText.value = (await diagRead()) || '（诊断日志为空）'
+  } catch {
+    diagText.value = '（读取失败）'
+  }
+  diagOpen.value = true
+}
+
+async function clearDiag() {
+  try {
+    await diagClear()
+    diagText.value = '（已清空）'
+  } catch { /* 忽略 */ }
+}
+
+async function copyDiag() {
+  try {
+    await navigator.clipboard.writeText(diagText.value)
+  } catch { /* 剪贴板不可用时忽略 */ }
 }
 
 async function handleBikaLogin() {
@@ -297,6 +327,25 @@ async function handleExport() {
           </div>
           <p v-if="bikaAddressError" class="bika-status error">{{ bikaAddressError }}</p>
         </div>
+      </div>
+
+      <div class="section-divider" />
+
+      <div class="theme-section">
+        <div class="page-heading">
+          <h2 class="section-title">诊断日志</h2>
+          <div class="heading-actions">
+            <button class="action-btn" @click="toggleDiag">
+              {{ diagOpen ? '收起' : '查看' }}
+            </button>
+            <template v-if="diagOpen">
+              <button class="action-btn" @click="copyDiag">复制</button>
+              <button class="action-btn" @click="clearDiag">清空</button>
+            </template>
+          </div>
+        </div>
+        <p class="page-desc">视频/小说加载失败时,这里的日志可用于定位问题。</p>
+        <pre v-if="diagOpen" class="diag-text">{{ diagText }}</pre>
       </div>
 
       <div class="section-divider" />
@@ -734,5 +783,31 @@ async function handleExport() {
 .bika-address-sync:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.heading-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.action-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.diag-text {
+  max-height: 40vh;
+  overflow: auto;
+  padding: var(--spacing-sm);
+  background: var(--color-divider-soft, rgba(127, 127, 127, 0.1));
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--color-text-secondary);
 }
 </style>

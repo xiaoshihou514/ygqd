@@ -14,6 +14,8 @@ const detail = ref<VideoDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
 const playing = ref(false)
+const recovering = ref(false)
+let recoverCount = 0
 let videoEl: HTMLVideoElement | null = null
 let hls: Hls | null = null
 
@@ -38,6 +40,8 @@ async function load() {
 }
 
 async function setupPlayer(m3u8: string) {
+  hls?.destroy()
+  hls = null
   await new Promise<void>((resolve) => {
     const check = () => {
       videoEl = document.querySelector('video.video-player')
@@ -114,6 +118,7 @@ onBeforeUnmount(() => {
     <div class="player-section">
       <button class="back-btn" @click="router.back()">‹ 返回</button>
       <div class="player-box">
+        <LoadingSpinner v-if="recovering" message="播放地址已过期,正在自动刷新..." />
         <LoadingSpinner v-if="loading" message="获取播放地址..." />
         <video
           v-show="!loading && !error"

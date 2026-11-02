@@ -362,14 +362,17 @@ async fn fetch_video_detail(
     code: String,
 ) -> Result<VideoDetail, String> {
     let key = format!("video:detail-{code}");
-    if let Some(v) = state.cached(&key) {
+    if let Some(mut v) = state.cached(&key) {
+        // 缓存存原始地址;代理端口每次启动随机,读取时重新包装
+        v.m3u8 = stream_proxy::hls_url(&v.m3u8);
         return Ok(v);
     }
-    let mut out = state.video.detail(&app, &code).await?;
+    let out = state.video.detail(&app, &code).await?;
     // 播放器只接触本地代理地址(CDN 校验 Referer/拒绝浏览器 TLS,直连必 403)
-    out.m3u8 = stream_proxy::hls_url(&out.m3u8);
+    let mut playable = out.clone();
+    playable.m3u8 = stream_proxy::hls_url(&out.m3u8);
     state.put(key, &out);
-    Ok(out)
+    Ok(playable)
 }
 
 /// 哔咔排行榜;tt 为 "H24"(日)/"D7"(周)/"D30"(月)
