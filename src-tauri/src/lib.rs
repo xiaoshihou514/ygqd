@@ -362,7 +362,7 @@ async fn fetch_video_detail(
     code: String,
 ) -> Result<VideoDetail, String> {
     let key = format!("video:detail-{code}");
-    if let Some(mut v) = state.cached(&key) {
+    if let Some(mut v) = state.cached::<VideoDetail>(&key) {
         // 缓存存原始地址;代理端口每次启动随机,读取时重新包装
         v.m3u8 = stream_proxy::hls_url(&v.m3u8);
         return Ok(v);
