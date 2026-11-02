@@ -198,6 +198,29 @@ impl VideoApi {
         dedup
     }
 
+    /// 兜底:全文番号扫描(hydration 后 DOM 结构不可预知时,
+    /// 番号形态在页面文本中必然出现)。封面按 fourhoi 规律构造。
+    fn scan_codes_fallback(html: &str) -> Vec<VideoCard> {
+        let re = Regex::new(r"\b([a-z]{2,6}-\d{2,5})\b").expect("static regex");
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for c in re.captures_iter(html) {
+            let Some(m) = c.get(1) else { continue };
+            let code = m.as_str().to_lowercase();
+            if seen.insert(code.clone()) {
+                out.push(VideoCard {
+                    code: code.clone(),
+                    title: code.to_uppercase(),
+                    thumbnail: format!("https://fourhoi.com/{code}/cover-t.jpg"),
+                    views: String::new(),
+                    likes: String::new(),
+                    chinese: false,
+                });
+            }
+        }
+        out
+    }
+
     /// 最新上市列表,page 从 1 开始
     pub async fn list(&self, page: i32) -> Result<VideoListResult, String> {
         let html = self.get(&format!("/new-release/{page}/")).await?;
@@ -250,7 +273,17 @@ impl VideoApi {
             .await;
             match &r {
                 Ok(html) => {
-                    let cards = Self::parse_missav_search(html);
+                    let mut cards = Self::parse_missav_search(html);
+                    // hydration DOM 形态不可预知:主解析为空时全文番号扫描兜底
+                    if cards.is_empty() {
+                        cards = Self::scan_codes_fallback(html);
+                        if !cards.is_empty() {
+                            crate::gateway::diag(
+                                app,
+                                &format!("missav 主解析 0 卡,兜底扫描 {} 卡", cards.len()),
+                            );
+                        }
+                    }
                     // 转储样本供解析失败分析(仅保留最新一次)
                     use tauri::Manager as _;
                     if let Ok(dir) = app.path().app_data_dir() {
