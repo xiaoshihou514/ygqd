@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 import { fetchVideoDetail, recordVideoWatched } from '@/services/api'
@@ -15,6 +15,9 @@ const loading = ref(true)
 const error = ref('')
 const playing = ref(false)
 const recovering = ref(false)
+const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2] as const
+const speedIndex = ref(2)
+const playbackRate = computed(() => speeds[speedIndex.value] ?? 1)
 let recoverCount = 0
 let videoEl: HTMLVideoElement | null = null
 let hls: Hls | null = null
@@ -95,6 +98,21 @@ function retry() {
   void load()
 }
 
+function togglePlay() {
+  if (!videoEl) return
+  if (videoEl.paused) videoEl.play()
+  else videoEl.pause()
+}
+
+function cycleSpeed() {
+  speedIndex.value = (speedIndex.value + 1) % speeds.length
+  if (videoEl) videoEl.playbackRate = playbackRate.value
+}
+
+function seek(delta: number) {
+  if (videoEl) videoEl.currentTime = Math.max(0, videoEl.currentTime + delta)
+}
+
 async function copyError() {
   try {
     await navigator.clipboard.writeText(error.value)
@@ -147,6 +165,13 @@ onBeforeUnmount(() => {
           </button>
         </EmptyState>
       </div>
+    </div>
+
+    <div v-if="detail" class="control-bar">
+      <button class="ctrl-btn" title="后退 10 秒" @click="seek(-10)">«10s</button>
+      <button class="ctrl-btn" @click="togglePlay">{{ playing ? '暂停' : '播放' }}</button>
+      <button class="ctrl-btn" title="前进 10 秒" @click="seek(10)">10s»</button>
+      <button class="ctrl-btn speed" @click="cycleSpeed">{{ playbackRate }}x</button>
     </div>
 
     <div v-if="detail" class="meta-section">
@@ -221,6 +246,28 @@ onBeforeUnmount(() => {
 
 .meta-section {
   padding: var(--spacing-md) var(--spacing-md) 0;
+}
+
+.control-bar {
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md) 0;
+}
+
+.ctrl-btn {
+  flex: 1;
+  padding: 10px 0;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.ctrl-btn.speed {
+  color: var(--color-primary);
+  font-weight: 600;
 }
 
 .provider-row {

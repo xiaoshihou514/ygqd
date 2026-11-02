@@ -236,17 +236,59 @@ impl VideoApi {
         })
     }
 
-    /// 按关键词搜索:桌面为双源合并(fs1 + missav 网关);
-    /// Android 仅 fs1——手机网络下 missav 全链路(CF 挑战+CDN)不可达,
-    /// 网关方案在移动端不成立,直接走稳定可达的 fs1。
+    /// 按关键词搜索(Android):fs1 优先(番号/日文词,无网关开销);
+    /// fs1 无结果时(中文词在 fs1 索引无数据)走 missav 导航式兜底。
     #[cfg(target_os = "android")]
     pub async fn search(
         &self,
-        _app: &tauri::AppHandle,
+        app: &tauri::AppHandle,
         keyword: &str,
         page: i32,
     ) -> Result<VideoListResult, String> {
-        self.search_fs1(keyword, page).await
+        use tauri::Manager as _;
+        let fs1 = self.search_fs1(keyword, page).await?;
+        if !fs1.items.is_empty() {
+            return Ok(fs1);
+        }
+        // fs1 无结果:missav 网关导航式兜底(用户首次过 CF 后会话持久)
+        let manager = app.state::<crate::GatewayManager>();
+        let encoded = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
+        let html = match crate::gateway::navigate_and_dump(
+            app,
+            &manager,
+            "missav",
+            &format!("https://missav.ai/dm539/search/{encoded}"),
+            4500,
+        )
+        .await
+        {
+            Ok(html) => html,
+            Err(e) => {
+                crate::gateway::diag(app, &format!("missav search FAIL: {e}"));
+                return Ok(fs1); // 兜底失败返回 fs1 的空结果
+            }
+        };
+        let mut cards = Self::parse_missav_search(&html);
+        if cards.is_empty() {
+            cards = Self::scan_codes_fallback(&html);
+        }
+        crate::gateway::diag(
+            app,
+            &format!(
+                "missav search ok html={}B cards={}",
+                html.len(),
+                cards.len()
+            ),
+        );
+        Ok(VideoListResult {
+            pagination: PaginationInfo {
+                current: page - 1,
+                total: 0,
+                has_next: !cards.is_empty(),
+                has_prev: page > 1,
+            },
+            items: cards,
+        })
     }
 
     #[cfg(not(target_os = "android"))]
