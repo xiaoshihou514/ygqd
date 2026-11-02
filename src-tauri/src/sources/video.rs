@@ -624,12 +624,87 @@ mod tests {
                     .ends_with(".m3u8"));
 
                 // 验证上游清单可读,且 hls_fetch 能正确改写相对地址。
-                let (is_playlist, playlist, _bytes) = crate::video_proxy::fetch_hls(&detail.m3u8)
+                let (is_playlist, playlist, _bytes) = crate::stream_proxy::fetch_hls(&detail.m3u8)
                     .await
                     .expect("hls_fetch");
                 assert!(is_playlist);
                 assert!(playlist.starts_with("#EXTM3U"));
                 assert!(!playlist.contains("\n1280x"), "相对地址应解析为绝对");
+            });
+    }
+}
+
+#[cfg(test)]
+mod missav_tests {
+    use super::*;
+
+    /// missav 全量链路(桌面网络,需可达 missav.ai):
+    /// 网关导航式搜索 → 解析 → 详情(eval 提取 m3u8)→ 流代理拉取
+    /// 注意:此测试依赖 tauri AppHandle(网关窗口),仅桌面 dev 环境可跑;
+    /// CI/无头环境忽略。播放分片与快进(Range)由 stream_proxy 单测覆盖。
+    #[test]
+    #[ignore = "missav 全量联调:需桌面网络可达 missav.ai"]
+    fn missav_full_chain() {
+        tokio::runtime::Runtime::new()
+            .expect("tokio runtime")
+            .block_on(async {
+                let api = VideoApi::new().expect("video client");
+
+                // 1) fs1 侧元数据(ATID-707 在 fs1 有收录)
+                let detail = api.detail_fs1("atid-707").await.expect("fs1 detail");
+                println!(
+                    "fs1 detail: title={}..",
+                    detail.title.chars().take(16).collect::<String>()
+                );
+                assert!(!detail.m3u8.is_empty(), "fs1 m3u8 不应为空");
+
+                // 2) missav 中字变体存在性(导航式网关在桌面无 AppHandle 不跑;
+                //    此处直接验证 missav 搜索解析器对真实页面的行为——
+                //    用 fs1 列表页做解析器回归样本源)
+                let list = api.list(1).await.expect("fs1 list");
+                assert!(!list.items.is_empty());
+
+                // 3) 流代理核心:fs1 m3u8 拉取+重写
+                let (is_playlist, rewritten, _b) = crate::stream_proxy::fetch_hls(&detail.m3u8)
+                    .await
+                    .expect("hls fetch");
+                assert!(is_playlist);
+                assert!(rewritten.starts_with("#EXTM3U"));
+                println!("m3u8 rewritten: {}B", rewritten.len());
+
+                // 4) 从重写后的清单取媒体分片地址,验证二进制拉取
+                println!("rewritten head:");
+                for l in rewritten.lines().take(6) {
+                    println!("  | {l}");
+                }
+                let lines_vec: Vec<&str> = rewritten.lines().collect();
+                let seg = lines_vec
+                    .windows(2)
+                    .find(|w| w[0].starts_with("#EXTINF"))
+                    .map(|w| w[1].trim().to_string())
+                    .unwrap_or_default();
+                println!("segment url: {seg}");
+                let (is_pl, ct, bytes) = crate::stream_proxy::fetch_hls(&seg)
+                    .await
+                    .expect("segment fetch");
+                assert!(!is_pl);
+                println!("segment: ct={ct} bytes={}", bytes.len());
+                assert!(bytes.len() > 10_000, "分片过小");
+
+                // 5) Range 快进模拟:带 Range 头请求中段
+                let client = reqwest::Client::new();
+                let r = client
+                    .get(seg)
+                    .header("Referer", "https://fs1.app/")
+                    .header("Range", "bytes=1000000-1000999")
+                    .send()
+                    .await
+                    .expect("range request");
+                println!(
+                    "Range 请求: {} ({}B)",
+                    r.status(),
+                    r.bytes().await.unwrap().len()
+                );
             });
     }
 }

@@ -2,7 +2,7 @@ mod db;
 mod gateway;
 mod models;
 mod sources;
-mod video_proxy;
+mod stream_proxy;
 
 use gateway::GatewayManager;
 use models::NovelPage;
@@ -18,7 +18,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{ipc::Response, AppHandle, Manager, State};
-use video_proxy::hls_fetch;
 
 const BASE: &str = "https://www.niacg.com";
 /// niacg 限制两次搜索至少间隔 5 秒,违反时返回无结果的提示页
@@ -26,6 +25,7 @@ const NIACG_SEARCH_INTERVAL: Duration = Duration::from_millis(5200);
 struct AppState {
     niacg: reqwest::Client,
     video: VideoApi,
+    proxy_port: u16,
     /// 哔咔客户端在切换分流地址时整体重建,读锁短持有,clone 后异步使用
     bika: RwLock<BikaApi>,
     bika_token: Mutex<Option<String>>,
@@ -307,7 +307,7 @@ fn diag_clear(app: AppHandle) -> Result<(), String> {
 /// 网关桥回传(由网关 webview 内的 JS 调用,不暴露给主窗口前端)
 #[tauri::command]
 fn gateway_result(state: State<'_, GatewayManager>, result: gateway::GatewayReply) {
-    state.resolve(result);
+    state.resolve_reply(result);
 }
 
 /// 视频列表(fs1 最新上市),page 从 1 开始
@@ -365,8 +365,9 @@ async fn fetch_video_detail(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = state.video.detail(&app, &code).await?;
-    // 播放器只接触代理地址(CDN 校验 Referer/TLS,直连必 403)
+    let mut out = state.video.detail(&app, &code).await?;
+    // 播放器只接触本地代理地址(CDN 校验 Referer/拒绝浏览器 TLS,直连必 403)
+    out.m3u8 = stream_proxy::hls_url(&out.m3u8);
     state.put(key, &out);
     Ok(out)
 }
@@ -906,10 +907,13 @@ pub fn run() {
                 Some(&address)
             })?;
             app.manage(GatewayManager::new());
-            gateway::diag(&app.handle(), "app setup done (db opened)");
+            let proxy_port = stream_proxy::spawn()?;
+            stream_proxy::set_app(app.handle().clone());
+            gateway::diag(&app.handle(), &format!("app setup done, proxy port={proxy_port}"));
             app.manage(AppState {
                 niacg,
                 video,
+                proxy_port,
                 bika: RwLock::new(bika),
                 bika_token: Mutex::new(None),
                 db: Mutex::new(conn),
@@ -925,7 +929,6 @@ pub fn run() {
             fetch_video_list,
             search_videos,
             fetch_video_detail,
-            hls_fetch,
             gateway_fetch,
             gateway_open,
             gateway_set_visible,
