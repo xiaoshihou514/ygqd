@@ -1,7 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Hls from 'hls.js'
+
+import videojs from 'video.js'
+// video.js v10 类型导出不完整,用最小接口声明用到的能力
+interface VjsPlayer {
+  dispose(): void
+  src(source: { src: string; type: string }): void
+  play(): Promise<void>
+  error(): { code?: number; message?: string } | null
+  on(event: string, cb: (...args: unknown[]) => void): void
+}
+import 'video.js/dist/video-js.css'
 import { fetchVideoDetail, recordVideoWatched } from '@/services/api'
 import type { VideoDetail } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -13,26 +23,24 @@ const router = useRouter()
 const detail = ref<VideoDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
-const playing = ref(false)
 const recovering = ref(false)
-const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2] as const
-const speedIndex = ref(2)
-const playbackRate = computed(() => speeds[speedIndex.value] ?? 1)
 let recoverCount = 0
-let videoEl: HTMLVideoElement | null = null
-let hls: Hls | null = null
+let player: VjsPlayer | null = null
+const playerEl = ref<HTMLDivElement | null>(null)
+
+async function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
+}
 
 async function load() {
-  hls?.destroy()
-  hls = null
+  player?.dispose()
+  player = null
   loading.value = true
   error.value = ''
   detail.value = null
   try {
     const code = String(route.params.code || '').toLowerCase()
-    console.log('[video] detail', code)
     detail.value = await fetchVideoDetail(code)
-    console.log('[video] m3u8 provider=', detail.value.provider, 'url=', detail.value.m3u8.slice(0, 60))
     void recordVideoWatched(code)
     await setupPlayer(detail.value.m3u8)
   } catch (e) {
@@ -43,74 +51,59 @@ async function load() {
 }
 
 async function setupPlayer(m3u8: string) {
-  hls?.destroy()
-  hls = null
-  await new Promise<void>((resolve) => {
-    const check = () => {
-      videoEl = document.querySelector('video.video-player')
-      if (videoEl) resolve()
-      else requestAnimationFrame(check)
-    }
-    check()
-  })
-  const el = videoEl!
-  el.addEventListener('playing', () => {
-    playing.value = true
-  })
-  el.addEventListener('pause', () => {
-    playing.value = false
-  })
-  el.addEventListener('error', () => {
-    if (!error.value) error.value = '播放器无法读取视频流，请检查网络后重试'
-  })
+  await nextFrame()
+  if (!playerEl.value) throw new Error('播放器容器未就绪')
 
-  if (Hls.isSupported()) {
-    const player = new Hls({
-      maxBufferLength: 30,
-      manifestLoadingMaxRetry: 2,
-      levelLoadingMaxRetry: 2,
-      fragLoadingMaxRetry: 2,
-      manifestLoadingTimeOut: 20000,
-      levelLoadingTimeOut: 20000,
-      fragLoadingTimeOut: 20000,
-    })
-    hls = player
-    player.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return
-      error.value = data.type === Hls.ErrorTypes.NETWORK_ERROR
-        ? '视频流连接失败，请检查网络或稍后重试'
-        : '视频流解析或解码失败，请稍后重试'
-      player.destroy()
-      if (hls === player) hls = null
-    })
-    player.loadSource(m3u8)
-    player.attachMedia(el)
-  } else if (el.canPlayType('application/vnd.apple.mpegurl')) {
-    // 少数 WebView 不支持 Media Source Extensions,尝试系统 HLS 播放器。
-    el.src = m3u8
-    el.load()
-  } else {
-    throw new Error('当前设备不支持 HLS 播放')
-  }
+  // 用 video.js 内置 VHS 引擎拉流(HLS 与 AES-128 原生支持);
+  // 源地址是本地流代理(Rust 带站点 Referer 转发上游 CDN)
+  // v10 类型导出不完整,断言为本地最小接口
+  player = videojs(
+    playerEl.value,
+    {
+      controls: true,
+      fluid: true,
+      preload: 'auto',
+      playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
+      controlBar: { pictureInPictureToggle: false },
+      html5: {
+        vhs: { limitRenditionByPlayerDimensions: false, useDevicePixelRatio: true },
+      },
+    },
+    () => {
+      player?.src({ src: m3u8, type: 'application/vnd.apple.mpegurl' })
+      player?.play().catch(() => {})
+    },
+  ) as unknown as VjsPlayer
+
+  player.on('error', async () => {
+    const err = player?.error()
+    const msg = err?.message ?? ''
+    console.error('[player]', err?.code, msg)
+    // 上游 403 多为 HLS 签名过期(短时效,频繁快进后过期):
+    // 自动重新获取详情换新签名并重载,最多 2 次
+    const upstream403 = err?.code === 4 || msg.includes('403')
+    if (upstream403 && recoverCount < 2 && detail.value) {
+      recoverCount += 1
+      recovering.value = true
+      try {
+        const fresh = await fetchVideoDetail(detail.value.code)
+        detail.value = fresh
+        player?.src({ src: fresh.m3u8, type: 'application/vnd.apple.mpegurl' })
+        player?.play().catch(() => {})
+      } catch {
+        error.value = '播放地址已过期且刷新失败,请返回重进'
+      } finally {
+        recovering.value = false
+      }
+    } else {
+      error.value = `播放失败:${msg || '未知错误'}`
+    }
+  })
 }
 
 function retry() {
+  recoverCount = 0
   void load()
-}
-
-function togglePlay() {
-  if (!videoEl) return
-  if (videoEl.paused) videoEl.play()
-  else videoEl.pause()
-}
-
-function cycleSpeed() {
-  speedIndex.value = (speedIndex.value + 1) % speeds.length
-  if (videoEl) videoEl.playbackRate = playbackRate.value
-}
-
-function seek(delta: number) {
-  if (videoEl) videoEl.currentTime = Math.max(0, videoEl.currentTime + delta)
 }
 
 async function copyError() {
@@ -126,8 +119,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  hls?.destroy()
-  hls = null
+  player?.dispose()
+  player = null
 })
 </script>
 
@@ -136,47 +129,23 @@ onBeforeUnmount(() => {
     <div class="player-section">
       <button class="back-btn" @click="router.back()">‹ 返回</button>
       <div class="player-box">
-        <LoadingSpinner v-if="recovering" message="播放地址已过期,正在自动刷新..." />
         <LoadingSpinner v-if="loading" message="获取播放地址..." />
-        <video
-          v-show="!loading && !error"
-          class="video-player"
-          controls
-          playsinline
-          preload="metadata"
-        />
-        <EmptyState
-          v-if="error && !loading"
-          title="播放失败"
-          :message="error"
-        >
-          <button
-            class="retry-btn ghost"
-            @click="copyError"
-          >
-            复制错误信息
-          </button>
+        <EmptyState v-if="error && !loading" title="播放失败" :message="error">
           <button class="retry-btn" @click="retry">重试</button>
-          <button
-            class="retry-btn ghost"
-            @click="copyError"
-          >
-            复制错误
-          </button>
+          <button class="retry-btn ghost" @click="copyError">复制错误</button>
         </EmptyState>
+        <div v-show="!loading && !error" ref="playerEl" />
+        <div v-if="recovering" class="recover-overlay">
+          <span>播放地址已过期,正在自动刷新...</span>
+        </div>
       </div>
-    </div>
-
-    <div v-if="detail" class="control-bar">
-      <button class="ctrl-btn" title="后退 10 秒" @click="seek(-10)">«10s</button>
-      <button class="ctrl-btn" @click="togglePlay">{{ playing ? '暂停' : '播放' }}</button>
-      <button class="ctrl-btn" title="前进 10 秒" @click="seek(10)">10s»</button>
-      <button class="ctrl-btn speed" @click="cycleSpeed">{{ playbackRate }}x</button>
     </div>
 
     <div v-if="detail" class="meta-section">
       <div class="provider-row">
-        <span class="provider-badge" :class="detail.provider">{{ detail.provider === 'missav' ? 'missav 备用线路' : 'fs1 线路' }}</span>
+        <span class="provider-badge" :class="detail.provider">{{
+          detail.provider === 'missav' ? 'missav 优先线路' : 'fs1 线路'
+        }}</span>
         <span v-if="detail.chinese" class="provider-badge chinese">中文字幕</span>
       </div>
       <h1 class="video-title">{{ detail.title || detail.code.toUpperCase() }}</h1>
@@ -205,7 +174,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 10px;
   left: 10px;
-  z-index: 2;
+  z-index: 3;
   padding: 4px 12px;
   border: none;
   border-radius: var(--radius-pill, 999px);
@@ -216,22 +185,28 @@ onBeforeUnmount(() => {
 }
 
 .player-box {
+  position: relative;
   aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.video-player {
+.player-box :deep(.video-js) {
   width: 100%;
   height: 100%;
-  background: #000;
 }
 
-.retry-btn.ghost {
-  background: transparent;
-  border: 1px solid var(--color-border, var(--color-hairline));
-  color: var(--color-text-primary);
+.recover-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 14px;
 }
 
 .retry-btn {
@@ -244,33 +219,19 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+.retry-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  color: var(--color-text-primary);
+}
+
 .meta-section {
   padding: var(--spacing-md) var(--spacing-md) 0;
 }
 
-.control-bar {
-  display: flex;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md) 0;
-}
-
-.ctrl-btn {
-  flex: 1;
-  padding: 10px 0;
-  border: 1px solid var(--color-border, var(--color-hairline));
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-
-.ctrl-btn.speed {
-  color: var(--color-primary);
-  font-weight: 600;
-}
-
 .provider-row {
+  display: flex;
+  gap: var(--spacing-xs);
   margin-bottom: var(--spacing-xs);
 }
 
@@ -282,13 +243,13 @@ onBeforeUnmount(() => {
   color: var(--color-text-secondary);
 }
 
-.provider-badge.chinese {
-  background: #e8590c;
+.provider-badge.missav {
+  background: var(--color-primary);
   color: #fff;
 }
 
-.provider-badge.missav {
-  background: var(--color-primary);
+.provider-badge.chinese {
+  background: #e8590c;
   color: #fff;
 }
 
