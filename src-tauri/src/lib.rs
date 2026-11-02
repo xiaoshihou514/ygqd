@@ -906,6 +906,7 @@ pub fn run() {
                 Some(&address)
             })?;
             app.manage(GatewayManager::new());
+            gateway::diag(&app.handle(), "app setup done (db opened)");
             app.manage(AppState {
                 niacg,
                 video,

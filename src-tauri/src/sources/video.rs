@@ -213,9 +213,20 @@ impl VideoApi {
         })
     }
 
-    /// 按关键词搜索:默认双源合并——fs1 直连(番号/日文词,带完整元数据)
-    /// + missav 网关(收录更全,支持中文词);fs1 在前,按基础番号去重。
-    /// missav 网关未就绪时静默降级为单源。
+    /// 按关键词搜索:桌面为双源合并(fs1 + missav 网关);
+    /// Android 仅 fs1——手机网络下 missav 全链路(CF 挑战+CDN)不可达,
+    /// 网关方案在移动端不成立,直接走稳定可达的 fs1。
+    #[cfg(target_os = "android")]
+    pub async fn search(
+        &self,
+        _app: &tauri::AppHandle,
+        keyword: &str,
+        page: i32,
+    ) -> Result<VideoListResult, String> {
+        self.search_fs1(keyword, page).await
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub async fn search(
         &self,
         app: &tauri::AppHandle,
@@ -229,18 +240,51 @@ impl VideoApi {
             let encoded =
                 url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
             // 导航式抓取:网关窗口直接跳搜索页,浏览器完整处理 CF 与 JS 渲染
-            let html = gateway::navigate_and_dump(
+            let r = gateway::navigate_and_dump(
                 app,
                 &manager,
                 "missav",
                 &format!("https://missav.ai/dm539/search/{encoded}"),
                 4500,
             )
-            .await?;
-            Ok::<_, String>(Self::parse_missav_search(&html))
+            .await;
+            match &r {
+                Ok(html) => {
+                    let cards = Self::parse_missav_search(html);
+                    // 转储样本供解析失败分析(仅保留最新一次)
+                    use tauri::Manager as _;
+                    if let Ok(dir) = app.path().app_data_dir() {
+                        let _ = std::fs::write(dir.join("search_dump.html"), html);
+                    }
+                    crate::gateway::diag(
+                        app,
+                        &format!(
+                            "missav search ok html={}B cards={}",
+                            html.len(),
+                            cards.len()
+                        ),
+                    );
+                    Ok::<_, String>(cards)
+                }
+                Err(e) => {
+                    crate::gateway::diag(app, &format!("missav search FAIL: {e}"));
+                    Err(e.clone())
+                }
+            }
         };
         let fs1_res = fs1_fut.await;
-        let missav_res = missav_fut.await.unwrap_or_default();
+        let missav_res = match missav_fut.await {
+            Ok(v) => v,
+            Err(e) => {
+                if let Ok(fs1) = &fs1_res {
+                    if !fs1.items.is_empty() {
+                        crate::gateway::diag(app, "missav branch failed, degraded to fs1 only");
+                        return Ok(fs1.clone());
+                    }
+                }
+                return Err(e);
+            }
+        };
 
         let mut fs1 = match fs1_res {
             Ok(v) => v.items,
@@ -289,12 +333,11 @@ impl VideoApi {
         })
     }
 
-    /// 解析 missav 搜索结果页:href={code} 锚点 + fourhoi 规律封面 +
-    /// 标题为锚点后窗口内以「番号大写 」开头的文本节点(卡片网格中
-    /// 标题集中在图块之后,需按番号前缀归属)
+    /// 解析 missav 搜索结果页:通用 href 提取(任意形态路径,join 后取
+    /// 末段判定番号;SSR 与 Vue hydration 后的 DOM 均适用) +
+    /// fourhoi.com/{code}/cover-t.jpg 规律封面 + 番号前缀归属标题
     fn parse_missav_search(html: &str) -> Vec<VideoCard> {
-        let re_href =
-            Regex::new(r#"href="https://missav\.ai/([a-z0-9-]+)""#).expect("static regex");
+        let re_href = Regex::new(r#"href="([^"]+)""#).expect("static regex");
         let is_video_code = |code: &str| {
             Regex::new(r"^([a-z]{2,6}-\d{2,5}(-chinese-subtitle)?|fc2-ppv-\d+)$")
                 .unwrap()
@@ -303,7 +346,14 @@ impl VideoApi {
         let anchors: Vec<(usize, String)> = re_href
             .captures_iter(html)
             .filter_map(|c| {
-                let code = c.get(1)?.as_str().to_string();
+                let href = c.get(1)?.as_str();
+                // 相对/绝对/带语言前缀统一 join 后取末段
+                let joined = url::Url::parse("https://missav.ai/")
+                    .unwrap()
+                    .join(href)
+                    .ok()?;
+                let seg = joined.path().trim_matches('/');
+                let code = seg.split('/').next_back()?.to_lowercase();
                 if !is_video_code(&code) {
                     return None;
                 }
