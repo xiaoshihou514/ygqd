@@ -70,7 +70,10 @@ jobs:
         run: npm run type-check
 
       - name: Initialize Android project
-        run: npm run android:init
+        run: |
+          npm run android:init
+          # 本地流代理走 http://127.0.0.1(release 默认禁明文),放开
+          sed -i 's/manifestPlaceholders\["usesCleartextTraffic"\] = "false"/manifestPlaceholders["usesCleartextTraffic"] = "true"/' src-tauri/gen/android/app/build.gradle.kts
 
       - name: Configure release signing
         env:
