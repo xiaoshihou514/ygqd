@@ -3,15 +3,10 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import videojs from 'video.js'
-// video.js v10 类型导出不完整,用最小接口声明用到的能力
-interface VjsPlayer {
-  dispose(): void
-  src(source: { src: string; type: string }): void
-  play(): Promise<void>
-  error(): { code?: number; message?: string } | null
-  on(event: string, cb: (...args: unknown[]) => void): void
-}
+import zhCN from 'video.js/dist/lang/zh-CN.json'
 import 'video.js/dist/video-js.css'
+// 中文界面
+videojs.addLanguage('zh-CN', zhCN)
 import { fetchVideoDetail, recordVideoWatched } from '@/services/api'
 import type { VideoDetail } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -25,7 +20,7 @@ const loading = ref(true)
 const error = ref('')
 const recovering = ref(false)
 let recoverCount = 0
-let player: VjsPlayer | null = null
+let player: ReturnType<typeof videojs> | null = null
 const playerEl = ref<HTMLDivElement | null>(null)
 
 async function nextFrame(): Promise<void> {
@@ -57,23 +52,17 @@ async function setupPlayer(m3u8: string) {
   // 用 video.js 内置 VHS 引擎拉流(HLS 与 AES-128 原生支持);
   // 源地址是本地流代理(Rust 带站点 Referer 转发上游 CDN)
   // v10 类型导出不完整,断言为本地最小接口
-  player = videojs(
-    playerEl.value,
-    {
-      controls: true,
-      fluid: true,
-      preload: 'auto',
-      playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
-      controlBar: { pictureInPictureToggle: false },
-      html5: {
-        vhs: { limitRenditionByPlayerDimensions: false, useDevicePixelRatio: true },
-      },
+  player = videojs(playerEl.value, {
+    controls: true,
+    fluid: true,
+    preload: 'auto',
+    language: 'zh-CN',
+    playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
+    controlBar: { pictureInPictureToggle: false },
+    html5: {
+      vhs: { limitRenditionByPlayerDimensions: false, useDevicePixelRatio: true },
     },
-    () => {
-      player?.src({ src: m3u8, type: 'application/vnd.apple.mpegurl' })
-      player?.play().catch(() => {})
-    },
-  ) as unknown as VjsPlayer
+  })
 
   player.on('error', async () => {
     const err = player?.error()
@@ -86,10 +75,12 @@ async function setupPlayer(m3u8: string) {
       recoverCount += 1
       recovering.value = true
       try {
+        const playerNow = player
         const fresh = await fetchVideoDetail(detail.value.code)
         detail.value = fresh
-        player?.src({ src: fresh.m3u8, type: 'application/vnd.apple.mpegurl' })
-        player?.play().catch(() => {})
+        playerNow?.src({ src: fresh.m3u8, type: "application/vnd.apple.mpegurl" })
+        void playerNow?.play()?.catch(() => undefined)
+        void (playerNow?.play())?.catch(() => undefined)
       } catch {
         error.value = '播放地址已过期且刷新失败,请返回重进'
       } finally {

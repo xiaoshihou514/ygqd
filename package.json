@@ -22,7 +22,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
     "is-mobile": "^5.0.0",
-    "video.js": "^10.2.0",
+    "video.js": "^8.24.2",
     "vue": "^3.5.32",
     "vue-router": "^4.6.4"
   },
