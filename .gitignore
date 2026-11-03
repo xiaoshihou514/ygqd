@@ -46,3 +46,6 @@ release.keystore
 
 .zcode
 .scratch/
+
+# 外部智能体工具运行残留
+.video_agent/
