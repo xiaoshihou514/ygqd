@@ -62,6 +62,8 @@ jobs:
             "build-tools;$BUILD_TOOLS_VERSION" \
             "ndk;$NDK_VERSION"
           echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          # boring-sys2(wreq 的 BoringSSL)按 ANDROID_NDK_HOME 定位交叉编译工具链
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
         run: npm ci
