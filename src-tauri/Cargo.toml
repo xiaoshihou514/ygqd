@@ -16,11 +16,15 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "cookies", "json", "blocking"] }
+# missav 按客户端 TLS 指纹拦截(403),wreq 模拟 Chrome 指纹直连(内部为
+# BoringSSL,Android 交叉编译需环境变量 ANDROID_NDK_HOME)
+wreq = "0.15"
+wreq-util = "0.1"
 scraper = "0.24"
 regex = "1"
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.23.1"

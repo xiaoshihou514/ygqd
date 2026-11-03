@@ -1,15 +1,14 @@
 //! 视频板块:fs1.app(Jable 系,服务端渲染,reqwest 直连可达)。
 //! 列表/搜索/详情解析;m3u8 直接内嵌在详情页 HTML。
-//! missav.ai 按 TLS 指纹拦截 reqwest(403),播放地址仅在 fs1 失效时
-//! 经 WebView 网关兜底,常规播放使用 fs1 的 m3u8。
+//! missav.ai 按 TLS 指纹拦截通用客户端(403):用 wreq 模拟 Chrome 指纹
+//! 直连(搜索/兜底播放地址均不再经 WebView 网关);播放地址在详情页的
+//! Dean Edwards packer 混淆脚本内,由 unpack_packed 解码提取。
 
-use crate::gateway;
 use crate::models::*;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use scraper::{Html, Selector};
 use std::{sync::OnceLock, time::Duration};
-use tauri::Manager as _;
 
 const BASE: &str = "https://fs1.app";
 
@@ -29,6 +28,116 @@ fn absolute_url(value: &str) -> String {
 
 fn sel(value: &str) -> Selector {
     Selector::parse(value).expect("static selector")
+}
+
+/// 提取 meta-refresh 跳转地址并解析为绝对 URL(无则返回 None)。
+/// missav 详情路径会先返回形如
+/// `<meta http-equiv="refresh" content="0;url='https://missav.ai/dm82/…'">` 的跳转页
+fn meta_refresh_url(html: &str, base_url: &str) -> Option<String> {
+    let tag_re =
+        Regex::new(r#"(?is)<meta[^>]*http-equiv\s*=\s*['"]?refresh[^>]*>"#).expect("static regex");
+    let url_re = Regex::new(r#"(?i)url\s*=\s*['"]?([^'">\s]+)"#).expect("static regex");
+    let tag = tag_re.find(html)?.as_str();
+    let target = url_re.captures(tag)?.get(1)?.as_str();
+    let base = url::Url::parse(base_url).ok()?;
+    base.join(&target.replace("&amp;", "&"))
+        .ok()
+        .map(|u| u.to_string())
+}
+
+/// 解码 Dean Edwards packer:
+/// `eval(function(p,a,c,k,e,d){…}('载荷',进制,词数,'k1|k2|…'.split('|'),0,{}))`
+/// 与网关 JS 的 `eval` 求值等价:词表按序号(转 base 进制)回填载荷
+fn unpack_packed(block: &str) -> Option<String> {
+    let re = Regex::new(
+        r#"(?s)\}\('((?:[^'\\]|\\.)*)',(\d+),(\d+),'((?:[^'\\]|\\.)*)'\.split\('\|'\),0,\{\}\)\)$"#,
+    )
+    .expect("static regex");
+    let caps = re.captures(block.trim())?;
+    let payload = js_unescape(caps.get(1)?.as_str())?;
+    let radix: u32 = caps.get(2)?.as_str().parse().ok()?;
+    let count: usize = caps.get(3)?.as_str().parse().ok()?;
+    let words: Vec<String> = js_unescape(caps.get(4)?.as_str())?
+        .split('|')
+        .map(str::to_string)
+        .collect();
+    if radix < 2 || radix > 62 {
+        return None;
+    }
+    let mut out = payload;
+    for (i, word) in words.iter().enumerate().rev().take(count) {
+        if word.is_empty() {
+            continue;
+        }
+        let token = to_base(i as u32, radix);
+        let token_re = Regex::new(&format!(r"\b{}\b", regex::escape(&token))).expect("token regex");
+        out = token_re
+            .replace_all(&out, regex::NoExpand(word))
+            .to_string();
+    }
+    Some(out)
+}
+
+/// 从 HTML 中解码首个含 m3u8 的 packer 块(与网关 JS 一致取首个地址)
+fn extract_packed_m3u8(html: &str) -> Option<String> {
+    let re = Regex::new(r"eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\)\)").expect("static regex");
+    let m3u8_re = Regex::new(r#"https?://[^"'\s]+\.m3u8[^"'\s]*"#).expect("static regex");
+    for block in re.find_iter(html) {
+        let Some(decoded) = unpack_packed(block.as_str()) else {
+            continue;
+        };
+        if let Some(m) = m3u8_re.find(&decoded) {
+            return Some(m.as_str().to_string());
+        }
+    }
+    None
+}
+
+/// JS 字符串字面量反转义(处理 packer 载荷中的 \\' \\\\ 等转义)
+fn js_unescape(s: &str) -> Option<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next()? {
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            'b' => out.push('\u{8}'),
+            'f' => out.push('\u{c}'),
+            'x' => {
+                let hi = chars.next()?;
+                let lo = chars.next()?;
+                let byte = u8::from_str_radix(&format!("{hi}{lo}"), 16).ok()?;
+                out.push(byte as char);
+            }
+            'u' => {
+                let hex: String = chars.by_ref().take(4).collect();
+                let cp = u32::from_str_radix(&hex, 16).ok()?;
+                out.push(char::from_u32(cp).unwrap_or('\u{fffd}'));
+            }
+            other => out.push(other),
+        }
+    }
+    Some(out)
+}
+
+/// JS Number.toString(radix) 同款进制表示(0-9a-zA-Z,radix ≤ 62)
+fn to_base(mut n: u32, radix: u32) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    if n == 0 {
+        return "0".into();
+    }
+    let mut buf = Vec::new();
+    while n > 0 {
+        buf.push(DIGITS[(n % radix) as usize]);
+        n /= radix;
+    }
+    buf.reverse();
+    String::from_utf8(buf).expect("ascii digits")
 }
 
 /// 视频卡片项(列表/搜索共用)
@@ -63,6 +172,8 @@ pub struct VideoListResult {
 
 pub struct VideoApi {
     pub client: reqwest::Client,
+    /// missav 专用:Chrome TLS 指纹(wreq 默认不跟随重定向,构建时已设跟随)
+    pub missav: wreq::Client,
 }
 
 fn selectors() -> &'static (Selector, Selector, Selector, Selector) {
@@ -93,7 +204,14 @@ impl VideoApi {
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Self { client })
+        let missav = wreq::Client::builder()
+            .emulation(wreq_util::Emulation::Chrome131)
+            .redirect(wreq::redirect::Policy::limited(5))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| e.to_string())?;
+        Ok(Self { client, missav })
     }
 
     async fn get(&self, path: &str) -> Result<String, String> {
@@ -112,6 +230,63 @@ impl VideoApi {
             .text()
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// missav 直连 GET:HTTP 重定向由客户端跟随,HTML meta-refresh
+    /// (dm 前缀轮换产生的跳转页)在此手动跟进,返回最终 HTML
+    async fn missav_get(&self, url: &str) -> Result<String, String> {
+        let mut current = url.to_string();
+        for _hop in 0..3 {
+            let resp = self
+                .missav
+                .get(&current)
+                .header(REFERER, "https://missav.ai/")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let status = resp.status();
+            let body = resp.text().await.map_err(|e| e.to_string())?;
+            if !status.is_success() {
+                return Err(format!("HTTP {status}"));
+            }
+            match meta_refresh_url(&body, &current) {
+                Some(next) => current = next,
+                None => return Ok(body),
+            }
+        }
+        Err("missav 重定向次数过多".into())
+    }
+
+    /// missav 搜索(中文词兜底):dm539 搜索页为服务端渲染,直连可达
+    async fn search_missav(&self, keyword: &str, page: i32) -> Result<Vec<VideoCard>, String> {
+        let encoded = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
+        let html = self
+            .missav_get(&format!(
+                "https://missav.ai/dm539/search/{encoded}?page={page}"
+            ))
+            .await?;
+        let mut cards = Self::parse_missav_search(&html);
+        // hydration DOM 形态不可预知:主解析为空时全文番号扫描兜底
+        if cards.is_empty() {
+            cards = Self::scan_codes_fallback(&html);
+        }
+        Ok(cards)
+    }
+
+    /// missav 兜底播放地址:详情页的 packer 混淆脚本解码出 m3u8。
+    /// 优先中文字幕变体,不存在回退原番号。
+    async fn missav_m3u8(&self, code: &str) -> Result<(String, bool), String> {
+        let lower = code.to_lowercase();
+        for (path, chinese) in [(format!("{lower}-chinese-subtitle"), true), (lower, false)] {
+            let url = format!("https://missav.ai/videos/{path}");
+            let Ok(html) = self.missav_get(&url).await else {
+                continue;
+            };
+            if let Some(m3u8) = extract_packed_m3u8(&html) {
+                return Ok((m3u8, chinese));
+            }
+        }
+        Err("missav 详情页未找到播放地址".into())
     }
 
     /// 解析列表/搜索页的卡片网格
@@ -236,159 +411,36 @@ impl VideoApi {
         })
     }
 
-    /// 按关键词搜索(Android):fs1 优先(番号/日文词,无网关开销);
-    /// fs1 无结果时(中文词在 fs1 索引无数据)走 missav 导航式兜底。
-    #[cfg(target_os = "android")]
-    pub async fn search(
-        &self,
-        app: &tauri::AppHandle,
-        keyword: &str,
-        page: i32,
-    ) -> Result<VideoListResult, String> {
-        use tauri::Manager as _;
-        let fs1 = self.search_fs1(keyword, page).await?;
-        if !fs1.items.is_empty() {
-            return Ok(fs1);
-        }
-        // fs1 无结果:missav 网关导航式兜底(用户首次过 CF 后会话持久)
-        let manager = app.state::<crate::GatewayManager>();
-        let encoded = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
-        let html = match crate::gateway::navigate_and_dump(
-            app,
-            &manager,
-            "missav",
-            &format!("https://missav.ai/dm539/search/{encoded}"),
-            4500,
-        )
-        .await
-        {
-            Ok(html) => html,
+    /// 按关键词搜索:fs1 与 missav(直连)并发请求并合并,同基础番号
+    /// 以 fs1 为准(fs1 有完整元数据);两路均失败时返回错误。
+    pub async fn search(&self, keyword: &str, page: i32) -> Result<VideoListResult, String> {
+        let (fs1_res, missav) = tokio::join!(self.search_fs1(keyword, page), async {
+            self.search_missav(keyword, page).await.unwrap_or_default()
+        });
+        let mut items = match fs1_res {
+            Ok(r) => r.items,
             Err(e) => {
-                crate::gateway::diag(app, &format!("missav search FAIL: {e}"));
-                return Ok(fs1); // 兜底失败返回 fs1 的空结果
-            }
-        };
-        let mut cards = Self::parse_missav_search(&html);
-        if cards.is_empty() {
-            cards = Self::scan_codes_fallback(&html);
-        }
-        crate::gateway::diag(
-            app,
-            &format!(
-                "missav search ok html={}B cards={}",
-                html.len(),
-                cards.len()
-            ),
-        );
-        Ok(VideoListResult {
-            pagination: PaginationInfo {
-                current: page - 1,
-                total: 0,
-                has_next: !cards.is_empty(),
-                has_prev: page > 1,
-            },
-            items: cards,
-        })
-    }
-
-    #[cfg(not(target_os = "android"))]
-    pub async fn search(
-        &self,
-        app: &tauri::AppHandle,
-        keyword: &str,
-        page: i32,
-    ) -> Result<VideoListResult, String> {
-        use tauri::Manager as _;
-        let fs1_fut = self.search_fs1(keyword, page);
-        let missav_fut = async {
-            let manager = app.state::<crate::GatewayManager>();
-            let encoded =
-                url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
-            // 导航式抓取:网关窗口直接跳搜索页,浏览器完整处理 CF 与 JS 渲染
-            let r = gateway::navigate_and_dump(
-                app,
-                &manager,
-                "missav",
-                &format!("https://missav.ai/dm539/search/{encoded}"),
-                4500,
-            )
-            .await;
-            match &r {
-                Ok(html) => {
-                    let mut cards = Self::parse_missav_search(html);
-                    // hydration DOM 形态不可预知:主解析为空时全文番号扫描兜底
-                    if cards.is_empty() {
-                        cards = Self::scan_codes_fallback(html);
-                        if !cards.is_empty() {
-                            crate::gateway::diag(
-                                app,
-                                &format!("missav 主解析 0 卡,兜底扫描 {} 卡", cards.len()),
-                            );
-                        }
-                    }
-                    // 转储样本供解析失败分析(仅保留最新一次)
-                    use tauri::Manager as _;
-                    if let Ok(dir) = app.path().app_data_dir() {
-                        let _ = std::fs::write(dir.join("search_dump.html"), html);
-                    }
-                    crate::gateway::diag(
-                        app,
-                        &format!(
-                            "missav search ok html={}B cards={}",
-                            html.len(),
-                            cards.len()
-                        ),
-                    );
-                    Ok::<_, String>(cards)
-                }
-                Err(e) => {
-                    crate::gateway::diag(app, &format!("missav search FAIL: {e}"));
-                    Err(e.clone())
-                }
-            }
-        };
-        let fs1_res = fs1_fut.await;
-        let missav_res = match missav_fut.await {
-            Ok(v) => v,
-            Err(e) => {
-                if let Ok(fs1) = &fs1_res {
-                    if !fs1.items.is_empty() {
-                        crate::gateway::diag(app, "missav branch failed, degraded to fs1 only");
-                        return Ok(fs1.clone());
-                    }
-                }
-                return Err(e);
-            }
-        };
-
-        let mut fs1 = match fs1_res {
-            Ok(v) => v.items,
-            Err(e) => {
-                if missav_res.is_empty() {
+                if missav.is_empty() {
                     return Err(e);
                 }
                 Vec::new()
             }
         };
-        // missav 结果追加,同基础番号以 fs1 为准(fs1 有完整元数据)
-        fn base(code: &str) -> &str {
-            code.strip_suffix("-chinese-subtitle").unwrap_or(code)
-        }
-        for card in missav_res {
-            if fs1.iter().any(|c| base(&c.code) == base(&card.code)) {
+        for card in missav {
+            let base = base_code(&card.code);
+            if items.iter().any(|c| base_code(&c.code) == base) {
                 continue;
             }
-            fs1.push(card);
+            items.push(card);
         }
-        let has_next = fs1.len() >= 20;
         Ok(VideoListResult {
             pagination: PaginationInfo {
                 current: page - 1,
                 total: 0,
-                has_next,
+                has_next: items.len() >= 20,
                 has_prev: page > 1,
             },
-            items: fs1,
+            items,
         })
     }
 
@@ -449,7 +501,12 @@ impl VideoApi {
                 regex::escape(&upper)
             ))
             .expect("static regex");
-            let window = &html[*pos..(*pos + 9000).min(html.len())];
+            // 窗口终点按 UTF-8 字符边界右移(zh-Hant 页面多字节字符会落进窗口)
+            let mut end = (*pos + 9000).min(html.len());
+            while end < html.len() && !html.is_char_boundary(end) {
+                end += 1;
+            }
+            let window = &html[*pos..end];
             let title = re_t
                 .captures(window)
                 .map(|c| {
@@ -541,49 +598,22 @@ impl VideoApi {
 
     /// 优先使用已验证可直连的 fs1 播放地址,失败后再以 missav 兜底。
     /// 两端均优先尝试中文字幕版本。
-    pub async fn detail(&self, app: &tauri::AppHandle, code: &str) -> Result<VideoDetail, String> {
+    pub async fn detail(&self, code: &str) -> Result<VideoDetail, String> {
         match self.detail_fs1(code).await {
             Ok(detail) => Ok(detail),
-            Err(fs1_error) => {
-                let manager = app.state::<crate::GatewayManager>();
-                let lower = code.to_lowercase();
-                let missav_cs = crate::gateway::gateway_fetch_extract_m3u8(
-                    app,
-                    &manager,
-                    "missav",
-                    &format!("https://missav.ai/videos/{lower}-chinese-subtitle"),
-                )
-                .await;
-                let (missav, chinese) = match missav_cs {
-                    Ok(m3u8) if !m3u8.is_empty() => (Ok(m3u8), true),
-                    _ => (
-                        crate::gateway::gateway_fetch_extract_m3u8(
-                            app,
-                            &manager,
-                            "missav",
-                            &format!("https://missav.ai/videos/{lower}"),
-                        )
-                        .await,
-                        false,
-                    ),
-                };
-                match missav {
-                    Ok(m3u8) if !m3u8.is_empty() => Ok(VideoDetail {
-                        code: lower,
-                        title: code.to_uppercase(),
-                        tags: vec![],
-                        m3u8,
-                        provider: "missav".into(),
-                        chinese,
-                    }),
-                    Ok(_) => Err(format!(
-                        "fs1 播放地址不可用({fs1_error}); missav 未返回播放地址"
-                    )),
-                    Err(missav_error) => Err(format!(
-                        "fs1 播放地址不可用({fs1_error}); missav 兜底失败({missav_error})"
-                    )),
-                }
-            }
+            Err(fs1_error) => match self.missav_m3u8(code).await {
+                Ok((m3u8, chinese)) => Ok(VideoDetail {
+                    code: code.to_lowercase(),
+                    title: code.to_uppercase(),
+                    tags: vec![],
+                    m3u8,
+                    provider: "missav".into(),
+                    chinese,
+                }),
+                Err(missav_error) => Err(format!(
+                    "fs1 播放地址不可用({fs1_error}); missav 兜底失败({missav_error})"
+                )),
+            },
         }
     }
 }
@@ -642,6 +672,31 @@ mod tests {
             absolute_url("https://cdn.example/cover.jpg"),
             "https://cdn.example/cover.jpg"
         );
+    }
+
+    #[test]
+    fn unpacks_packed_player_source() {
+        // 真实样本:ssis-960-chinese-subtitle 详情页的 source 配置块(radix 15)
+        let block = r#"eval(function(p,a,c,k,e,d){e=function(c){return c.toString(36)};if(!''.replace(/^/,String)){while(c--){d[c.toString(a)]=k[c]||c.toString(a)}k=[function(e){return d[e]}];e=function(){return'\\w+'};c=1};while(c--){if(k[c]){p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c])}}return p}('e=\'8://7.6/5-4-3-2-1/d.0\';c=\'8://7.6/5-4-3-2-1/a/9.0\';b=\'8://7.6/5-4-3-2-1/a/9.0\';',15,15,'m3u8|b0b0abf841ac|83f0|4897|3c25|4a5f763b|com|surrit|https|video|720p|source1280|source842|playlist|source'.split('|'),0,{}))"#;
+        let decoded = unpack_packed(block).expect("应解码 packer 块");
+        assert!(
+            decoded
+                .contains("https://surrit.com/4a5f763b-3c25-4897-83f0-b0b0abf841ac/playlist.m3u8"),
+            "解码结果应含主清单地址: {decoded}"
+        );
+        assert_eq!(
+            extract_packed_m3u8(&format!("<html>{block}</html>")).as_deref(),
+            Some("https://surrit.com/4a5f763b-3c25-4897-83f0-b0b0abf841ac/playlist.m3u8")
+        );
+    }
+
+    #[test]
+    fn follows_meta_refresh() {
+        let html = r#"<html><head><meta charset="UTF-8" /><meta http-equiv="refresh" content="0;url='https://missav.ai/dm82/ssis-960-chinese-subtitle'" /></head></html>"#;
+        let next = meta_refresh_url(html, "https://missav.ai/dm539/ssis-960-chinese-subtitle")
+            .expect("应提取 meta-refresh 地址");
+        assert_eq!(next, "https://missav.ai/dm82/ssis-960-chinese-subtitle");
+        assert!(meta_refresh_url("<p>无跳转</p>", "https://missav.ai/").is_none());
     }
 
     #[test]
@@ -713,9 +768,8 @@ mod tests {
 mod missav_tests {
     use super::*;
 
-    /// missav 全量链路(桌面网络,需可达 missav.ai):
-    /// 网关导航式搜索 → 解析 → 详情(eval 提取 m3u8)→ 流代理拉取
-    /// 注意:此测试依赖 tauri AppHandle(网关窗口),仅桌面 dev 环境可跑;
+    /// missav 直连全量链路(桌面网络,需可达 missav.ai):
+    /// 指纹客户端搜索 → 解析 → 详情(packer 解码 m3u8)→ 流代理拉取。
     /// CI/无头环境忽略。播放分片与快进(Range)由 stream_proxy 单测覆盖。
     #[test]
     #[ignore = "missav 全量联调:需桌面网络可达 missav.ai"]
@@ -725,61 +779,71 @@ mod missav_tests {
             .block_on(async {
                 let api = VideoApi::new().expect("video client");
 
-                // 1) fs1 侧元数据(ATID-707 在 fs1 有收录)
-                let detail = api.detail_fs1("atid-707").await.expect("fs1 detail");
-                println!(
-                    "fs1 detail: title={}..",
-                    detail.title.chars().take(16).collect::<String>()
-                );
-                assert!(!detail.m3u8.is_empty(), "fs1 m3u8 不应为空");
+                // 1) 直连搜索(中文词兜底路径)
+                let cards = api.search_missav("ssis", 1).await.expect("missav search");
+                println!("missav search: {} cards", cards.len());
+                assert!(!cards.is_empty(), "missav 搜索不应为空");
 
-                // 2) missav 中字变体存在性(导航式网关在桌面无 AppHandle 不跑;
-                //    此处直接验证 missav 搜索解析器对真实页面的行为——
-                //    用 fs1 列表页做解析器回归样本源)
-                let list = api.list(1).await.expect("fs1 list");
-                assert!(!list.items.is_empty());
+                // 2) 详情兜底:packer 解码出 m3u8(优先中字变体)
+                let code = cards[0].code.clone();
+                let (m3u8, chinese) = api.missav_m3u8(&code).await.expect("missav m3u8");
+                println!("missav m3u8[{code}]: chinese={chinese} {m3u8}");
+                assert!(m3u8.starts_with("https://"), "m3u8 应为绝对地址");
+                assert!(url::Url::parse(&m3u8).unwrap().path().ends_with(".m3u8"));
 
-                // 3) 流代理核心:fs1 m3u8 拉取+重写
-                let (is_playlist, rewritten, _b) = crate::stream_proxy::fetch_hls(&detail.m3u8)
+                // 3) 流代理核心:surrit 清单拉取+重写(referer_for 已适配)
+                let (is_playlist, rewritten, _b) = crate::stream_proxy::fetch_hls(&m3u8)
                     .await
                     .expect("hls fetch");
                 assert!(is_playlist);
                 assert!(rewritten.starts_with("#EXTM3U"));
                 println!("m3u8 rewritten: {}B", rewritten.len());
+            });
+    }
 
-                // 4) 从重写后的清单取媒体分片地址,验证二进制拉取
-                println!("rewritten head:");
-                for l in rewritten.lines().take(6) {
-                    println!("  | {l}");
+    /// 完整 search() 链路真实关键词联调(桌面网络):验证 fs1→missav
+    /// 兜底分叉与统一返回;并顺带验证首个结果的详情链路。
+    #[test]
+    #[ignore = "真实关键词联调:需桌面网络可达 fs1/missav"]
+    fn search_full_chain_real_keyword() {
+        tokio::runtime::Runtime::new()
+            .expect("tokio runtime")
+            .block_on(async {
+                let api = VideoApi::new().expect("video client");
+                for kw in ["giga", "中文字幕"] {
+                    let fs1 = api.search_fs1(kw, 1).await;
+                    let missav = api.search_missav(kw, 1).await;
+                    let full = api.search(kw, 1).await.expect("search");
+                    println!(
+                        "[{kw}] fs1={} missav={} search()={} has_next={}",
+                        fs1.as_ref().map(|r| r.items.len()).unwrap_or(999),
+                        missav.as_ref().map(|v| v.len()).unwrap_or(999),
+                        full.items.len(),
+                        full.pagination.has_next
+                    );
+                    for card in full.items.iter().take(3) {
+                        println!(
+                            "  - {} | {}",
+                            card.code,
+                            card.title.chars().take(24).collect::<String>()
+                        );
+                    }
                 }
-                let lines_vec: Vec<&str> = rewritten.lines().collect();
-                let seg = lines_vec
-                    .windows(2)
-                    .find(|w| w[0].starts_with("#EXTINF"))
-                    .map(|w| w[1].trim().to_string())
-                    .unwrap_or_default();
-                println!("segment url: {seg}");
-                let (is_pl, ct, bytes) = crate::stream_proxy::fetch_hls(&seg)
-                    .await
-                    .expect("segment fetch");
-                assert!(!is_pl);
-                println!("segment: ct={ct} bytes={}", bytes.len());
-                assert!(bytes.len() > 10_000, "分片过小");
-
-                // 5) Range 快进模拟:带 Range 头请求中段
-                let client = reqwest::Client::new();
-                let r = client
-                    .get(seg)
-                    .header("Referer", "https://fs1.app/")
-                    .header("Range", "bytes=1000000-1000999")
-                    .send()
-                    .await
-                    .expect("range request");
-                println!(
-                    "Range 请求: {} ({}B)",
-                    r.status(),
-                    r.bytes().await.unwrap().len()
-                );
+                // 首个结果的详情链路(fs1 或 missav 兜底)
+                let first = api.search("giga", 1).await.expect("search").items;
+                if let Some(card) = first.first() {
+                    let detail = api.detail(&card.code).await.expect("detail");
+                    println!(
+                        "detail[{}]: provider={} chinese={} m3u8={}",
+                        detail.code,
+                        detail.provider,
+                        detail.chinese,
+                        &detail.m3u8[..detail.m3u8.len().min(70)]
+                    );
+                    assert!(detail.m3u8.starts_with("https://"));
+                } else {
+                    panic!("giga 搜索应至少命中一路源");
+                }
             });
     }
 }

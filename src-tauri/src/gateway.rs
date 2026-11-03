@@ -1,6 +1,6 @@
 //! WebView 网关:借应用内嵌 webview 的浏览器环境(真 Chrome 网络栈 +
-//! 持久 cookie)处理 Cloudflare 验证与登录,供 hlib(小说)与
-//! missav(视频播放地址解析)抓取使用。
+//! 持久 cookie)处理 Cloudflare 验证与登录,供 hlib(小说)抓取使用。
+//! (视频源 missav 已改为 wreq 指纹直连,不再走网关)
 //!
 //! 回传通道(关键):网关加载的是远程页面,远程页没有 Tauri IPC 桥,
 //! 一切 invoke 方案都不可行。回传统一走**本地回环 HTTP 代理**
@@ -93,7 +93,6 @@ impl GatewayManager {
 fn site(label: &str) -> Option<(&'static str, &'static str)> {
     match label {
         "hlib" => Some(("https://hlib.cc/", "小说源连接")),
-        "missav" => Some(("https://missav.ai/", "视频源连接")),
         _ => None,
     }
 }
@@ -207,7 +206,6 @@ fn dispatch_fetch(
     window: &tauri::WebviewWindow,
     manager: &GatewayManager,
     url: &str,
-    extract_m3u8: bool,
     search_keyword: Option<&str>,
 ) -> Result<tokio::sync::oneshot::Receiver<GatewayReply>, String> {
     let port = stream_proxy::port();
@@ -221,7 +219,6 @@ fn dispatch_fetch(
     let rx = manager.register(id.clone());
     let js_url = serde_json::to_string(url).map_err(|e| e.to_string())?;
     let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
-    let extract = if extract_m3u8 { "true" } else { "false" };
     let search = if search_keyword.is_some() {
         "true"
     } else {
@@ -292,19 +289,7 @@ fn dispatch_fetch(
       post(r.status, body);
     }} else {{
       const r = await fetch({js_url}, {{ credentials: "include" }});
-      let body = await r.text();
-      if ({extract}) {{
-        let found = "";
-        const blocks = body.match(/eval\\(function\\(p,a,c,k,e,d\\)\\{{[\\s\\S]*?\\}}\\)\\)/g) || [];
-        for (const block of blocks) {{
-          try {{
-            const out = new Function("return " + block.replace(/^eval/, ""))();
-            const urls = String(out).match(/https?:\\/\\/[^"'\\s]+\\.m3u8[^"'\\s]*/g);
-            if (urls && urls.length) {{ found = urls[0]; break; }}
-          }} catch (e2) {{}}
-        }}
-        body = found;
-      }}
+      const body = await r.text();
       post(r.status, body);
     }}
   }} catch (e) {{
@@ -323,12 +308,11 @@ async fn gateway_fetch_inner(
     manager: &GatewayManager,
     label: &str,
     url: &str,
-    extract_m3u8: bool,
     search_keyword: Option<&str>,
 ) -> Result<String, String> {
     use tauri::Manager as _;
     let window = ensure_ready(app, label).await?;
-    let mut rx = dispatch_fetch(&window, manager, url, extract_m3u8, search_keyword)?;
+    let mut rx = dispatch_fetch(&window, manager, url, search_keyword)?;
 
     let mut last: Option<(u16, String)> = None;
     for _attempt in 0..4 {
@@ -356,7 +340,7 @@ async fn gateway_fetch_inner(
         last = Some((status, reply.body));
         // 挑战:静默重试(网关已在前台供用户操作,不重复抢焦点)
         wait_until_ready(&window, 60).await;
-        rx = dispatch_fetch(&window, manager, url, extract_m3u8, search_keyword)?;
+        rx = dispatch_fetch(&window, manager, url, search_keyword)?;
     }
     // 全部重试失败:网关带回前台让用户看到站点状态
     let _ = window.show();
@@ -376,17 +360,7 @@ pub async fn gateway_fetch(
     label: &str,
     url: &str,
 ) -> Result<String, String> {
-    gateway_fetch_inner(app, manager, label, url, false, None).await
-}
-
-/// 公开入口:经网关抓取并从页面提取首个 m3u8(missav 播放地址)
-pub async fn gateway_fetch_extract_m3u8(
-    app: &AppHandle,
-    manager: &GatewayManager,
-    label: &str,
-    url: &str,
-) -> Result<String, String> {
-    gateway_fetch_inner(app, manager, label, url, true, None).await
+    gateway_fetch_inner(app, manager, label, url, None).await
 }
 
 /// 公开入口:经网关提交站点搜索表单并返回结果页文本(hlib)
@@ -396,7 +370,7 @@ pub async fn gateway_search(
     label: &str,
     keyword: &str,
 ) -> Result<String, String> {
-    gateway_fetch_inner(app, manager, label, "", false, Some(keyword)).await
+    gateway_fetch_inner(app, manager, label, "", Some(keyword)).await
 }
 
 /// 完成网关操作:隐藏网关并把主窗口带回前台
@@ -410,72 +384,4 @@ pub fn finish(app: &AppHandle, label: &str) -> Result<(), String> {
         let _ = main.set_focus();
     }
     Ok(())
-}
-
-/// 导航式抓取:网关窗口直接导航到目标页(浏览器完整处理 CF 与 JS
-/// 渲染),轮询取 outerHTML(经本地代理 POST 回传)。
-/// 适用于页面由 JS 渲染、fetch 拿不到内容的站点(missav 搜索页)。
-pub async fn navigate_and_dump(
-    app: &AppHandle,
-    manager: &GatewayManager,
-    label: &str,
-    url: &str,
-    settle_ms: u64,
-) -> Result<String, String> {
-    use tauri::Manager as _;
-    let window = ensure_ready(app, label).await?;
-    let port = stream_proxy::port();
-    let url_json = serde_json::to_string(url).map_err(|e| e.to_string())?;
-    let _ = window.show();
-    let _ = window.set_focus();
-    window
-        .eval(&format!("window.location.href = {url_json};"))
-        .map_err(|e| format!("导航失败: {e}"))?;
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(150);
-    loop {
-        tokio::time::sleep(Duration::from_millis(settle_ms)).await;
-        let id = format!(
-            "nav{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
-        let rx = manager.register(id.clone());
-        let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
-        window
-            .eval(&format!(
-                r#"(function() {{
-                  try {{
-                    const b = btoa(unescape(encodeURIComponent(document.documentElement.outerHTML))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-                    fetch('http://127.0.0.1:{port}/gwresult?id={js_id}', {{
-                      method: 'POST', mode: 'no-cors',
-                      headers: {{ 'Content-Type': 'text/plain' }},
-                      body: '200|' + b
-                    }});
-                  }} catch (e) {{}}
-                }})();"#
-            ))
-            .map_err(|e| format!("取页面失败: {e}"))?;
-        let reply = tokio::time::timeout(Duration::from_secs(30), rx)
-            .await
-            .map_err(|_| "取页面超时".to_string())
-            .and_then(|r| r.map_err(|_| "回传中断".to_string()))?;
-        let html = reply.body;
-        let challenged =
-            html.len() < 20000 && (html.contains("Just a moment") || html.contains("请稍候"));
-        if !challenged {
-            let _ = window.hide();
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.show();
-                let _ = main.set_focus();
-            }
-            return Ok(html);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            return Err("网关页面仍在安全验证中,请稍后重试".into());
-        }
-        let _ = window.show();
-    }
 }

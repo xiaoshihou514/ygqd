@@ -337,7 +337,7 @@ async fn search_videos(
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = match state.video.search(&app, &keyword, page).await {
+    let out = match state.video.search(&keyword, page).await {
         Ok(v) => {
             gateway::diag(
                 &app,
@@ -354,10 +354,9 @@ async fn search_videos(
     Ok(out)
 }
 
-/// 视频详情(元数据与播放优先走 fs1,不可用时由 missav 网关兜底)
+/// 视频详情(元数据与播放优先走 fs1,不可用时由 missav 直连兜底)
 #[tauri::command]
 async fn fetch_video_detail(
-    app: AppHandle,
     state: State<'_, AppState>,
     code: String,
 ) -> Result<VideoDetail, String> {
@@ -367,7 +366,7 @@ async fn fetch_video_detail(
         v.m3u8 = stream_proxy::hls_url(&v.m3u8);
         return Ok(v);
     }
-    let out = state.video.detail(&app, &code).await?;
+    let out = state.video.detail(&code).await?;
     // 播放器只接触本地代理地址(CDN 校验 Referer/拒绝浏览器 TLS,直连必 403)
     let mut playable = out.clone();
     playable.m3u8 = stream_proxy::hls_url(&out.m3u8);
