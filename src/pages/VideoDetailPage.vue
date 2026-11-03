@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import videojs from 'video.js'
-import zhCN from 'video.js/dist/lang/zh-CN.json'
-import 'video.js/dist/video-js.css'
-// 中文界面
-videojs.addLanguage('zh-CN', zhCN)
+// Video.js 10(@videojs/html)自定义元素:导入即注册,无需命令式初始化。
+// hlsjs-video 引 hls.js 引擎(MPEG-TS 与 AES-128 全支持),拉本地流代理的 m3u8
+import '@videojs/html/video/player'
+import '@videojs/html/video/skin'
+import '@videojs/html/media/hlsjs-video'
+// <media-i18n> 提供界面语言,zh-CN 内置语言包按需懒加载
+import '@videojs/html/i18n'
+import type { HlsJsAdapter } from '@videojs/hlsjs-video'
+
 import { fetchVideoDetail, recordVideoWatched } from '@/services/api'
 import type { VideoDetail } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -20,24 +24,17 @@ const loading = ref(true)
 const error = ref('')
 const recovering = ref(false)
 let recoverCount = 0
-let player: ReturnType<typeof videojs> | null = null
-const playerEl = ref<HTMLDivElement | null>(null)
-
-async function nextFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
-}
+const mediaEl = ref<HlsJsAdapter | null>(null)
 
 async function load() {
-  player?.dispose()
-  player = null
+  // detail 置空会让 v-if 卸载播放器元素,等于旧版的 dispose
+  detail.value = null
   loading.value = true
   error.value = ''
-  detail.value = null
   try {
     const code = String(route.params.code || '').toLowerCase()
     detail.value = await fetchVideoDetail(code)
     void recordVideoWatched(code)
-    await setupPlayer(detail.value.m3u8)
   } catch (e) {
     error.value = (e as Error).message || '加载失败'
   } finally {
@@ -45,51 +42,38 @@ async function load() {
   }
 }
 
-async function setupPlayer(m3u8: string) {
-  await nextFrame()
-  if (!playerEl.value) throw new Error('播放器容器未就绪')
+/** hls.js 错误附带的原始数据,403 时含 response.code */
+interface HlsErrorData {
+  response?: { code?: number }
+}
 
-  // 用 video.js 内置 VHS 引擎拉流(HLS 与 AES-128 原生支持);
-  // 源地址是本地流代理(Rust 带站点 Referer 转发上游 CDN)
-  // v10 类型导出不完整,断言为本地最小接口
-  player = videojs(playerEl.value, {
-    controls: true,
-    fluid: true,
-    preload: 'auto',
-    language: 'zh-CN',
-    playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
-    controlBar: { pictureInPictureToggle: false },
-    html5: {
-      vhs: { limitRenditionByPlayerDimensions: false, useDevicePixelRatio: true },
-    },
-  })
-
-  player.on('error', async () => {
-    const err = player?.error()
-    const msg = err?.message ?? ''
-    console.error('[player]', err?.code, msg)
-    // 上游 403 多为 HLS 签名过期(短时效,频繁快进后过期):
-    // 自动重新获取详情换新签名并重载,最多 2 次
-    const upstream403 = err?.code === 4 || msg.includes('403')
-    if (upstream403 && recoverCount < 2 && detail.value) {
-      recoverCount += 1
-      recovering.value = true
-      try {
-        const playerNow = player
-        const fresh = await fetchVideoDetail(detail.value.code)
+function onMediaError() {
+  const err = mediaEl.value?.error ?? null
+  const msg = err?.message ?? ''
+  const hlsData = err ? (err as { data?: HlsErrorData }).data : undefined
+  console.error('[player]', err?.code, msg)
+  // 上游 403 多为 HLS 签名过期(短时效,频繁快进后过期):
+  // 自动重新获取详情换新签名;src 绑定随 detail 更新触发重载,最多 2 次
+  const upstream403 = hlsData?.response?.code === 403 || err?.code === 4 || msg.includes('403')
+  if (upstream403 && recoverCount < 2 && detail.value) {
+    recoverCount += 1
+    recovering.value = true
+    fetchVideoDetail(detail.value.code)
+      .then(async (fresh) => {
         detail.value = fresh
-        playerNow?.src({ src: fresh.m3u8, type: "application/vnd.apple.mpegurl" })
-        void playerNow?.play()?.catch(() => undefined)
-        void (playerNow?.play())?.catch(() => undefined)
-      } catch {
+        // 等 Vue 把新签名写入 :src.prop 后再 play,否则元素仍持有旧地址,恢复空转
+        await nextTick()
+        await mediaEl.value?.play()
+      })
+      .catch(() => {
         error.value = '播放地址已过期且刷新失败,请返回重进'
-      } finally {
+      })
+      .finally(() => {
         recovering.value = false
-      }
-    } else {
-      error.value = `播放失败:${msg || '未知错误'}`
-    }
-  })
+      })
+  } else {
+    error.value = `播放失败:${msg || '未知错误'}`
+  }
 }
 
 function retry() {
@@ -108,11 +92,6 @@ async function copyError() {
 onMounted(() => {
   void load()
 })
-
-onBeforeUnmount(() => {
-  player?.dispose()
-  player = null
-})
 </script>
 
 <template>
@@ -125,7 +104,19 @@ onBeforeUnmount(() => {
           <button class="retry-btn" @click="retry">重试</button>
           <button class="retry-btn ghost" @click="copyError">复制错误</button>
         </EmptyState>
-        <div v-show="!loading && !error" ref="playerEl" />
+        <media-i18n v-if="!loading && !error && detail" lang="zh-CN">
+          <video-player>
+            <video-skin class="player-skin">
+              <hlsjs-video
+                ref="mediaEl"
+                :src.prop="detail.m3u8"
+                preload="auto"
+                playsinline
+                @error="onMediaError"
+              ></hlsjs-video>
+            </video-skin>
+          </video-player>
+        </media-i18n>
         <div v-if="recovering" class="recover-overlay">
           <span>播放地址已过期,正在自动刷新...</span>
         </div>
@@ -183,7 +174,13 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.player-box :deep(.video-js) {
+/* 自定义元素注册完成前隐藏,避免未样式化内容闪烁 */
+video-skin:not(:defined) {
+  visibility: hidden;
+}
+
+.player-skin {
+  display: block;
   width: 100%;
   height: 100%;
 }
