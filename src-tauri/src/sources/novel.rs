@@ -11,7 +11,6 @@
 
 use crate::gateway;
 use crate::models::{NovelChapter, NovelPage, NovelSeries};
-use regex::Regex;
 use scraper::{Html, Selector};
 use std::time::Duration;
 use tauri::AppHandle;
@@ -369,82 +368,18 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
     out
 }
 
-/// 站内搜索:搜索端点结构未知(CF 挡侦察),对常见形态自适应探测,
-/// 首个返回有效系列链接的即采用。挑战页返回引导错误。
-/// 探测成功的搜索端点模板({} 为关键词占位),进程内记忆避免逐次重试
-static SEARCH_ENDPOINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-/// 端点定案依据(2024-11 样本取证):站内搜索表单为
+/// 站内搜索端点(2024-11 样本取证定案):站内搜索表单为
 /// `<form method="get" action="/s/search"><input name="query">`,
-/// 即 GET /s/search?query={关键词}。历史猜测端点中 /s?kw= 返回
-/// 固定系列列表页(kw 被站点忽略,曾污染 SEARCH_ENDPOINT 学习),
-/// search?q= 与 search?keyword= 撞登录墙,search/ 为 404。
-const SEARCH_TEMPLATES: [&str; 3] = [
-    "https://hlib.cc/s/search?query={}",
-    "https://hlib.cc/search?q={}",
-    "https://hlib.cc/search?keyword={}",
-];
+/// 即 GET /s/search?query={关键词}(需登录,未登录返回登录页)。
+/// 只打这一个端点:历史上的表单探测与多模板级联(/s?kw= 固定列表、
+/// search?q= 全站搜索页无系列条目)每次搜索多发 1~3 个请求,
+/// 会累加站点反爬闸「伊蕾娜」的访问频率计数。
+const SEARCH_URL: &str = "https://hlib.cc/s/search?query=";
 
 pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHit>, String> {
-    use tauri::Manager as _;
     let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
-    let manager = app.state::<crate::GatewayManager>();
-
-    // 先读取站点当前搜索表单并在同一 WebView 会话中提交,避免猜测已变更的路径和参数名。
-    let mut last_err = match gateway::gateway_search(app, &manager, LABEL, keyword).await {
-        Ok(html) if is_challenge(&html) => {
-            show_hlib_gateway(app);
-            return Err("hlib 安全验证未通过:已在弹出窗口中打开 hlib,请完成验证/登录后重试".into());
-        }
-        Ok(html) => {
-            let hits = extract_series(&html);
-            if !hits.is_empty() {
-                return Ok(hits);
-            }
-            "站点搜索表单未返回系列链接".into()
-        }
-        Err(e) => {
-            if e.contains("403") {
-                show_hlib_gateway(app);
-            }
-            e
-        }
-    };
-
-    // 兼容没有公开搜索表单或表单脚本提交的站点版本。
-    let templates: Vec<&str> = match SEARCH_ENDPOINT.get() {
-        Some(known) => vec![known.as_str()],
-        None => SEARCH_TEMPLATES.to_vec(),
-    };
-    for tpl in &templates {
-        let url = tpl.replace("{}", &encoded);
-        match fetch_html(app, &url).await {
-            Ok(html) => {
-                // 记忆判据:端点必须真正按关键词过滤——固定系列列表页
-                // (title「系列 - H图书馆」且不含关键词)是 /s?kw= 类假端点
-                // 的响应形态,命中即跳过不采用、不记忆
-                let is_fake_listing = html.contains("系列 - H图书馆") && !html.contains(&keyword);
-                let hits = if is_fake_listing {
-                    Vec::new()
-                } else {
-                    extract_series(&html)
-                };
-                if !hits.is_empty() {
-                    if templates.len() > 1 {
-                        let _ = SEARCH_ENDPOINT.set(tpl.to_string());
-                    }
-                    return Ok(hits);
-                }
-                last_err = if is_fake_listing {
-                    "端点返回固定系列列表(关键词未生效)".into()
-                } else {
-                    "搜索端点无结果".into()
-                };
-            }
-            Err(e) => last_err = e,
-        }
-    }
-    Err(format!("未能找到可用的搜索端点({last_err})"))
+    let html = fetch_html(app, &format!("{SEARCH_URL}{encoded}")).await?;
+    Ok(extract_series(&html))
 }
 
 /// 发现:首页提取最新系列(不依赖具体列表结构)

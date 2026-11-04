@@ -2,22 +2,25 @@
 //! 持久 cookie)处理 Cloudflare 验证与登录,供 hlib(小说)抓取使用。
 //! (视频源 missav 已改为 wreq 指纹直连,不再走网关)
 //!
-//! 回传通道(关键):网关加载的是远程页面,远程页没有 Tauri IPC 桥,
-//! 一切 invoke 方案都不可行。回传统一走**本地回环 HTTP 代理**
-//! (stream_proxy):网关 JS `fetch('http://127.0.0.1:{port}/gwresult',
-//! {method:'POST', body})` ——回环 POST 是所有 WebView 100% 支持的
-//! 标准行为,三端一致,不依赖任何 webkit 特性。
+//! 宿主通道(关键):网关加载的是远程页面,回环 fetch 与 IPC fetch 均被
+//! CF 挑战页 CSP 拦截。抓取回传、完成栏、就绪报到统一走主框架导航
+//! `ygwd-gw://{r|finish|ready}` + on_navigation 拦截(不真跳转,零 CSP 交互)。
 //!
-//! 交互时序:首次创建网关时窗口可见并导航到站点首页;用户完成
-//! CF 验证/登录(cookie 持久化,验证通常只需要一次);Rust 侧对
-//! 挑战响应静默重试(最多约 4 轮),期间用户在网关窗口操作;
+//! 交互时序:首次创建网关时窗口可见并导航到站点首页;CF 托管挑战通常
+//! 自动通过,就绪探测报到后才发抓取;命中 CF 挑战静默重试(最多约 4 轮),
+//! 命中站点反爬闸(伊蕾娜 /antibot)则网关主框架亲自走 Turnstile 校验;
 //! 成功后网关自动隐藏(会话保留),主窗口回到前台。
 
-use std::{collections::HashMap, sync::Mutex, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
+    time::Duration,
+};
 use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::oneshot;
-
-use crate::stream_proxy;
 
 /// 诊断日志:写应用内部数据目录 diag.log;查看走应用内入口
 /// (release 无法 run-as/logcat,应用内读取是唯一通道)
@@ -53,12 +56,17 @@ pub struct GatewayReply {
 /// 待回传的请求注册表:gateway_result 桥按 id 匹配 oneshot
 pub struct GatewayManager {
     pending: Mutex<HashMap<String, oneshot::Sender<GatewayReply>>>,
+    /// 就绪探测序号:已发出的最大值 / 页面报到过的最大值
+    ready_issued: AtomicU64,
+    ready_seen: AtomicU64,
 }
 
 impl Default for GatewayManager {
     fn default() -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
+            ready_issued: AtomicU64::new(0),
+            ready_seen: AtomicU64::new(0),
         }
     }
 }
@@ -66,6 +74,18 @@ impl Default for GatewayManager {
 impl GatewayManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn next_ready_nonce(&self) -> u64 {
+        self.ready_issued.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn mark_ready(&self, nonce: u64) {
+        self.ready_seen.fetch_max(nonce, Ordering::SeqCst);
+    }
+
+    fn ready_seen(&self) -> u64 {
+        self.ready_seen.load(Ordering::SeqCst)
     }
 
     fn register(&self, id: String) -> oneshot::Receiver<GatewayReply> {
@@ -104,17 +124,8 @@ fn site(label: &str) -> Option<(&'static str, &'static str)> {
 /// Android 的 IPC 走 JavaBridge(非 fetch)可能不受 CSP,故 Android 优先
 /// 试 IPC,失败回退导航式(YGWD_IPC_ERR 写 title 留判据)。
 /// IPC 失败原因写入 document.title(YGWD_IPC_ERR 前缀)供 Rust 诊断读取。
-const IPC_BRIDGE_ANDROID: &str = r#"async function ygwdInvoke(cmd, payload) {
-  const t = window.__TAURI_INTERNALS__;
-  if (!(t && typeof t.invoke === 'function')) {
-    document.title = 'YGWD_IPC_ERR|IPC_UNAVAILABLE';
-    throw new Error('IPC_UNAVAILABLE');
-  }
-  return t.invoke(cmd, payload).catch(function(e) {
-    document.title = 'YGWD_IPC_ERR|INVOKE_FAIL|' + String(e).slice(0, 180);
-    throw e;
-  });
-}"#;
+/// Android IPC 预留:JavaBridge 通道(非 fetch)可能不受 CSP,实机验证
+/// 通过后再接线(分支形态见 B' 设计文档「Android IPC 优先判据」)
 
 /// 从 query 串取单参数(不做 percent 解码,解码在取值后单独处理)
 fn parse_query_param(query: &str, key: &str) -> Option<String> {
@@ -254,6 +265,14 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
                             None => diag(&app, "[通道观测] gwresult 解析失败"),
                         }
                     }
+                    // 就绪报到:ygwd-gw://ready?n=序号(非挑战态才会发出)
+                    "ready" => {
+                        if let Some(n) =
+                            parse_query_param(query, "n").and_then(|v| v.parse::<u64>().ok())
+                        {
+                            app.state::<GatewayManager>().mark_ready(n);
+                        }
+                    }
                     _ => diag(&app, "[通道观测] 未知 ygwd-gw 导航已拦截"),
                 }
                 false // 阻止真实导航,页面留在原地
@@ -282,26 +301,52 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 等待网关站点就绪(挑战通过):检测方式为 eval 改写 document.title,
-/// 再读回 title()(同步 API,三端一致)
-async fn wait_until_ready(window: &tauri::WebviewWindow, timeout_secs: u64) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+/// 就绪探测 JS:页面非挑战态时经导航通道 `ygwd-gw://ready?n=序号` 报到;
+/// 挑战态(含站点反爬闸「人机校验」)保持静默——不在挑战页上发起导航,免得顶替挑战自身的表单提交。
+/// (旧实现改写 document.title 再读 window.title(),但原生窗口标题不随
+/// document.title 同步,恒为构建时的「小说源连接」,就绪永远判不出,
+/// 每次首建网关都要白等满 150 秒超时)
+fn ready_probe_js(nonce: u64) -> String {
+    format!(
+        r#"(function() {{
+          if (window.__ygwdStale) return;
+          var t = document.title || '';
+          var cf = !!(window._cf_chl_opt
+            || document.querySelector('iframe[src*="challenges.cloudflare"], #challenge-form, #challenge-stage'));
+          if (/请稍候|Just a moment|人机校验/i.test(t) || cf) return;
+          location.href = 'ygwd-gw://ready?n={nonce}';
+        }})();"#
+    )
+}
+
+/// 等待网关站点就绪(挑战通过):每轮注入就绪探测并发新序号,收到不小于
+/// 本轮序号的报到即视为就绪。返回是否就绪(超时返回 false,由调用方照常尝试)。
+async fn wait_until_ready(window: &tauri::WebviewWindow, timeout_secs: u64) -> bool {
+    use tauri::Manager as _;
+    let app = window.app_handle();
+    let manager = app.state::<GatewayManager>();
+    let started = tokio::time::Instant::now();
+    let deadline = started + Duration::from_secs(timeout_secs);
     loop {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let _ = window.eval(
-            r#"(function() {
-              var t = document.title || '';
-              var cf = !!(document.querySelector('iframe[src*="challenges.cloudflare"]') || document.getElementById('challenge-form'));
-              document.title = (/请稍候|Just a moment/i.test(t) || cf) ? 'YGWD_CHALLENGE' : 'YGWD_READY';
-            })();"#,
-        );
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        match window.title() {
-            Ok(t) if t.starts_with("YGWD_READY") => return,
-            _ => {}
+        let nonce = manager.next_ready_nonce();
+        let _ = window.eval(ready_probe_js(nonce));
+        // 报到经导航通道异步到达,短轮询等本轮回音
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            if manager.ready_seen() >= nonce {
+                diag(
+                    app,
+                    &format!("[网关链路] 站点就绪 耗时={}s", started.elapsed().as_secs()),
+                );
+                return true;
+            }
         }
         if tokio::time::Instant::now() >= deadline {
-            return;
+            diag(
+                app,
+                &format!("[网关链路] 就绪等待超时 {timeout_secs}s(挑战未通过或页面无响应)"),
+            );
+            return false;
         }
     }
 }
@@ -324,9 +369,7 @@ fn dispatch_fetch(
     window: &tauri::WebviewWindow,
     manager: &GatewayManager,
     url: &str,
-    search_keyword: Option<&str>,
 ) -> Result<tokio::sync::oneshot::Receiver<GatewayReply>, String> {
-    let port = stream_proxy::port();
     let id = format!(
         "g{}",
         std::time::SystemTime::now()
@@ -340,16 +383,6 @@ fn dispatch_fetch(
     // ——URL 里若用带引号形态,reply.id 与 pending 注册的裸 id 不匹配,回传全空转
     let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
     let url_id = &id;
-    let search = if search_keyword.is_some() {
-        "true"
-    } else {
-        "false"
-    };
-    let js_keyword = search_keyword
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| "null".into());
 
     let js = format!(
         r#"(async () => {{
@@ -373,57 +406,9 @@ fn dispatch_fetch(
     location.href = 'ygwd-gw://r?id={url_id}&len=' + payloadLen + '&d=' + encodeURIComponent(payload);
   }};
   try {{
-    if ({search}) {{
-      const keyword = {js_keyword};
-      const findSearchForm = (doc) => {{
-        const fieldPattern = /search|keyword|query|(^|[^a-z])q([^a-z]|$)|(^|[^a-z])kw([^a-z]|$)|key|word|title|author|搜索|关键字|关键词|书名|作者/i;
-        const forms = Array.from(doc.forms).map((form) => {{
-          const fields = Array.from(form.querySelectorAll("input"))
-            .filter((input) => input.name && !["hidden", "password", "submit", "button", "checkbox", "radio"].includes(input.type));
-          const action = form.getAttribute("action") || "";
-          const explicit = fields.find((input) => input.type === "search" || fieldPattern.test(
-            [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" ")
-          ));
-          const fallback = /search|find|query|搜索/i.test(action + " " + form.id + " " + form.className)
-            ? fields[0]
-            : null;
-          return {{ form, input: explicit || fallback, explicit: Boolean(explicit) }};
-        }}).filter((item) => item.input);
-        forms.sort((a, b) => Number(b.explicit) - Number(a.explicit));
-        return forms[0] || null;
-      }};
-      let doc = document;
-      let baseUrl = location.href;
-      let found = findSearchForm(doc);
-      if (!found) {{
-        const home = await fetch("https://hlib.cc/", {{ credentials: "include" }});
-        const html = await home.text();
-        doc = new DOMParser().parseFromString(html, "text/html");
-        baseUrl = home.url;
-        found = findSearchForm(doc);
-      }}
-      if (!found) {{ post(0, "E:未找到搜索表单"); return; }}
-      const target = new URL(found.form.getAttribute("action") || baseUrl, baseUrl);
-      found.input.value = keyword;
-      const hidden = Array.from(found.form.querySelectorAll('input[type="hidden"]'))
-        .map((h) => h.name + "=" + encodeURIComponent(h.value))
-        .join("&");
-      const method = (found.form.getAttribute("method") || "GET").toUpperCase();
-      const fetchInit = {{ method: method, credentials: "include" }};
-      if (method === "POST") {{
-        fetchInit.headers = {{ "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" }};
-        fetchInit.body = hidden
-          ? hidden + "&" + found.input.name + "=" + encodeURIComponent(keyword)
-          : found.input.name + "=" + encodeURIComponent(keyword);
-      }}
-      const r = await fetch(target.href, fetchInit);
-      const body = await r.text();
-      post(r.status, body);
-    }} else {{
-      const r = await fetch({js_url}, {{ credentials: "include" }});
-      const body = await r.text();
-      post(r.status, body);
-    }}
+    const r = await fetch({js_url}, {{ credentials: "include" }});
+    const body = await r.text();
+    post(r.status, body);
   }} catch (e) {{
     post(0, "E:" + String(e));
   }}
@@ -454,6 +439,13 @@ fn dispatch_fetch(
     Ok(rx)
 }
 
+/// hlib 站点自有反爬闸「伊蕾娜」(/antibot,title「人机校验」):按会话访问
+/// 频率触发,页面自动 render Turnstile,token 交 /api/n_bot_v2 后跳回目标页。
+/// 页内 fetch 拿到的只是闸页文本,必须让网关主框架亲自走一遍校验。
+fn is_antibot_gate(body: &str) -> bool {
+    body.contains("/api/n_bot_v2") || body.contains("<title>人机校验</title>")
+}
+
 /// 统一网关抓取入口:发请求、判定挑战、静默重试(网关已在前台供
 /// 用户操作)、成功后隐藏网关并回主界面。返回成功状态的 body。
 async fn gateway_fetch_inner(
@@ -461,20 +453,16 @@ async fn gateway_fetch_inner(
     manager: &GatewayManager,
     label: &str,
     url: &str,
-    search_keyword: Option<&str>,
 ) -> Result<String, String> {
     use tauri::Manager as _;
     let window = ensure_ready(app, label).await?;
-    let mut rx = dispatch_fetch(&window, manager, url, search_keyword)?;
+    let mut rx = dispatch_fetch(&window, manager, url)?;
     diag(
         app,
-        &format!(
-            "[网关链路] dispatch 发起 label={label} url={url} search={}",
-            search_keyword.is_some()
-        ),
+        &format!("[网关链路] dispatch 发起 label={label} url={url}"),
     );
 
-    let mut last: Option<(u16, String)> = None;
+    let mut last_status: Option<u16> = None;
     for _attempt in 0..4 {
         let reply = match tokio::time::timeout(Duration::from_secs(60), rx).await {
             Ok(Ok(r)) => r,
@@ -491,20 +479,20 @@ async fn gateway_fetch_inner(
             }
         };
         let status = reply.status;
-        let body_for_check = reply.body.clone();
         // 挑战判定从紧:仅认 403 状态或短小的挑战标题页。
         // 不做正文包含判断——正常站点页面也会引用 challenge-platform 脚本
         let is_challenge = status == 403
-            || (body_for_check.len() < 6000
-                && (body_for_check.contains("Just a moment") || body_for_check.contains("请稍候")));
+            || (reply.body.len() < 6000
+                && (reply.body.contains("Just a moment") || reply.body.contains("请稍候")));
+        let is_gate = is_antibot_gate(&reply.body);
         diag(
             app,
             &format!(
-                "[网关链路] 回传到达 attempt status={status} bytes={} is_challenge={is_challenge}",
-                body_for_check.len()
+                "[网关链路] 回传到达 attempt status={status} bytes={} is_challenge={is_challenge} is_gate={is_gate}",
+                reply.body.len()
             ),
         );
-        if !is_challenge {
+        if !is_challenge && !is_gate {
             // 成功:隐藏网关转后台(会话保留),主窗口回前台
             let _ = window.hide();
             if let Some(main) = app.get_webview_window("main") {
@@ -513,18 +501,39 @@ async fn gateway_fetch_inner(
             }
             return Ok(reply.body);
         }
-        last = Some((status, reply.body));
-        // 挑战:静默重试(网关已在前台供用户操作,不重复抢焦点)
-        diag(app, "[网关链路] 挑战态,等待就绪后重试");
-        wait_until_ready(&window, 60).await;
-        rx = dispatch_fetch(&window, manager, url, search_keyword)?;
+        last_status = Some(status);
+        if is_gate {
+            // 反爬闸:主框架导航到目标页(服务端会转 /antibot),Turnstile 在
+            // 网关里亲自跑;通过后页面自动跳回目标页,就绪探测随之报到。
+            // 未就绪不重发请求——重发只会再撞闸并累加访问频率
+            diag(app, "[网关链路] 命中伊蕾娜反爬闸,网关导航至校验页");
+            // 先给当前文档打陈旧标记:导航提交前旧文档仍存活,不打标会被
+            // 就绪探测误报为「已就绪」(实测 0 秒假就绪);新文档 window 全新无标记
+            let _ = window.eval("window.__ygwdStale = true;");
+            if let Ok(target) = url.parse::<tauri::Url>() {
+                let _ = window.navigate(target);
+            }
+            let _ = window.show();
+            let _ = window.set_focus();
+            if !wait_until_ready(&window, 120).await {
+                return Err(
+                    "hlib 人机校验未通过:已在弹出窗口打开校验页,请等待勾选完成(或手动点一下)后重试"
+                        .into(),
+                );
+            }
+        } else {
+            // CF 挑战:静默重试(网关已在前台供用户操作,不重复抢焦点)
+            diag(app, "[网关链路] 挑战态,等待就绪后重试");
+            wait_until_ready(&window, 60).await;
+        }
+        rx = dispatch_fetch(&window, manager, url)?;
         diag(app, "[网关链路] 重试 dispatch 已发起");
     }
     // 全部重试失败:网关带回前台让用户看到站点状态
     let _ = window.show();
     let _ = window.set_focus();
-    match last {
-        Some((status, body)) => Err(format!(
+    match last_status {
+        Some(status) => Err(format!(
             "网关未完成(状态 {status});已在网关窗口打开站点,请完成验证/登录后重试"
         )),
         None => Err("网关无响应".into()),
@@ -538,17 +547,7 @@ pub async fn gateway_fetch(
     label: &str,
     url: &str,
 ) -> Result<String, String> {
-    gateway_fetch_inner(app, manager, label, url, None).await
-}
-
-/// 公开入口:经网关提交站点搜索表单并返回结果页文本(hlib)
-pub async fn gateway_search(
-    app: &AppHandle,
-    manager: &GatewayManager,
-    label: &str,
-    keyword: &str,
-) -> Result<String, String> {
-    gateway_fetch_inner(app, manager, label, "", Some(keyword)).await
+    gateway_fetch_inner(app, manager, label, url).await
 }
 
 /// 完成网关操作:隐藏网关并把主窗口带回前台
@@ -601,6 +600,37 @@ mod tests {
         let reply = parse_nav_reply(&query).expect("UTF-8 应解析成功");
         assert_eq!(reply.status, 200);
         assert_eq!(reply.body, payload.split_once('|').unwrap().1);
+    }
+
+    #[test]
+    fn detects_antibot_gate() {
+        // 闸页结构取证(2026-11 样本,文案以占位代替):title「人机校验」+
+        // Turnstile 回调提交 /api/n_bot_v2
+        let gate = r#"<html><head><title>人机校验</title></head><body>
+          <div id="recaptcha"></div><script>turnstile.render('#recaptcha', {callback: function(t) {
+          $.ajax({url: '/api/n_bot_v2', type: 'post'}); }});</script></body></html>"#;
+        assert!(is_antibot_gate(gate));
+        // 正常系列/搜索页(含 Turnstile 无关的同名词)不误判
+        let normal = r#"<html><head><title>系列搜索</title></head><body>
+          <a href="/me/email">验证邮箱</a><li class="list-group-item"></li></body></html>"#;
+        assert!(!is_antibot_gate(normal));
+        // 挑战页上就绪探测保持静默:探测 JS 含闸标题判据
+        assert!(ready_probe_js(1).contains("人机校验"));
+        // 导航提交前的旧文档(陈旧标记)不得报到
+        assert!(ready_probe_js(1).contains("__ygwdStale"));
+    }
+
+    #[test]
+    fn ready_nonce_tracks_max_seen() {
+        let m = GatewayManager::new();
+        let a = m.next_ready_nonce();
+        let b = m.next_ready_nonce();
+        assert!(b > a);
+        assert!(ready_probe_js(b).contains(&format!("ygwd-gw://ready?n={b}")));
+        // 迟到的旧报到不回退已见序号
+        m.mark_ready(b);
+        m.mark_ready(a);
+        assert_eq!(m.ready_seen(), b);
     }
 
     #[test]

@@ -923,6 +923,59 @@ fn update_blacklist(tag: String, mode: String, state: State<'_, AppState>) -> Re
     db::update_blacklist(&conn, &tag, &mode)
 }
 
+/// 小说链路无头自检(仅 debug 构建,环境变量 YGQD_SELFTEST_NOVEL=关键词 门控):
+/// 搜索 → 首条系列目录 → 首章第 1 页,diag 只记条数/字节/字段非空数,
+/// 不落正文内容。用于无界面端到端验证网关 + 会话 cookie 是否可用。
+#[cfg(debug_assertions)]
+fn spawn_novel_selftest(app: AppHandle) {
+    let Ok(keyword) = std::env::var("YGQD_SELFTEST_NOVEL") else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let log = |msg: String| gateway::diag(&app, &format!("[自检] {msg}"));
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let started = Instant::now();
+        let hits = match sources::novel::search_series(&app, &keyword).await {
+            Ok(hits) => hits,
+            Err(e) => return log(format!("novel_search FAIL: {e}")),
+        };
+        log(format!(
+            "novel_search OK 条数={} 作者非空={} 带标签={} 耗时={}s",
+            hits.len(),
+            hits.iter().filter(|h| !h.author.is_empty()).count(),
+            hits.iter().filter(|h| !h.tags.is_empty()).count(),
+            started.elapsed().as_secs()
+        ));
+        let Some(first) = hits.first() else { return };
+        let series = match sources::novel::fetch_series(&app, &first.id).await {
+            Ok(series) => series,
+            Err(e) => return log(format!("fetch_series FAIL id={}: {e}", first.id)),
+        };
+        log(format!(
+            "fetch_series OK id={} 章节数={} 标题字符数={} 作者非空={}",
+            series.id,
+            series.chapters.len(),
+            series.title.chars().count(),
+            !series.author.is_empty()
+        ));
+        let Some(chapter) = series.chapters.first() else {
+            return;
+        };
+        // 站点对连续抓取敏感,章节请求前留间隔
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        match sources::novel::fetch_article_page(&app, &chapter.id, 1).await {
+            Ok(page) => log(format!(
+                "novel_read OK id={} 正文字符数={} 总页数={} 标题非空={}",
+                chapter.id,
+                page.text.chars().count(),
+                page.total_pages,
+                !page.title.is_empty()
+            )),
+            Err(e) => log(format!("novel_read FAIL id={}: {e}", chapter.id)),
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -953,6 +1006,8 @@ pub fn run() {
             let proxy_port = stream_proxy::spawn()?;
             stream_proxy::set_app(app.handle().clone());
             gateway::diag(&app.handle(), &format!("app setup done, proxy port={proxy_port}"));
+            #[cfg(debug_assertions)]
+            spawn_novel_selftest(app.handle().clone());
             app.manage(AppState {
                 niacg,
                 video,
