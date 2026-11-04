@@ -254,12 +254,13 @@ onBeforeUnmount(() => {
   height: 100vh;
 }
 
-/* Android 伪全屏:播放区 fixed 铺满视口,顶栏/底栏让位;保持 16:9 居中
+/* Android 伪全屏:播放区 fixed 铺满视口,必须盖住顶栏(z-90)与底栏(z-100)
+   ——横屏视口矮,层级不足时底栏会直接压住进度条;保持 16:9 居中
    (aspect-ratio + max-height 由浏览器按比例反推宽度,不拉伸视频) */
 .player-section.player-fullscreen {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 200;
   display: flex;
   align-items: center;
   justify-content: center;
