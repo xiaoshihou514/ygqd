@@ -180,6 +180,10 @@ export interface NovelSeries {
 export interface NovelHit {
   id: string
   title: string
+  /** 作者(登录墙未登录时列表可能拿不到,可空) */
+  author?: string
+  /** 内容标签(可空,未登录时可能拿不到) */
+  tags?: string[]
 }
 
 export interface NovelPage {

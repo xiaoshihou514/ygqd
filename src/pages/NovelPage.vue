@@ -166,7 +166,22 @@ onMounted(() => {
 
       <div v-if="hits.length" class="hit-list">
         <div v-for="hit in hits" :key="hit.id" class="hit-row">
-          <span class="hit-title">{{ hit.title }}</span>
+          <div class="hit-main">
+            <span class="hit-title">{{ hit.title }}</span>
+            <span
+              v-if="hit.author || (hit.tags && hit.tags.length > 0)"
+              class="hit-meta"
+            >
+              <template v-if="hit.author">{{ hit.author }}</template>
+              <span
+                v-for="tag in (hit.tags ?? []).slice(0, 3)"
+                :key="tag"
+                class="hit-tag"
+              >
+                {{ tag }}
+              </span>
+            </span>
+          </div>
           <button class="hit-add" :disabled="addingHitId === hit.id" @click="addHit(hit)">
             {{ addingHitId === hit.id ? '添加中…' : '+ 书架' }}
           </button>
@@ -294,14 +309,40 @@ onMounted(() => {
   background: var(--color-card-bg);
 }
 
-.hit-title {
+.hit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   flex: 1;
   min-width: 0;
+}
+
+.hit-title {
   font-size: var(--font-size-caption);
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.hit-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-fine-print, 12px);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+}
+
+.hit-tag {
+  padding: 1px 8px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-canvas);
+  white-space: nowrap;
 }
 
 .hit-add {
