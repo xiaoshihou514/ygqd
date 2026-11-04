@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchVideoList, searchVideos, fetchVideoWatchedIds } from '@/services/api'
 import type { VideoCard } from '@/types'
@@ -46,6 +46,9 @@ async function load(reset: boolean) {
       watched.value = new Set(ids)
     } catch { /* 查询失败不影响列表 */ }
     page.value += 1
+    // DOM 按新数据 patch 完成后重绑哨兵(搜索切换后哨兵节点已重建)
+    await nextTick()
+    rebindObserver()
   } catch (e) {
     error.value = (e as Error).message || '加载失败'
   } finally {
@@ -65,7 +68,11 @@ function clearSearch() {
   void load(true)
 }
 
-function setupObserver() {
+/** 哨兵节点随 v-if 分支销毁重建(搜索/清空会切到 LoadingSpinner 再切回),
+ *  observer 必须在每次数据加载、DOM patch 完成后重新绑定,否则搜索后
+ *  滚动加载死锁(观感:结果永远停在第一页)。 */
+function rebindObserver() {
+  observer?.disconnect()
   sentinel = document.querySelector('.scroll-sentinel')
   if (!sentinel) return
   observer = new IntersectionObserver(
@@ -79,7 +86,7 @@ function setupObserver() {
 
 onMounted(async () => {
   await load(true)
-  setupObserver()
+  rebindObserver()
 })
 
 onUnmounted(() => {
