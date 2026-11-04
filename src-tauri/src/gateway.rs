@@ -97,12 +97,27 @@ fn site(label: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// 完成栏注入 JS:顶部悬浮「完成,返回应用」,点击经本地回环代理通知
+/// 网关页面与宿主间的桥接表达式:remote capability(capabilities/gateway.json)
+/// 为 hlib.cc 启用 IPC 后,页面内可用 __TAURI_INTERNALS__.invoke 直达
+/// Rust——该通道走 postMessage,不受页面 CSP connect-src 约束(hlib 的
+/// CF 挑战页 connect-src 仅放行 'self' 与 challenges.cloudflare.com,
+/// 旧版回环 fetch 回传被拦导致网关死路)。IPC 不可用时降级回环 fetch。
+const IPC_BRIDGE: &str = r#"async function ygwdInvoke(cmd, payload) {
+  const t = window.__TAURI_INTERNALS__;
+  if (t && typeof t.invoke === 'function') {
+    return t.invoke(cmd, payload);
+  }
+  throw new Error('IPC_UNAVAILABLE');
+}"#;
+
+/// 完成栏注入 JS:顶部悬浮「完成,返回应用」,点击经 IPC(降级回环 fetch)
+/// 通知宿主隐藏网关回主界面
 fn finish_bar_js(label: &str) -> String {
     let port = stream_proxy::port();
     let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".into());
     format!(
         r#"(function() {{
+          {IPC_BRIDGE}
           function ensureBar() {{
             if (document.getElementById('ygwd-gw-bar')) return;
             var bar = document.createElement('div');
@@ -110,7 +125,9 @@ fn finish_bar_js(label: &str) -> String {
             bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px;text-align:center;font-size:16px;font-weight:600;cursor:pointer';
             bar.textContent = '\\u2713 完成,返回应用';
             bar.addEventListener('click', function() {{
-              fetch('http://127.0.0.1:{port}/gwfinish?label=' + encodeURIComponent({label_json}), {{ mode: 'no-cors' }});
+              ygwdInvoke('gateway_finish', {{ label: {label_json} }}).catch(function() {{
+                fetch('http://127.0.0.1:{port}/gwfinish?label=' + encodeURIComponent({label_json}), {{ mode: 'no-cors' }});
+              }});
             }});
             var host = document.body || document.documentElement;
             host.appendChild(bar);
@@ -232,12 +249,17 @@ fn dispatch_fetch(
 
     let js = format!(
         r#"(async () => {{
+  {IPC_BRIDGE}
   const post = (status, body) => {{
-    fetch('http://127.0.0.1:{port}/gwresult?id={js_id}', {{
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {{ 'Content-Type': 'text/plain' }},
-      body: status + '|' + body
+    // IPC 通道(postMessage,不受页面 CSP connect-src 约束)优先,
+    // 不可用降级回环 fetch(hlib 挑战页 CSP 会拦,正常页取决于站点策略)
+    ygwdInvoke('gateway_result', {{ result: {{ id: {js_id}, status: status, body: body }} }}).catch(function() {{
+      fetch('http://127.0.0.1:{port}/gwresult?id={js_id}', {{
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {{ 'Content-Type': 'text/plain' }},
+        body: status + '|' + body
+      }});
     }});
   }};
   try {{

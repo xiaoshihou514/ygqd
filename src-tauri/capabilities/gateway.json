@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "gateway-hlib",
+  "description": "网关窗口(hlib.cc 远程域)IPC 回传通道:页面 CSP connect-src 禁止 127.0.0.1 回环 fetch,回传与完成交互改走 Tauri IPC(不受页面 CSP 约束)",
+  "windows": ["gateway_hlib"],
+  "remote": {
+    "urls": ["https://hlib.cc/*", "https://*.hlib.cc/*"]
+  },
+  "permissions": ["core:default"],
+  "platforms": ["android", "linux"]
+}
