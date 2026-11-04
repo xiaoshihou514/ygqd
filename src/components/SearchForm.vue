@@ -12,7 +12,13 @@ const emit = defineEmits<{
 
 const route = useRoute()
 
-const { suggestions, remove } = useSearchHistory()
+const { suggestions, remove, clear } = useSearchHistory()
+
+function clearAllHistory() {
+  clear()
+  showSuggestions.value = false
+  selectedIndex.value = -1
+}
 
 const CATEGORIES = [
   { id: 9, label: 'A漫' },
@@ -192,6 +198,11 @@ onMounted(() => {
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
+              </button>
+            </li>
+            <li class="suggestion-clear-row">
+              <button type="button" class="clear-history" @mousedown.stop.prevent="clearAllHistory()">
+                清空搜索历史
               </button>
             </li>
           </ul>
@@ -519,5 +530,27 @@ onMounted(() => {
 .suggestion-remove:hover {
   opacity: 1 !important;
   background: rgba(0, 0, 0, 0.08);
+}
+
+.suggestion-clear-row {
+  border-top: 1px solid var(--color-hairline);
+  margin-top: 4px;
+  padding: 6px var(--spacing-md);
+}
+
+.clear-history {
+  width: 100%;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-fine-print);
+  cursor: pointer;
+  text-align: center;
+  transition: color 0.15s;
+}
+
+.clear-history:hover {
+  color: var(--color-text-primary);
 }
 </style>
