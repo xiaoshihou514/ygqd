@@ -11,6 +11,7 @@
 
 use crate::gateway;
 use crate::models::{NovelChapter, NovelPage, NovelSeries};
+use regex::Regex;
 use scraper::{Html, Selector};
 use std::time::Duration;
 use tauri::AppHandle;
@@ -45,7 +46,28 @@ async fn fetch_html(app: &AppHandle, url: &str) -> Result<String, String> {
         show_hlib_gateway(app);
         return Err("hlib 安全验证未通过:已在弹出窗口中打开 hlib,请完成验证/登录后重试".into());
     }
+    if is_login_page(&html) {
+        // 登录墙:网关已在前台(或弹出),用户登录一次即 cookie 持久复用
+        show_hlib_gateway(app);
+        return Err("hlib 需要登录:已在弹出窗口中打开 hlib,请登录后重试".into());
+    }
     Ok(html)
+}
+
+/// 从导航 href 提取系列 id("/s/abc" 相对/绝对均兼容)
+fn series_id_from_href_nav(href: &str) -> Option<String> {
+    let path = url::Url::parse("https://hlib.cc/")
+        .ok()?
+        .join(href)
+        .ok()?
+        .path()
+        .to_string();
+    let id = path
+        .strip_prefix("/s/")?
+        .split(['?', '#'])
+        .next()?
+        .to_string();
+    (!id.is_empty()).then_some(id)
 }
 
 /// 从用户输入提取系列 id:"https://hlib.cc/s/abc?x" 或 "/s/abc" 或 "abc"
@@ -81,6 +103,24 @@ fn normalize_text(text: &str) -> String {
 
 fn is_challenge(html: &str) -> bool {
     html.contains("请稍候") || html.contains("Just a moment") || html.contains("正在进行安全验证")
+}
+
+/// 登录墙判定:hlib 部分端点(如 search?q=)未登录时返回独立登录页
+/// (title 即「登录」——精确形态匹配,避免正常页面含登录按钮的误判)
+fn is_login_page(html: &str) -> bool {
+    re_title_login()
+        .captures(html)
+        .map(|c| {
+            c.get(1)
+                .map(|t| t.as_str().trim() == "登录")
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+fn re_title_login() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"<title>([^<]*)</title>").expect("static regex"))
 }
 
 fn total_pages(doc: &Html) -> i64 {
@@ -236,6 +276,12 @@ pub async fn fetch_article_page(app: &AppHandle, id: &str, page: i64) -> Result<
 pub struct NovelHit {
     pub id: String,
     pub title: String,
+    /// 作者名(条目级 /u/ 链接文本;列表页 DOM 含该字段)
+    #[serde(default)]
+    pub author: String,
+    /// 标签集合(条目级 .tags 容器的 /tag/ 链接文本)
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// 从站内任意形式的系列链接(/s/{id})提取标识,兼容绝对与相对地址。
@@ -254,10 +300,50 @@ fn series_id_from_href(href: &str) -> Option<String> {
     (!id.is_empty()).then_some(id)
 }
 
-/// 从任意 HTML 提取系列链接(/s/{id} -> 链接文本)。
-/// 不依赖具体页面结构,列表/搜索/首页通用。
+/// 从任意 HTML 提取系列信息。优先条目级解析(系列/列表/搜索结果的
+/// li.list-group-item 结构:id+标题+作者+标签),无该结构时回退全文
+/// /s/ 链接扫描(仅 id+title,如首页等异构页面)。
 fn extract_series(html: &str) -> Vec<NovelHit> {
     let doc = Html::parse_document(html);
+    let entry_sel = sel("li.list-group-item");
+    let entries = doc.select(&entry_sel);
+    if entries.clone().count() > 0 {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for item in entries {
+            let Some(link) = item.select(&sel("a[href^='/s/']")).next() else {
+                continue;
+            };
+            let Some(id) = link.value().attr("href").and_then(series_id_from_href_nav) else {
+                continue;
+            };
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let title = normalize_text(&link.text().collect::<String>());
+            let author = item
+                .select(&sel("a[href^='/u/']"))
+                .next()
+                .map(|a| normalize_text(&a.text().collect::<String>()))
+                .unwrap_or_default();
+            let tags: Vec<String> = item
+                .select(&sel(".tags a[href^='/tag/']"))
+                .map(|a| normalize_text(&a.text().collect::<String>()))
+                .filter(|t| !t.is_empty())
+                .collect();
+            let final_title = if title.is_empty() { id.clone() } else { title };
+            out.push(NovelHit {
+                id,
+                title: final_title,
+                author,
+                tags,
+            });
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
+    // 回退:异构页面(首页等)全文 /s/ 链接扫描,仅 id+title
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for a in doc.select(&sel("a[href*='/s/']")) {
@@ -273,7 +359,12 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
         } else {
             title
         };
-        out.push(NovelHit { id, title });
+        out.push(NovelHit {
+            id,
+            title,
+            author: String::new(),
+            tags: Vec::new(),
+        });
     }
     out
 }
@@ -283,11 +374,15 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
 /// 探测成功的搜索端点模板({} 为关键词占位),进程内记忆避免逐次重试
 static SEARCH_ENDPOINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-const SEARCH_TEMPLATES: [&str; 4] = [
+/// 端点定案依据(2024-11 样本取证):站内搜索表单为
+/// `<form method="get" action="/s/search"><input name="query">`,
+/// 即 GET /s/search?query={关键词}。历史猜测端点中 /s?kw= 返回
+/// 固定系列列表页(kw 被站点忽略,曾污染 SEARCH_ENDPOINT 学习),
+/// search?q= 与 search?keyword= 撞登录墙,search/ 为 404。
+const SEARCH_TEMPLATES: [&str; 3] = [
+    "https://hlib.cc/s/search?query={}",
     "https://hlib.cc/search?q={}",
-    "https://hlib.cc/search/{}",
     "https://hlib.cc/search?keyword={}",
-    "https://hlib.cc/s?kw={}",
 ];
 
 pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHit>, String> {
@@ -325,14 +420,26 @@ pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHi
         let url = tpl.replace("{}", &encoded);
         match fetch_html(app, &url).await {
             Ok(html) => {
-                let hits = extract_series(&html);
+                // 记忆判据:端点必须真正按关键词过滤——固定系列列表页
+                // (title「系列 - H图书馆」且不含关键词)是 /s?kw= 类假端点
+                // 的响应形态,命中即跳过不采用、不记忆
+                let is_fake_listing = html.contains("系列 - H图书馆") && !html.contains(&keyword);
+                let hits = if is_fake_listing {
+                    Vec::new()
+                } else {
+                    extract_series(&html)
+                };
                 if !hits.is_empty() {
                     if templates.len() > 1 {
                         let _ = SEARCH_ENDPOINT.set(tpl.to_string());
                     }
                     return Ok(hits);
                 }
-                last_err = "搜索端点无结果".into();
+                last_err = if is_fake_listing {
+                    "端点返回固定系列列表(关键词未生效)".into()
+                } else {
+                    "搜索端点无结果".into()
+                };
             }
             Err(e) => last_err = e,
         }
@@ -356,6 +463,49 @@ pub async fn latest_series(app: &AppHandle) -> Result<Vec<NovelHit>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_entries_with_author_and_tags() {
+        // 真实样本(系列列表页 2024-11)结构:li.list-group-item 条目含
+        // /s/ 标题、/u/ 作者、.tags 标签集合(占位文本代替真实标签词)
+        let html = r#"
+          <ul class="list-group mt-2">
+            <li class="list-group-item">
+              <div class="my-1"><a class="text-decoration-none" href="/s/16345198">
+                <span class="text-body fw-bold">示例系列标题一</span></a></div>
+              <div class="my-1"><a class="me-2" href="/u/74094590">
+                <i class="bi bi-person-fill"></i><span class="ms-2 text-body">示例作者甲</span></a>
+                <span class="text-sm text-gray">4篇</span></div>
+              <div class="my-1 tags"><a href="/tag/标签甲">标签甲</a><span>，</span>
+                <a href="/tag/标签乙">标签乙</a><span>，</span><a href="/tag/标签丙">标签丙</a></div>
+            </li>
+            <li class="list-group-item">
+              <div class="my-1"><a href="/s/16345199">
+                <span class="text-body fw-bold">示例系列标题二</span></a></div>
+            </li>
+          </ul>"#;
+        let hits = extract_series(html);
+        assert_eq!(hits.len(), 2, "条目级提取应命中两条: {hits:?}");
+        assert_eq!(hits[0].id, "16345198");
+        assert_eq!(hits[0].title, "示例系列标题一");
+        assert_eq!(hits[0].author, "示例作者甲");
+        assert_eq!(hits[0].tags, ["标签甲", "标签乙", "标签丙"]);
+        // 无作者/标签的条目容错(空值回退)
+        assert_eq!(hits[1].author, "");
+        assert!(hits[1].tags.is_empty());
+        assert_eq!(hits[1].title, "示例系列标题二");
+    }
+
+    #[test]
+    fn detects_login_page_by_exact_title() {
+        assert!(is_login_page(
+            "<html><head><title>登录</title></head><body>表单</body></html>"
+        ));
+        // 正常页面含「登录」按钮文本不误判(title 才是判定面)
+        assert!(!is_login_page(
+            "<html><head><title>系列 - H图书馆</title></head><body><a>登录</a></body></html>"
+        ));
+    }
 
     #[test]
     fn extracts_relative_and_absolute_series_links() {
