@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchVideoList, searchVideos, fetchVideoWatchedIds } from '@/services/api'
 import type { VideoCard } from '@/types'
@@ -17,8 +17,9 @@ const activeKeyword = ref('')
 const page = ref(1)
 const hasNext = ref(true)
 const watched = ref<Set<string>>(new Set())
-let sentinel: HTMLElement | null = null
 let observer: IntersectionObserver | null = null
+/** 常驻哨兵节点(v-show 显隐),不随条件分支销毁重建,observer 一次绑定终身有效 */
+const sentinelEl = ref<HTMLElement | null>(null)
 
 async function load(reset: boolean) {
   if (reset) {
@@ -26,7 +27,17 @@ async function load(reset: boolean) {
     error.value = ''
     page.value = 1
   } else {
-    if (loadingMore.value || !hasNext.value || loading.value) return
+    // 追加加载拦截:并发锁 / 无下一页 / 首载中 / 无数据(首载失败或空结果,防止悄悄拉下一页)
+    const blocked = loadingMore.value || !hasNext.value || loading.value || !items.value.length
+    if (blocked) {
+      console.info('[video-browser] 追加加载拦截', {
+        loadingMore: loadingMore.value,
+        hasNext: hasNext.value,
+        loading: loading.value,
+        items: items.value.length,
+      })
+      return
+    }
     loadingMore.value = true
   }
   try {
@@ -46,9 +57,6 @@ async function load(reset: boolean) {
       watched.value = new Set(ids)
     } catch { /* 查询失败不影响列表 */ }
     page.value += 1
-    // DOM 按新数据 patch 完成后重绑哨兵(搜索切换后哨兵节点已重建)
-    await nextTick()
-    rebindObserver()
   } catch (e) {
     error.value = (e as Error).message || '加载失败'
   } finally {
@@ -68,25 +76,36 @@ function clearSearch() {
   void load(true)
 }
 
-/** 哨兵节点随 v-if 分支销毁重建(搜索/清空会切到 LoadingSpinner 再切回),
- *  observer 必须在每次数据加载、DOM patch 完成后重新绑定,否则搜索后
- *  滚动加载死锁(观感:结果永远停在第一页)。 */
-function rebindObserver() {
-  observer?.disconnect()
-  sentinel = document.querySelector('.scroll-sentinel')
-  if (!sentinel) return
+/** 哨兵常驻 DOM(v-show 控制显隐):display:none 的元素与视口不相交,
+ *  隐藏期间不触发回调,恢复显示即自动恢复工作——节点不随条件分支
+ *  销毁重建,observer 一次绑定终身有效(前两轮「搜索后翻页失效」的
+ *  根因即哨兵节点重建导致观察失联,本结构从根上消除该模式)。 */
+function bindObserver() {
+  if (!sentinelEl.value) {
+    console.info('[video-browser] 绑定失败:哨兵节点不存在')
+    return
+  }
   observer = new IntersectionObserver(
     (entries) => {
+      console.info('[video-browser] 哨兵回调', {
+        intersecting: entries[0]?.isIntersecting ?? false,
+        page: page.value,
+        hasNext: hasNext.value,
+        loading: loading.value,
+        loadingMore: loadingMore.value,
+        items: items.value.length,
+      })
       if (entries[0]?.isIntersecting) void load(false)
     },
     { rootMargin: '400px' },
   )
-  observer.observe(sentinel)
+  observer.observe(sentinelEl.value)
+  console.info('[video-browser] observer 已绑定哨兵')
 }
 
-onMounted(async () => {
-  await load(true)
-  rebindObserver()
+onMounted(() => {
+  bindObserver()
+  void load(true)
 })
 
 onUnmounted(() => {
@@ -148,8 +167,10 @@ onUnmounted(() => {
       <div v-if="loadingMore" class="loading-more">
         <LoadingSpinner message="正在加载更多..." />
       </div>
-      <div v-if="!loading && hasNext && items.length" class="scroll-sentinel" />
-      <div v-else-if="!hasNext && items.length" class="no-more">
+      <!-- 常驻哨兵:v-show 显隐(display:none 不与视口相交,隐藏期间不触发),
+           节点不销毁重建,observer 绑定终身有效 -->
+      <div v-show="!loading && !error && items.length > 0" ref="sentinelEl" class="scroll-sentinel" />
+      <div v-if="!loading && !error && !hasNext && items.length" class="no-more">
         <span>没有更多了</span>
       </div>
   </div>
