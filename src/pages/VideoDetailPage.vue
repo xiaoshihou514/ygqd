@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 // Video.js 10(@videojs/html)自定义元素:导入即注册,无需命令式初始化。
@@ -81,6 +81,46 @@ function retry() {
   void load()
 }
 
+// 全屏:Android WebView 的全屏请求被 wry 宿主立即取消
+// (RustWebChromeClient.onShowCustomView 首行 onCustomViewHidden),
+// Tauri 窗口全屏在 Android 亦为 no-op——故 Android 走页面级伪全屏
+// (fixed 铺满 + 横屏锁定尝试),桌面走元素全屏(恢复 v8 时代能力)。
+const IS_ANDROID = /android/i.test(navigator.userAgent)
+const playerBox = ref<HTMLDivElement | null>(null)
+const isFullscreen = ref(false)
+
+function onFullscreenChange() {
+  isFullscreen.value = !!document.fullscreenElement
+}
+
+async function toggleFullscreen() {
+  if (IS_ANDROID) {
+    isFullscreen.value = !isFullscreen.value
+    try {
+      // 伪全屏下尝试横屏锁定(Android WebView 一般可用,失败静默)
+      if (isFullscreen.value) {
+        await screen.orientation.lock('landscape')
+      } else {
+        screen.orientation.unlock()
+      }
+    } catch {
+      /* 不支持或被拒,忽略 */
+    }
+    return
+  }
+  const box = playerBox.value
+  if (!box) return
+  try {
+    if (!document.fullscreenElement) {
+      await box.requestFullscreen()
+    } else {
+      await document.exitFullscreen()
+    }
+  } catch {
+    /* 请求被拒(如非用户手势),忽略 */
+  }
+}
+
 async function copyError() {
   try {
     await navigator.clipboard.writeText(error.value)
@@ -90,15 +130,35 @@ async function copyError() {
 }
 
 onMounted(() => {
+  document.addEventListener('fullscreenchange', onFullscreenChange)
   void load()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  if (IS_ANDROID && isFullscreen.value) screen.orientation.unlock()
+  if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
 })
 </script>
 
 <template>
   <div class="video-detail-page">
-    <div class="player-section">
+    <div class="player-section" :class="{ 'player-fullscreen': isFullscreen && IS_ANDROID }">
       <button class="back-btn" @click="router.back()">‹ 返回</button>
-      <div class="player-box">
+      <button
+        class="fs-btn"
+        :title="isFullscreen ? '退出全屏' : '全屏'"
+        :aria-label="isFullscreen ? '退出全屏' : '全屏'"
+        @click="toggleFullscreen"
+      >
+        <svg v-if="!isFullscreen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+        </svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 0 2-2h3M3 8h3a2 2 0 0 0 2-2V3" />
+        </svg>
+      </button>
+      <div ref="playerBox" class="player-box">
         <LoadingSpinner v-if="loading" message="获取播放地址..." />
         <EmptyState v-if="error && !loading" title="播放失败" :message="error">
           <button class="retry-btn" @click="retry">重试</button>
@@ -164,6 +224,50 @@ onMounted(() => {
   color: #fff;
   font-size: 14px;
   cursor: pointer;
+}
+
+.fs-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 32px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.fs-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* 桌面元素全屏:播放器铺满视口 */
+.player-box:fullscreen {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* Android 伪全屏:播放区 fixed 铺满视口,顶栏/底栏让位;保持 16:9 居中
+   (aspect-ratio + max-height 由浏览器按比例反推宽度,不拉伸视频) */
+.player-section.player-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-section.player-fullscreen .player-box {
+  width: 100%;
+  max-height: 100%;
 }
 
 .player-box {
