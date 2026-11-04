@@ -182,6 +182,30 @@ pub fn is_fourhoi_url(url: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 番号模式(主解析校验与兜底扫描共用的唯一定义,避免两处能力漂移):
+/// 1-6 字母前缀 + 2-5 位数字,可选无码流出(-uncensored-leak)与中字
+/// (-chinese-subtitle)后缀含组合;另收 fc2 短码形态。无锚定义——
+/// 完整匹配用于校验(is_video_code),子串匹配用于兜底 href 扫描。
+fn video_code_pattern() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(concat!(
+            r"[a-z]{1,6}-\d{2,5}",
+            r"(-uncensored-leak(-chinese-subtitle)?|-chinese-subtitle)?",
+            r"|fc2-ppv-\d+"
+        ))
+        .expect("static regex")
+    })
+}
+
+/// 番号形态完整匹配(等价 ^模式$):匹配须从串首到串尾
+fn is_video_code(code: &str) -> bool {
+    match video_code_pattern().find(code) {
+        Some(m) => m.start() == 0 && m.end() == code.len(),
+        None => false,
+    }
+}
+
 /// 视频列表响应
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -403,16 +427,15 @@ impl VideoApi {
     /// 兜底:番号形态 href 扫描(hydration 后 DOM 结构不可预知时,
     /// 番号链接仍以 href 属性形态存在)。与主解析同边界——只扫 href
     /// 属性值,避免把页面 CSS 工具类(red-500/gray-300 等)误当番号;
-    /// 封面按 fourhoi 规律构造。
+    /// 番号模式与主解析共用 video_code_pattern(leak/中字/组合形态
+    /// 完整收录,不丢后缀);封面按 fourhoi 规律构造。
     fn scan_codes_fallback(html: &str) -> Vec<VideoCard> {
         let re_href = Regex::new(r#"href="([^"]+)""#).expect("static regex");
-        let re_code = Regex::new(r"\b([a-z]{2,6}-\d{2,5})\b").expect("static regex");
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for cap in re_href.captures_iter(html) {
             let href = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
-            for m in re_code.captures_iter(href) {
-                let Some(m) = m.get(1) else { continue };
+            for m in video_code_pattern().find_iter(href) {
                 let code = m.as_str().to_lowercase();
                 if seen.insert(code.clone()) {
                     out.push(VideoCard {
@@ -502,18 +525,8 @@ impl VideoApi {
     /// fourhoi.com/{code}/cover-t.jpg 规律封面 + 番号前缀归属标题
     fn parse_missav_search(html: &str) -> Vec<VideoCard> {
         let re_href = Regex::new(r#"href="([^"]+)""#).expect("static regex");
-        // 番号形态:1-6 字母前缀 + 2-5 位数字,可选无码流出(-uncensored-leak)
-        // 与中字(-chinese-subtitle)后缀(含两者组合);另收 fc2 短码形态。
+        // 番号形态校验用公共 is_video_code(与兜底扫描同一模式定义)。
         // 页面标题文本以基础番号(无后缀)大写开头,后缀只存在于 href。
-        let is_video_code = |code: &str| {
-            Regex::new(concat!(
-                r"^([a-z]{1,6}-\d{2,5}",
-                r"(-uncensored-leak(-chinese-subtitle)?|-chinese-subtitle)?",
-                r"|fc2-ppv-\d+)$"
-            ))
-            .unwrap()
-            .is_match(code)
-        };
         let anchors: Vec<(usize, String)> = re_href
             .captures_iter(html)
             .filter_map(|c| {
@@ -788,6 +801,51 @@ mod tests {
         );
         assert!(cards[0].thumbnail.ends_with("cover-t.jpg"));
         assert_eq!(cards[1].code, "fc2-ppv-5000463");
+    }
+
+    #[test]
+    fn fallback_captures_leak_codes_whole() {
+        // 旧兜底正则只抓基础子串(fthtd-242),丢 -uncensored-leak 后缀
+        // 会导致兜底卡点详情找不到 leak 内容;对齐后须收录完整形态
+        let html = r#"
+          <a href="https://missav.ai/fthtd-242-uncensored-leak">x</a>
+          <a href="https://missav.ai/c-2992">y</a>
+          <a href="https://missav.ai/dm539/search/spsc-037?page=1">z</a>
+        "#;
+        let cards = VideoApi::scan_codes_fallback(html);
+        let codes: Vec<&str> = cards.iter().map(|c| c.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            ["fthtd-242-uncensored-leak", "c-2992", "spsc-037"],
+            "兜底须与主解析同能力集(完整形态、含后缀): {codes:?}"
+        );
+    }
+
+    #[test]
+    fn fallback_and_validator_never_drift() {
+        // 漂移防护:任意 href 末段,凡 is_video_code 认可的形态,
+        // 兜底扫描都必须能完整抓到(两处共用同一模式定义)
+        let samples = [
+            "ssis-960",
+            "ssis-960-chinese-subtitle",
+            "fthtd-242-uncensored-leak",
+            "oftr-017-uncensored-leak-chinese-subtitle",
+            "c-2992",
+            "fc2-ppv-5001211",
+        ];
+        for code in samples {
+            assert!(is_video_code(code), "样本应为合法番号: {code}");
+            let html = format!(r#"<a href="https://missav.ai/{code}">x</a>"#);
+            let codes: Vec<String> = VideoApi::scan_codes_fallback(&html)
+                .into_iter()
+                .map(|c| c.code)
+                .collect();
+            assert_eq!(
+                codes,
+                [code.to_string()],
+                "兜底应完整收录校验器认可的形态: {code}"
+            );
+        }
     }
 
     #[test]
