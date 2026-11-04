@@ -162,6 +162,13 @@ fn base_code(code: &str) -> &str {
     code.strip_suffix("-chinese-subtitle").unwrap_or(code)
 }
 
+/// 多源合并后的 has_next:任一源本页还有货即 true。
+/// fs1 按满页判定(每页 24 卡);missav dm539 每页仅 12 卡且末页可能
+/// 不满,按「本页非空」判定——末页有余卡时会多一次空翻页,可接受。
+fn merged_has_next(fs1_full_page: bool, missav_nonempty: bool) -> bool {
+    fs1_full_page || missav_nonempty
+}
+
 /// 视频列表响应
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -257,8 +264,14 @@ impl VideoApi {
         Err("missav 重定向次数过多".into())
     }
 
-    /// missav 搜索(中文词兜底):dm539 搜索页为服务端渲染,直连可达
-    async fn search_missav(&self, keyword: &str, page: i32) -> Result<Vec<VideoCard>, String> {
+    /// missav 搜索(中文词兜底):dm539 搜索页为服务端渲染,直连可达。
+    /// 返回结果卡片与「本页有货」标志(dm539 每页仅 12 卡,不能沿用
+    /// fs1 的每页卡数阈值推断下一页)。
+    async fn search_missav(
+        &self,
+        keyword: &str,
+        page: i32,
+    ) -> Result<(Vec<VideoCard>, bool), String> {
         let encoded = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
         let html = self
             .missav_get(&format!(
@@ -270,7 +283,8 @@ impl VideoApi {
         if cards.is_empty() {
             cards = Self::scan_codes_fallback(&html);
         }
-        Ok(cards)
+        let has_next = !cards.is_empty();
+        Ok((cards, has_next))
     }
 
     /// missav 兜底播放地址:详情页的 packer 混淆脚本解码出 m3u8。
@@ -420,9 +434,13 @@ impl VideoApi {
     /// 按关键词搜索:fs1 与 missav(直连)并发请求并合并,同基础番号
     /// 以 fs1 为准(fs1 有完整元数据);两路均失败时返回错误。
     pub async fn search(&self, keyword: &str, page: i32) -> Result<VideoListResult, String> {
-        let (fs1_res, missav) = tokio::join!(self.search_fs1(keyword, page), async {
-            self.search_missav(keyword, page).await.unwrap_or_default()
+        let (fs1_res, missav_res) = tokio::join!(self.search_fs1(keyword, page), async {
+            self.search_missav(keyword, page)
+                .await
+                .unwrap_or((Vec::new(), false))
         });
+        let fs1_has_next = matches!(&fs1_res, Ok(r) if r.items.len() >= 24);
+        let (missav, missav_has_next) = missav_res;
         let mut items = match fs1_res {
             Ok(r) => r.items,
             Err(e) => {
@@ -443,7 +461,7 @@ impl VideoApi {
             pagination: PaginationInfo {
                 current: page - 1,
                 total: 0,
-                has_next: items.len() >= 20,
+                has_next: merged_has_next(fs1_has_next, missav_has_next),
                 has_prev: page > 1,
             },
             items,
@@ -689,6 +707,16 @@ mod tests {
             "https://fourhoi.com/spsc-037/cover-t.jpg"
         );
     }
+
+    #[test]
+    fn merged_has_next_across_sources() {
+        // 缺陷场景回归:fs1 2 卡 + missav 12 卡,GIGA 搜索第一页(源站 67 页)
+        assert!(merged_has_next(false, true), "missav 本页非空即可翻页");
+        assert!(merged_has_next(true, false), "fs1 满页即翻页");
+        assert!(!merged_has_next(false, false), "两源均无货则终止");
+        assert!(merged_has_next(true, true));
+    }
+
     #[test]
     fn normalizes_video_cover_urls() {
         assert_eq!(
@@ -811,8 +839,8 @@ mod missav_tests {
                 let api = VideoApi::new().expect("video client");
 
                 // 1) 直连搜索(中文词兜底路径)
-                let cards = api.search_missav("ssis", 1).await.expect("missav search");
-                println!("missav search: {} cards", cards.len());
+                let (cards, has_next) = api.search_missav("ssis", 1).await.expect("missav search");
+                println!("missav search: {} cards has_next={has_next}", cards.len());
                 assert!(!cards.is_empty(), "missav 搜索不应为空");
 
                 // 2) 详情兜底:packer 解码出 m3u8(优先中字变体)
@@ -848,7 +876,10 @@ mod missav_tests {
                     println!(
                         "[{kw}] fs1={} missav={} search()={} has_next={}",
                         fs1.as_ref().map(|r| r.items.len()).unwrap_or(999),
-                        missav.as_ref().map(|v| v.len()).unwrap_or(999),
+                        missav
+                            .as_ref()
+                            .map(|(v, next)| format!("{}卡 next={next}", v.len()))
+                            .unwrap_or_else(|_| "FAIL".into()),
                         full.items.len(),
                         full.pagination.has_next
                     );
