@@ -373,24 +373,30 @@ impl VideoApi {
         dedup
     }
 
-    /// 兜底:全文番号扫描(hydration 后 DOM 结构不可预知时,
-    /// 番号形态在页面文本中必然出现)。封面按 fourhoi 规律构造。
+    /// 兜底:番号形态 href 扫描(hydration 后 DOM 结构不可预知时,
+    /// 番号链接仍以 href 属性形态存在)。与主解析同边界——只扫 href
+    /// 属性值,避免把页面 CSS 工具类(red-500/gray-300 等)误当番号;
+    /// 封面按 fourhoi 规律构造。
     fn scan_codes_fallback(html: &str) -> Vec<VideoCard> {
-        let re = Regex::new(r"\b([a-z]{2,6}-\d{2,5})\b").expect("static regex");
+        let re_href = Regex::new(r#"href="([^"]+)""#).expect("static regex");
+        let re_code = Regex::new(r"\b([a-z]{2,6}-\d{2,5})\b").expect("static regex");
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
-        for c in re.captures_iter(html) {
-            let Some(m) = c.get(1) else { continue };
-            let code = m.as_str().to_lowercase();
-            if seen.insert(code.clone()) {
-                out.push(VideoCard {
-                    code: code.clone(),
-                    title: code.to_uppercase(),
-                    thumbnail: format!("https://fourhoi.com/{code}/cover-t.jpg"),
-                    views: String::new(),
-                    likes: String::new(),
-                    chinese: false,
-                });
+        for cap in re_href.captures_iter(html) {
+            let href = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
+            for m in re_code.captures_iter(href) {
+                let Some(m) = m.get(1) else { continue };
+                let code = m.as_str().to_lowercase();
+                if seen.insert(code.clone()) {
+                    out.push(VideoCard {
+                        code: code.clone(),
+                        title: code.to_uppercase(),
+                        thumbnail: format!("https://fourhoi.com/{code}/cover-t.jpg"),
+                        views: String::new(),
+                        likes: String::new(),
+                        chinese: false,
+                    });
+                }
             }
         }
         out
@@ -658,6 +664,31 @@ mod tests {
         assert_eq!(cards[1].code, "fc2-ppv-5000463");
     }
 
+    #[test]
+    fn fallback_scans_only_href_values() {
+        // 真实样本(missav 搜索 GIGA 页)形态特征:结果卡片 href 番号 +
+        // 大量 Tailwind 工具类(red-500/gray-300 等,正文里也出现同形文本)
+        let html = r#"
+          <div class="text-gray-300 bg-red-500 border-zinc-50 p-12">
+            red-500 gray-300 zinc-50 pb-20
+          </div>
+          <a href="https://missav.ai/dm539/search/spsc-037?page=1">搜索</a>
+          <a href="https://missav.ai/spsc-037" class="thumbnail group">
+            <img data-src="https://fourhoi.com/spsc-037/cover-t.jpg">
+          </a>
+        "#;
+        let cards = VideoApi::scan_codes_fallback(html);
+        let codes: Vec<&str> = cards.iter().map(|c| c.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            ["spsc-037"],
+            "只收录 href 内番号且去重,不含 CSS 类名伪番号: {codes:?}"
+        );
+        assert_eq!(
+            cards[0].thumbnail,
+            "https://fourhoi.com/spsc-037/cover-t.jpg"
+        );
+    }
     #[test]
     fn normalizes_video_cover_urls() {
         assert_eq!(
