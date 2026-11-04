@@ -8,7 +8,9 @@ type ImageSource = SourceId | 'video'
 const props = defineProps<{ src: string; source?: ImageSource; alt?: string; loading?: 'eager' | 'lazy' }>()
 const emit = defineEmits<{ error: [] }>()
 const objectUrl = ref('')
+const failed = ref(false)
 let generation = 0
+let retryTimer = 0
 
 function imageContentType(url: string, bytes: ArrayBuffer): string {
   const data = new Uint8Array(bytes)
@@ -29,26 +31,63 @@ function imageContentType(url: string, bytes: ArrayBuffer): string {
 
 watch(() => [props.src, props.source], async ([url]) => {
   const current = ++generation
+  clearTimeout(retryTimer)
   if (objectUrl.value) URL.revokeObjectURL(objectUrl.value)
   objectUrl.value = ''
+  failed.value = false
   if (!url) return
-  try {
-    const bytes = props.source === 'video'
-      ? await fetchVideoImage(url)
-      : await fetchImage(url, props.source)
-    if (current !== generation) return
-    objectUrl.value = URL.createObjectURL(new Blob([bytes], { type: imageContentType(url, bytes) }))
-  } catch {
-    if (current === generation) emit('error')
+  // 失败自动重试 1 次(短退避):封面 CDN 偶发限流(403/429)一次退避即可恢复
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const bytes = props.source === 'video'
+        ? await fetchVideoImage(url)
+        : await fetchImage(url, props.source)
+      if (current !== generation) return
+      objectUrl.value = URL.createObjectURL(new Blob([bytes], { type: imageContentType(url, bytes) }))
+      return
+    } catch {
+      if (current !== generation) return
+      if (attempt >= 1) break
+      await new Promise((resolve) => { retryTimer = window.setTimeout(resolve, 1200) })
+      if (current !== generation) return
+    }
   }
+  failed.value = true
+  emit('error')
 }, { immediate: true })
 
 onBeforeUnmount(() => {
   generation++
+  clearTimeout(retryTimer)
   if (objectUrl.value) URL.revokeObjectURL(objectUrl.value)
 })
 </script>
 
 <template>
   <img v-if="objectUrl" :src="objectUrl" :alt="alt || ''" :loading="loading" />
+  <span v-else-if="failed" class="img-broken" role="img" :aria-label="alt || '图片加载失败'">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="9" cy="10" r="1.5" />
+      <path d="M5 19l5-6 3 3.5 2.5-3L21 19" />
+    </svg>
+  </span>
 </template>
+
+<style scoped>
+.img-broken {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 32px;
+  color: var(--color-text-secondary, #86868b);
+  opacity: 0.55;
+}
+
+.img-broken svg {
+  width: 22px;
+  height: 22px;
+}
+</style>
