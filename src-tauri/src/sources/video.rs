@@ -502,10 +502,17 @@ impl VideoApi {
     /// fourhoi.com/{code}/cover-t.jpg 规律封面 + 番号前缀归属标题
     fn parse_missav_search(html: &str) -> Vec<VideoCard> {
         let re_href = Regex::new(r#"href="([^"]+)""#).expect("static regex");
+        // 番号形态:1-6 字母前缀 + 2-5 位数字,可选无码流出(-uncensored-leak)
+        // 与中字(-chinese-subtitle)后缀(含两者组合);另收 fc2 短码形态。
+        // 页面标题文本以基础番号(无后缀)大写开头,后缀只存在于 href。
         let is_video_code = |code: &str| {
-            Regex::new(r"^([a-z]{2,6}-\d{2,5}(-chinese-subtitle)?|fc2-ppv-\d+)$")
-                .unwrap()
-                .is_match(code)
+            Regex::new(concat!(
+                r"^([a-z]{1,6}-\d{2,5}",
+                r"(-uncensored-leak(-chinese-subtitle)?|-chinese-subtitle)?",
+                r"|fc2-ppv-\d+)$"
+            ))
+            .unwrap()
+            .is_match(code)
         };
         let anchors: Vec<(usize, String)> = re_href
             .captures_iter(html)
@@ -531,11 +538,18 @@ impl VideoApi {
             if !seen.insert(code.clone()) {
                 continue;
             }
-            // 标题窗口:锚点后 9000 字符内找「番号大写 」开头的文本节点
-            let upper = code.to_uppercase();
+            // 标题窗口:锚点后 9000 字符内找「基础番号大写 」开头的文本节点。
+            // 页面标题不含后缀(FTHTD-242 而非 FTHTD-242-UNCENSORED-LEAK),
+            // 故剥掉 leak/中字后缀再匹配——顺带修复中字卡标题一直为空的存量问题。
+            let base_upper = code
+                .strip_suffix("-uncensored-leak-chinese-subtitle")
+                .or_else(|| code.strip_suffix("-uncensored-leak"))
+                .or_else(|| code.strip_suffix("-chinese-subtitle"))
+                .unwrap_or(code)
+                .to_uppercase();
             let re_t = Regex::new(&format!(
                 r#">\s*{}\s([^<>]{{5,200}})\s*<"#,
-                regex::escape(&upper)
+                regex::escape(&base_upper)
             ))
             .expect("static regex");
             // 窗口终点按 UTF-8 字符边界右移(zh-Hant 页面多字节字符会落进窗口)
@@ -672,6 +686,87 @@ pub struct VideoDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_uncensored_leak_and_short_prefix_codes() {
+        // 真实样本(部屋搜索页)特征:无码流出变体每页 3-4 个、组合后缀、
+        // 单字母前缀;页面标题以基础番号大写开头(后缀只存在于 href)
+        let html = r#"
+          <a href="https://missav.ai/fthtd-242-uncensored-leak">
+            <p class="x"> FTHTD-242 示例标题一 - 演员甲 </p>
+          </a>
+          <a href="https://missav.ai/c-2992">
+            <p class="x"> C-2992 示例标题二 - 演员乙 </p>
+          </a>
+          <a href="https://missav.ai/oftr-017-uncensored-leak-chinese-subtitle">
+            <p class="x"> OFTR-017 示例标题三 - 演员丙 </p>
+          </a>
+        "#;
+        let cards = VideoApi::parse_missav_search(html);
+        let codes: Vec<&str> = cards.iter().map(|c| c.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            [
+                "fthtd-242-uncensored-leak",
+                "c-2992",
+                "oftr-017-uncensored-leak-chinese-subtitle"
+            ],
+            "leak/组合/单字母前缀形态均应收录: {codes:?}"
+        );
+        // 标题按基础番号大写匹配(不含后缀)——顺带修复中字卡标题为空的存量问题
+        assert_eq!(cards[0].title, "示例标题一");
+        assert_eq!(cards[1].title, "示例标题二");
+        assert_eq!(cards[2].title, "示例标题三");
+        assert!(cards[2].chinese, "组合形态的中字标记应为 true");
+        assert!(!cards[0].chinese);
+        // 封面按完整 code 构造(missav 图床按完整路径收录)
+        assert_eq!(
+            cards[0].thumbnail,
+            "https://fourhoi.com/fthtd-242-uncensored-leak/cover-t.jpg"
+        );
+    }
+
+    #[test]
+    fn variant_dedup_keeps_leak_and_plain_as_distinct() {
+        // 去重语义(lead 裁决):leak 变体与普通版是不同详情页的不同内容
+        // 版本,独立条目保留(源站本就并列展示,忠实转发);parse_missav_search
+        // 页内仅按完整 code 去重,base_code 只在 fs1 侧与跨源合并使用
+        let html = r#"
+          <a href="https://missav.ai/snos-359"><p class="x"> SNOS-359 标题A </p></a>
+          <a href="https://missav.ai/snos-359-uncensored-leak"><p class="x"> SNOS-359 标题B </p></a>
+          <a href="https://missav.ai/oftr-017-uncensored-leak"><p class="x"> OFTR-017 标题C </p></a>
+          <a href="https://missav.ai/oftr-017-uncensored-leak-chinese-subtitle"><p class="x"> OFTR-017 标题D </p></a>
+        "#;
+        let cards = VideoApi::parse_missav_search(html);
+        let codes: Vec<&str> = cards.iter().map(|c| c.code.as_str()).collect();
+        assert_eq!(
+            codes,
+            [
+                "snos-359",
+                "snos-359-uncensored-leak",
+                "oftr-017-uncensored-leak",
+                "oftr-017-uncensored-leak-chinese-subtitle"
+            ],
+            "各形态并列保留,忠实源站: {codes:?}"
+        );
+        assert!(cards[3].chinese);
+        assert!(!cards[2].chinese);
+    }
+
+    #[test]
+    fn base_code_dedup_semantics_unchanged() {
+        // base_code 只剥 -chinese-subtitle(不剥 leak 后缀)——回归保护
+        assert_eq!(base_code("fthtd-242"), "fthtd-242");
+        assert_eq!(
+            base_code("fthtd-242-uncensored-leak"),
+            "fthtd-242-uncensored-leak"
+        );
+        assert_eq!(base_code("ssis-960-chinese-subtitle"), "ssis-960");
+        assert_eq!(
+            base_code("oftr-017-uncensored-leak-chinese-subtitle"),
+            "oftr-017-uncensored-leak"
+        );
+    }
 
     #[test]
     fn parses_missav_search_cards() {
