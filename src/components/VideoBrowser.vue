@@ -76,6 +76,16 @@ function clearSearch() {
   void load(true)
 }
 
+/** 徽标展示用基础番号:剥无码流出与中字后缀(先长后短,与后端 title
+ *  剥离同序)。跳转 / 去重 / 已看记录仍用完整 code,不受展示层影响。 */
+function basicCode(code: string): string {
+  return code
+    .replace('-uncensored-leak-chinese-subtitle', '')
+    .replace('-uncensored-leak', '')
+    .replace('-chinese-subtitle', '')
+    .toUpperCase()
+}
+
 /** 哨兵常驻 DOM(v-show 控制显隐):display:none 的元素与视口不相交,
  *  隐藏期间不触发回调,恢复显示即自动恢复工作——节点不随条件分支
  *  销毁重建,observer 一次绑定终身有效(前两轮「搜索后翻页失效」的
@@ -156,10 +166,11 @@ onUnmounted(() => {
           </div>
           <div class="video-card-body">
             <span class="video-code-row">
-              <span class="video-code">{{ card.code.replace('-chinese-subtitle', '').toUpperCase() }}</span>
+              <span class="video-code">{{ basicCode(card.code) }}</span>
+              <span v-if="card.code.includes('-uncensored-leak')" class="video-leak-badge">无码</span>
               <span v-if="card.chinese" class="video-cs-badge">中字</span>
             </span>
-            <span class="video-card-title">{{ card.title || card.code }}</span>
+            <span class="video-card-title">{{ card.title || basicCode(card.code) }}</span>
           </div>
         </button>
       </div>
@@ -290,6 +301,15 @@ onUnmounted(() => {
   padding: 0 5px;
   border-radius: 4px;
   background: #e8590c;
+  color: #fff;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.video-leak-badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #6741d9;
   color: #fff;
   font-size: 10px;
   flex-shrink: 0;
