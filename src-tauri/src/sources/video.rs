@@ -169,6 +169,19 @@ fn merged_has_next(fs1_full_page: bool, missav_nonempty: bool) -> bool {
     fs1_full_page || missav_nonempty
 }
 
+/// fourhoi 图床判定(missav 卡片封面的图床)。其防盗链仅放行白名单
+/// Referer(missav.ai)与空 Referer,fs1 等其他站 Referer 一律 403——
+/// 封面请求对它必须不带 Referer(实测空 Referer 最宽松,不依赖白名单)。
+pub fn is_fourhoi_url(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| {
+            u.host_str()
+                .map(|h| h == "fourhoi.com" || h.ends_with(".fourhoi.com"))
+        })
+        .unwrap_or(false)
+}
+
 /// 视频列表响应
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -680,6 +693,21 @@ mod tests {
         );
         assert!(cards[0].thumbnail.ends_with("cover-t.jpg"));
         assert_eq!(cards[1].code, "fc2-ppv-5000463");
+    }
+
+    #[test]
+    fn fourhoi_url_detection() {
+        assert!(super::is_fourhoi_url(
+            "https://fourhoi.com/spsc-037/cover-t.jpg"
+        ));
+        assert!(super::is_fourhoi_url(
+            "https://cdn.fourhoi.com/x/cover.webp"
+        ));
+        assert!(!super::is_fourhoi_url("https://fs1.app/images/cover.jpg"));
+        assert!(!super::is_fourhoi_url(
+            "https://evil.example/fourhoi.com/cover.jpg"
+        ));
+        assert!(!super::is_fourhoi_url("不是 URL"));
     }
 
     #[test]

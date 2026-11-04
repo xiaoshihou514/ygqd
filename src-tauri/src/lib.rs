@@ -604,6 +604,22 @@ async fn fetch_image_with_client(client: reqwest::Client, url: String) -> Result
     Ok(Response::new(bytes.to_vec()))
 }
 
+/// wreq 版图片抓取(与 reqwest 版同构):供 fourhoi 图床使用——
+/// missav 客户端默认无 Referer,绕过其防盗链白名单
+async fn fetch_image_with_wreq(client: wreq::Client, url: String) -> Result<Response, String> {
+    let bytes = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Response::new(bytes.to_vec()))
+}
+
 #[tauri::command]
 async fn fetch_image(
     source: Source,
@@ -617,10 +633,25 @@ async fn fetch_image(
     fetch_image_with_client(client, url).await
 }
 
-/// 视频封面由 fs1 提供,需沿用其客户端请求头(尤其是 Referer)
+/// 视频封面按图床分流:fourhoi(missav 卡片封面)防盗链仅放行白名单
+/// Referer 与空 Referer,fs1 等 Referer 一律 403——对它用 missav 的
+/// wreq 客户端(Chrome 指纹、默认无 Referer);其余图床沿用 fs1 客户端
+/// 请求头(fs1 自家封面需其 Referer)。
 #[tauri::command]
-async fn fetch_video_image(url: String, state: State<'_, AppState>) -> Result<Response, String> {
-    fetch_image_with_client(state.video.client.clone(), url).await
+async fn fetch_video_image(
+    app: AppHandle,
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<Response, String> {
+    let result = if sources::video::is_fourhoi_url(&url) {
+        fetch_image_with_wreq(state.video.missav.clone(), url.clone()).await
+    } else {
+        fetch_image_with_client(state.video.client.clone(), url.clone()).await
+    };
+    if let Err(e) = &result {
+        gateway::diag(&app, &format!("video image FAIL {url}: {e}"));
+    }
+    result
 }
 
 #[tauri::command]
