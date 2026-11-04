@@ -92,6 +92,9 @@ jobs:
 
       - name: Publish rolling nightly release
         uses: softprops/action-gh-release@v3
+        # 安卓/Linux 流水线并发发布同一 nightly release 时存在竞争
+        # 失败窗口(softprops 内部 create/upsert),由下一步幂等补传兜底
+        continue-on-error: true
         with:
           tag_name: nightly
           name: Nightly Build
@@ -108,3 +111,25 @@ jobs:
           files: artifacts/*
           fail_on_unmatched_files: true
           overwrite_files: true
+
+      - name: Verify and repair release assets
+        run: |
+          # 幂等补齐:确保 release 存在(并发竞争下 softprops 可能创建失败),
+          # 再 --clobber 补传资产,最多重试 3 次,全部失败才判红
+          gh release view nightly >/dev/null 2>&1 || \
+            gh release create nightly \
+              --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Nightly Build" \
+              --notes "Automated nightly from \`$GITHUB_SHA\`."
+          for attempt in 1 2 3; do
+            if gh release upload nightly artifacts/* --clobber; then
+              echo "release 资产已就位(第 $attempt 次尝试)"
+              exit 0
+            fi
+            echo "第 $attempt 次补传失败,退避 15 秒后重试"
+            sleep 15
+          done
+          echo "release 资产补传失败"
+          exit 1
+        env:
+          GH_TOKEN: ${{ github.token }}
