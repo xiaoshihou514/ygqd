@@ -284,6 +284,7 @@ fn novel_set_progress(
 /// 完成网关操作(用户点了网关内「完成返回」栏):隐藏网关回主界面
 #[tauri::command]
 fn gateway_finish(app: AppHandle, label: String) -> Result<(), String> {
+    gateway::diag(&app, "[通道观测] gwfinish 经 IPC 通道到达");
     gateway::finish(&app, &label)
 }
 
@@ -306,7 +307,16 @@ fn diag_clear(app: AppHandle) -> Result<(), String> {
 
 /// 网关桥回传(由网关 webview 内的 JS 调用,不暴露给主窗口前端)
 #[tauri::command]
-fn gateway_result(state: State<'_, GatewayManager>, result: gateway::GatewayReply) {
+fn gateway_result(app: AppHandle, state: State<'_, GatewayManager>, result: gateway::GatewayReply) {
+    gateway::diag(
+        &app,
+        &format!(
+            "[通道观测] gwresult 经 IPC 通道到达 id={} status={} body={}B",
+            result.id,
+            result.status,
+            result.body.len()
+        ),
+    );
     state.resolve_reply(result);
 }
 

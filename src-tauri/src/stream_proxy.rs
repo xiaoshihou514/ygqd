@@ -472,6 +472,7 @@ fn handle_client(mut stream: TcpStream) {
             .map(|v| urldecode(v))
             .unwrap_or_default();
         if let Some(app) = APP.get() {
+            crate::gateway::diag(app, "[通道观测] gwfinish 经降级 fetch 通道到达");
             let _ = crate::gateway::finish(app, &label);
         }
         respond(
@@ -482,6 +483,9 @@ fn handle_client(mut stream: TcpStream) {
             &[("Access-Control-Allow-Origin", "*")],
         );
     } else if path == "/gwresult" && !query.is_empty() {
+        if let Some(app) = APP.get() {
+            crate::gateway::diag(app, "[通道观测] gwresult 经降级 fetch 通道到达");
+        }
         let (status, body) = handle_gwresult(&query, &body_str);
         respond(
             &mut stream,

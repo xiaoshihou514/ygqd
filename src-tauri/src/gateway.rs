@@ -97,27 +97,89 @@ fn site(label: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// 网关页面与宿主间的桥接表达式:remote capability(capabilities/gateway.json)
-/// 为 hlib.cc 启用 IPC 后,页面内可用 __TAURI_INTERNALS__.invoke 直达
-/// Rust——该通道走 postMessage,不受页面 CSP connect-src 约束(hlib 的
-/// CF 挑战页 connect-src 仅放行 'self' 与 challenges.cloudflare.com,
-/// 旧版回环 fetch 回传被拦导致网关死路)。IPC 不可用时降级回环 fetch。
-const IPC_BRIDGE: &str = r#"async function ygwdInvoke(cmd, payload) {
+/// 网关页面与宿主间的回传桥:主框架导航 `ygwd-gw://` + on_navigation
+/// 拦截——主框架导航不受页面 CSP connect-src/frame-src 约束(navigate-to
+/// 已废弃),hlib 挑战页 CSP 仅放行 'self' 与 challenges.cloudflare.com,
+/// 旧版回环 fetch 与 IPC fetch 传输均被拦导致网关死路;导航式零 CSP 交互。
+/// Android 的 IPC 走 JavaBridge(非 fetch)可能不受 CSP,故 Android 优先
+/// 试 IPC,失败回退导航式(YGWD_IPC_ERR 写 title 留判据)。
+/// IPC 失败原因写入 document.title(YGWD_IPC_ERR 前缀)供 Rust 诊断读取。
+const IPC_BRIDGE_ANDROID: &str = r#"async function ygwdInvoke(cmd, payload) {
   const t = window.__TAURI_INTERNALS__;
-  if (t && typeof t.invoke === 'function') {
-    return t.invoke(cmd, payload);
+  if (!(t && typeof t.invoke === 'function')) {
+    document.title = 'YGWD_IPC_ERR|IPC_UNAVAILABLE';
+    throw new Error('IPC_UNAVAILABLE');
   }
-  throw new Error('IPC_UNAVAILABLE');
+  return t.invoke(cmd, payload).catch(function(e) {
+    document.title = 'YGWD_IPC_ERR|INVOKE_FAIL|' + String(e).slice(0, 180);
+    throw e;
+  });
 }"#;
 
-/// 完成栏注入 JS:顶部悬浮「完成,返回应用」,点击经 IPC(降级回环 fetch)
-/// 通知宿主隐藏网关回主界面
+/// 从 query 串取单参数(不做 percent 解码,解码在取值后单独处理)
+fn parse_query_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == key).then_some(v.to_string())
+    })
+}
+
+fn label_from_registry(_host: &str) -> String {
+    // 当前唯一网关站点;site() 注册表扩展后此处按 host 反查
+    "hlib".to_string()
+}
+
+/// percent 解码(encodeURIComponent 形态:%XX;'+' 不转空格)
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = std::str::from_utf8(&b[i + 1..=i + 2]).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// 解析导航式回传:ygwd-gw://r?id=I&len=L&d=urlencoded("status|body")
+/// → GatewayReply(len 为原文长度,解码后校验完整性)
+fn parse_nav_reply(query: &str) -> Option<GatewayReply> {
+    let mut id = None;
+    let mut len = None;
+    let mut d = None;
+    for kv in query.split('&') {
+        let (k, v) = kv.split_once('=')?;
+        match k {
+            "id" => id = Some(v.to_string()),
+            "len" => len = Some(v.parse::<usize>().ok()?),
+            "d" => d = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    let payload = percent_decode(&d?)?;
+    if payload.len() != len? {
+        return None;
+    }
+    let (status_str, body) = payload.split_once('|')?;
+    Some(GatewayReply {
+        id: id?,
+        status: status_str.parse::<u16>().ok()?,
+        body: body.to_string(),
+    })
+}
+
+/// 完成栏注入 JS:顶部悬浮「完成,返回应用」,点击经主框架导航
+/// `ygwd-gw://finish` 通知宿主(on_navigation 拦截处理,页面不跳转)
 fn finish_bar_js(label: &str) -> String {
-    let port = stream_proxy::port();
     let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".into());
     format!(
         r#"(function() {{
-          {IPC_BRIDGE}
           function ensureBar() {{
             if (document.getElementById('ygwd-gw-bar')) return;
             var bar = document.createElement('div');
@@ -125,9 +187,7 @@ fn finish_bar_js(label: &str) -> String {
             bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px;text-align:center;font-size:16px;font-weight:600;cursor:pointer';
             bar.textContent = '\\u2713 完成,返回应用';
             bar.addEventListener('click', function() {{
-              ygwdInvoke('gateway_finish', {{ label: {label_json} }}).catch(function() {{
-                fetch('http://127.0.0.1:{port}/gwfinish?label=' + encodeURIComponent({label_json}), {{ mode: 'no-cors' }});
-              }});
+              location.href = 'ygwd-gw://finish?label=' + encodeURIComponent({label_json});
             }});
             var host = document.body || document.documentElement;
             host.appendChild(bar);
@@ -158,6 +218,47 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
         .title(title)
         .inner_size(400.0, 720.0)
         .visible(true)
+        .on_navigation({
+            let app = app.clone();
+            move |url| {
+                if url.scheme() != "ygwd-gw" {
+                    return true; // 正常站点导航放行
+                }
+                use tauri::Manager as _;
+                let host = url.host_str().unwrap_or("");
+                let query = url.query().unwrap_or("");
+                match host {
+                    // 完成栏:ygwd-gw://finish?label=...
+                    "finish" => {
+                        let label = parse_query_param(query, "label")
+                            .unwrap_or_else(|| label_from_registry(host));
+                        diag(&app, "[通道观测] gwfinish 经导航通道到达");
+                        let _ = finish(&app, &label);
+                    }
+                    // 抓取回传:ygwd-gw://r?id=..&len=..&d=..
+                    "r" => {
+                        diag(&app, "[通道观测] gwresult 经导航通道到达");
+                        match parse_nav_reply(query) {
+                            Some(reply) => {
+                                app.state::<GatewayManager>().resolve_reply(reply.clone());
+                                // P3 自动收回:结果回传即收网关回主界面
+                                let _ = finish(&app, "hlib");
+                                diag(
+                                    &app,
+                                    &format!(
+                                        "[网关链路] 回传到达 bytes={} 自动收回网关",
+                                        reply.body.len()
+                                    ),
+                                );
+                            }
+                            None => diag(&app, "[通道观测] gwresult 解析失败"),
+                        }
+                    }
+                    _ => diag(&app, "[通道观测] 未知 ygwd-gw 导航已拦截"),
+                }
+                false // 阻止真实导航,页面留在原地
+            }
+        })
         .on_page_load({
             move |webview, payload| {
                 if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
@@ -235,7 +336,10 @@ fn dispatch_fetch(
     );
     let rx = manager.register(id.clone());
     let js_url = serde_json::to_string(url).map_err(|e| e.to_string())?;
+    // 双形态:JSON 字符串字面量(带引号,invoke 参数用)与裸值(导航 URL query 用)
+    // ——URL 里若用带引号形态,reply.id 与 pending 注册的裸 id 不匹配,回传全空转
     let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
+    let url_id = &id;
     let search = if search_keyword.is_some() {
         "true"
     } else {
@@ -249,18 +353,24 @@ fn dispatch_fetch(
 
     let js = format!(
         r#"(async () => {{
-  {IPC_BRIDGE}
   const post = (status, body) => {{
-    // IPC 通道(postMessage,不受页面 CSP connect-src 约束)优先,
-    // 不可用降级回环 fetch(hlib 挑战页 CSP 会拦,正常页取决于站点策略)
-    ygwdInvoke('gateway_result', {{ result: {{ id: {js_id}, status: status, body: body }} }}).catch(function() {{
-      fetch('http://127.0.0.1:{port}/gwresult?id={js_id}', {{
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {{ 'Content-Type': 'text/plain' }},
-        body: status + '|' + body
-      }});
-    }});
+    // len 语义:UTF-8 字节数(与 Rust 侧 parse_nav_reply 的 payload.len()
+    // 字节校验一致;JS 的 String.length 是 UTF-16 单元数,含中文时必不匹配)
+    const payload = status + '|' + body;
+    const payloadLen = new TextEncoder().encode(payload).length;
+    // Android: IPC 走 JavaBridge(非 fetch)可能不受页面 CSP——优先试,
+    // 失败原因写 title(YGWD_IPC_ERR 判据)后回退导航式
+    const android = /android/i.test(navigator.userAgent);
+    if (android && window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {{
+      window.__TAURI_INTERNALS__.invoke('gateway_result', {{ result: {{ id: {js_id}, status: status, body: body }} }})
+        .catch(function(e) {{
+          document.title = 'YGWD_IPC_ERR|INVOKE_FAIL|' + String(e).slice(0, 180);
+          location.href = 'ygwd-gw://r?id={url_id}&len=' + payloadLen + '&d=' + encodeURIComponent(payload);
+        }});
+      return;
+    }}
+    // 桌面/通用:主框架导航回传(on_navigation 拦截,不真跳转,零 CSP 交互)
+    location.href = 'ygwd-gw://r?id={url_id}&len=' + payloadLen + '&d=' + encodeURIComponent(payload);
   }};
   try {{
     if ({search}) {{
@@ -320,6 +430,27 @@ fn dispatch_fetch(
 }})();"#
     );
     window.eval(&js).map_err(|e| format!("网关执行失败: {e}"))?;
+    // IPC 失败观测:页面 ygwdInvoke 失败时会把 YGWD_IPC_ERR|原因 写入
+    // document.title(写 title 不受页面 CSP 约束),3 秒后读取入 diag
+    {
+        use tauri::Manager as _;
+        let diag_window = window.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            for _ in 0..2 {
+                if let Ok(t) = diag_window.title() {
+                    if let Some(reason) = t.strip_prefix("YGWD_IPC_ERR|") {
+                        diag(
+                            diag_window.app_handle(),
+                            &format!("[IPC 诊断] invoke 失败: {reason}"),
+                        );
+                        return;
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+    }
     Ok(rx)
 }
 
@@ -335,13 +466,29 @@ async fn gateway_fetch_inner(
     use tauri::Manager as _;
     let window = ensure_ready(app, label).await?;
     let mut rx = dispatch_fetch(&window, manager, url, search_keyword)?;
+    diag(
+        app,
+        &format!(
+            "[网关链路] dispatch 发起 label={label} url={url} search={}",
+            search_keyword.is_some()
+        ),
+    );
 
     let mut last: Option<(u16, String)> = None;
     for _attempt in 0..4 {
         let reply = match tokio::time::timeout(Duration::from_secs(60), rx).await {
             Ok(Ok(r)) => r,
-            Ok(Err(_)) => return Err("网关回传中断".into()),
-            Err(_) => return Err("网关请求超时:请点开应用内网关窗口完成验证/登录后重试".into()),
+            Ok(Err(_)) => {
+                diag(app, "[网关链路] 回传通道中断(oneshot 关闭)");
+                return Err("网关回传中断".into());
+            }
+            Err(_) => {
+                diag(
+                    app,
+                    "[网关链路] dispatch 60 秒无回传(挑战页 CSP 拦回传或页面未完成)",
+                );
+                return Err("网关请求超时:请点开应用内网关窗口完成验证/登录后重试".into());
+            }
         };
         let status = reply.status;
         let body_for_check = reply.body.clone();
@@ -350,6 +497,13 @@ async fn gateway_fetch_inner(
         let is_challenge = status == 403
             || (body_for_check.len() < 6000
                 && (body_for_check.contains("Just a moment") || body_for_check.contains("请稍候")));
+        diag(
+            app,
+            &format!(
+                "[网关链路] 回传到达 attempt status={status} bytes={} is_challenge={is_challenge}",
+                body_for_check.len()
+            ),
+        );
         if !is_challenge {
             // 成功:隐藏网关转后台(会话保留),主窗口回前台
             let _ = window.hide();
@@ -361,8 +515,10 @@ async fn gateway_fetch_inner(
         }
         last = Some((status, reply.body));
         // 挑战:静默重试(网关已在前台供用户操作,不重复抢焦点)
+        diag(app, "[网关链路] 挑战态,等待就绪后重试");
         wait_until_ready(&window, 60).await;
         rx = dispatch_fetch(&window, manager, url, search_keyword)?;
+        diag(app, "[网关链路] 重试 dispatch 已发起");
     }
     // 全部重试失败:网关带回前台让用户看到站点状态
     let _ = window.show();
@@ -406,4 +562,61 @@ pub fn finish(app: &AppHandle, label: &str) -> Result<(), String> {
         let _ = main.set_focus();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enc(s: &str) -> String {
+        // encodeURIComponent 等价(测试辅助):非保留字符逐字节 %XX
+        let mut out = String::new();
+        for b in s.bytes() {
+            let c = b as char;
+            if c.is_ascii_alphanumeric() || "-_.!~*'()".contains(c) {
+                out.push(c);
+            } else {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn parses_nav_reply_ascii() {
+        let body = "403|Just a moment";
+        let payload = format!("403|{body}");
+        let query = format!("id=g123&len={}&d={}", payload.len(), enc(&payload));
+        let reply = parse_nav_reply(&query).expect("应解析成功");
+        assert_eq!(reply.id, "g123");
+        assert_eq!(reply.status, 403);
+        assert_eq!(reply.body, body);
+    }
+
+    #[test]
+    fn parses_nav_reply_utf8_body() {
+        // 文章正文为 UTF-8 中文:percent 解码后须还原原文且 len 校验通过
+        let payload = "200|第三章 雪夜(试)——作者：某人";
+        let query = format!("id=g9&len={}&d={}", payload.len(), enc(payload));
+        let reply = parse_nav_reply(&query).expect("UTF-8 应解析成功");
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.body, payload.split_once('|').unwrap().1);
+    }
+
+    #[test]
+    fn rejects_len_mismatch_and_bad_input() {
+        let payload = "200|ok";
+        let query = format!("id=g1&len=999&d={}", enc(payload));
+        assert!(parse_nav_reply(&query).is_none(), "len 不符应拒绝");
+        assert!(
+            parse_nav_reply("id=g1&len=6&d=%E6%88%90").is_none(),
+            "截断的 UTF-8 应拒绝"
+        );
+        assert!(
+            parse_nav_reply("id=g1&d=200%7Cok").is_none(),
+            "缺 len 应拒绝"
+        );
+        assert!(parse_query_param("label=hlib", "label") == Some("hlib".to_string()));
+        assert!(percent_decode("a%20b%2Fc").as_deref() == Some("a b/c"));
+    }
 }
