@@ -73,9 +73,17 @@ jobs:
 
       - name: Initialize Android project
         run: |
+          # android:init = tauri android init + 应用仓库 overlay(scripts/apply-android-overlay.mjs,
+          # 拷入 src-tauri/android-overlay 并在清单登记 GatewayActivity)
           npm run android:init
           # 本地流代理走 http://127.0.0.1(release 默认禁明文),放开
           sed -i 's/manifestPlaceholders\["usesCleartextTraffic"\] = "false"/manifestPlaceholders["usesCleartextTraffic"] = "true"/' src-tauri/gen/android/app/build.gradle.kts
+
+      - name: Verify Android overlay
+        run: |
+          # 小说网关依赖独立 GatewayActivity;overlay 未生效时 Rust 侧建窗会失败,这里提前拦下
+          test -f src-tauri/gen/android/app/src/main/java/com/niacg/ygqd/GatewayActivity.kt
+          grep -q '\.GatewayActivity"' src-tauri/gen/android/app/src/main/AndroidManifest.xml
 
       - name: Configure release signing
         env:
