@@ -729,9 +729,7 @@ where
     let result = window.with_webview(move |platform| {
         platform.jni_handle().exec(move |env, activity, webview| {
             let outcome = if activity.is_null() {
-                if let Some(manager) = app.state::<GatewayManager>().try_state() {
-                    manager.mark_gateway_stale();
-                }
+                app.state::<GatewayManager>().mark_gateway_stale();
                 "Activity 不存在(系统回收,标记失效待重建)".to_string()
             } else {
                 match op(env, activity, webview) {
