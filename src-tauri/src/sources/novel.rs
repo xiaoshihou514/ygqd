@@ -263,7 +263,44 @@ pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, Stri
 }
 
 /// 拉取文章某一页正文
+/// 章节抓取限速状态:上次抓取的(文章 id, 页码, 完成时刻)。
+/// 站点对连续抓取敏感,节流在抓取入口统一控制(跨实例无需可靠,
+/// 单进程内存态即可;重启归零由首次抓取无等待自然覆盖)。
+static LAST_ARTICLE_FETCH: std::sync::Mutex<Option<(String, i64, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+
+/// 同章翻页与跨章的最低间隔(秒)——对齐站点反爬敏感度
+const ARTICLE_THROTTLE_SAME_CHAPTER: u64 = 3;
+const ARTICLE_THROTTLE_CROSS_CHAPTER: u64 = 10;
+
 pub async fn fetch_article_page(app: &AppHandle, id: &str, page: i64) -> Result<NovelPage, String> {
+    // 统一节流:与上次抓取比,同章 ≥3 秒、跨章 ≥10 秒,不足则异步等待补齐
+    // 计算需等待的秒数(短暂持锁,不跨 await——MutexGuard 非 Send)
+    let wait_secs = {
+        let last = LAST_ARTICLE_FETCH.lock().expect("article throttle lock");
+        let min_secs = if last.as_ref().map(|(cid, _, _)| cid == id).unwrap_or(false) {
+            ARTICLE_THROTTLE_SAME_CHAPTER
+        } else {
+            ARTICLE_THROTTLE_CROSS_CHAPTER
+        };
+        let elapsed = last
+            .as_ref()
+            .map(|(_, _, at)| at.elapsed())
+            .unwrap_or(std::time::Duration::ZERO);
+        if elapsed.as_secs() >= min_secs {
+            0u64
+        } else {
+            min_secs - elapsed.as_secs().max(1)
+        }
+    };
+    if wait_secs > 0 {
+        tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+    }
+    LAST_ARTICLE_FETCH
+        .lock()
+        .expect("article throttle lock")
+        .replace((id.to_string(), page, std::time::Instant::now()));
+
     let url = format!("https://hlib.cc/n/{id}?p={page}");
     let html = fetch_html(app, &url).await?;
     if is_challenge(&html) {
@@ -417,6 +454,18 @@ pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHi
 
 /// 搜索结果的一页。站点按页返回(实测每页 30 条;热门词如 NTR 达 336 页),
 /// 页码选择器 select[onchange*="rp('p'"] 的最大值即总页数
+/// 发现流(最新系列)的一页。站点首页/深页统一 ?p= 页码机制,
+/// 总页数取页码控件(select[onchange*="rp('p'"])的最大值
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelLatestPage {
+    pub hits: Vec<NovelHit>,
+    pub page: i64,
+    pub total_pages: i64,
+}
+
+/// 搜索结果的一页。站点按页返回(实测每页 30 条;热门词如 NTR 达 336 页),
+/// 页码选择器 select[onchange*="rp('p'"] 的最大值即总页数
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NovelSearchPage {
@@ -452,7 +501,8 @@ pub async fn search_series_page(
 }
 
 /// 发现:首页提取最新系列(不依赖具体列表结构)
-pub async fn latest_series(app: &AppHandle, page: i64) -> Result<Vec<NovelHit>, String> {
+pub async fn latest_series(app: &AppHandle, page: i64) -> Result<NovelLatestPage, String> {
+    let page = page.max(1);
     // 发现流:首页(第 1 页不带参数),深页走全站统一的 ?p= 页码机制
     let url = if page <= 1 {
         "https://hlib.cc/".to_string()
@@ -467,7 +517,12 @@ pub async fn latest_series(app: &AppHandle, page: i64) -> Result<Vec<NovelHit>, 
     if hits.is_empty() {
         return Err("首页未解析到系列链接".into());
     }
-    Ok(hits)
+    let total_pages = total_pages(&Html::parse_document(&html)).max(page);
+    Ok(NovelLatestPage {
+        hits,
+        page,
+        total_pages,
+    })
 }
 
 #[cfg(test)]
