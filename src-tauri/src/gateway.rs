@@ -185,6 +185,53 @@ fn parse_nav_reply(query: &str) -> Option<GatewayReply> {
     })
 }
 
+/// 网关导航分流:处理 ygwd-gw 协议的 finish/r/ready 三类报到,
+/// 返回是否放行该导航(ygwd-gw 一律 false 阻止;其他 scheme 放行)
+fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
+    use tauri::Manager as _;
+    if url.scheme() != "ygwd-gw" {
+        return true; // 正常站点导航放行
+    }
+    let host = url.host_str().unwrap_or("");
+    let query = url.query().unwrap_or("");
+    match host {
+        // 完成栏:ygwd-gw://finish?label=...
+        "finish" => {
+            let label =
+                parse_query_param(query, "label").unwrap_or_else(|| label_from_registry(host));
+            diag(&app, "[通道观测] gwfinish 经导航通道到达");
+            let _ = finish(&app, &label);
+        }
+        // 抓取回传:ygwd-gw://r?id=..&len=..&d=..
+        "r" => {
+            diag(&app, "[通道观测] gwresult 经导航通道到达");
+            match parse_nav_reply(query) {
+                Some(reply) => {
+                    app.state::<GatewayManager>().resolve_reply(reply.clone());
+                    // P3 自动收回:结果回传即收网关回主界面
+                    let _ = finish(&app, "hlib");
+                    diag(
+                        &app,
+                        &format!(
+                            "[网关链路] 回传到达 bytes={} 自动收回网关",
+                            reply.body.len()
+                        ),
+                    );
+                }
+                None => diag(&app, "[通道观测] gwresult 解析失败"),
+            }
+        }
+        // 就绪报到:ygwd-gw://ready?n=序号(非挑战态才会发出)
+        "ready" => {
+            if let Some(n) = parse_query_param(query, "n").and_then(|v| v.parse::<u64>().ok()) {
+                app.state::<GatewayManager>().mark_ready(n);
+            }
+        }
+        _ => diag(&app, "[通道观测] 未知 ygwd-gw 导航已拦截"),
+    }
+    false // 阻止真实导航,页面留在原地
+}
+
 /// 完成栏注入 JS:顶部悬浮「完成,返回应用」,点击经主框架导航
 /// `ygwd-gw://finish` 通知宿主(on_navigation 拦截处理,页面不跳转)
 fn finish_bar_js(label: &str) -> String {
@@ -232,50 +279,32 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
         .on_navigation({
             let app = app.clone();
             move |url| {
-                if url.scheme() != "ygwd-gw" {
-                    return true; // 正常站点导航放行
-                }
-                use tauri::Manager as _;
-                let host = url.host_str().unwrap_or("");
-                let query = url.query().unwrap_or("");
-                match host {
-                    // 完成栏:ygwd-gw://finish?label=...
-                    "finish" => {
-                        let label = parse_query_param(query, "label")
-                            .unwrap_or_else(|| label_from_registry(host));
-                        diag(&app, "[通道观测] gwfinish 经导航通道到达");
-                        let _ = finish(&app, &label);
-                    }
-                    // 抓取回传:ygwd-gw://r?id=..&len=..&d=..
-                    "r" => {
-                        diag(&app, "[通道观测] gwresult 经导航通道到达");
-                        match parse_nav_reply(query) {
-                            Some(reply) => {
-                                app.state::<GatewayManager>().resolve_reply(reply.clone());
-                                // P3 自动收回:结果回传即收网关回主界面
-                                let _ = finish(&app, "hlib");
-                                diag(
-                                    &app,
-                                    &format!(
-                                        "[网关链路] 回传到达 bytes={} 自动收回网关",
-                                        reply.body.len()
-                                    ),
-                                );
-                            }
-                            None => diag(&app, "[通道观测] gwresult 解析失败"),
-                        }
-                    }
-                    // 就绪报到:ygwd-gw://ready?n=序号(非挑战态才会发出)
-                    "ready" => {
-                        if let Some(n) =
-                            parse_query_param(query, "n").and_then(|v| v.parse::<u64>().ok())
-                        {
-                            app.state::<GatewayManager>().mark_ready(n);
-                        }
-                    }
-                    _ => diag(&app, "[通道观测] 未知 ygwd-gw 导航已拦截"),
-                }
-                false // 阻止真实导航,页面留在原地
+                // 入口诊断:记录每条导航(截断防撑爆日志)——Android 退出
+                // 瞬间的最后一条入口 diag 即触发源定位证据
+                let nav_url = url.as_str();
+                let cut = nav_url
+                    .char_indices()
+                    .nth(300)
+                    .map(|(i, _)| i)
+                    .unwrap_or(nav_url.len());
+                diag(&app, &format!("[导航入口] {}", &nav_url[..cut]));
+                // panic 屏障:回调经 JNI 在 Android 主线程执行,Rust panic
+                // 穿过 JNI 边界无法 unwind 会直接 abort 进程(「应用退出」
+                // 候选①);拦截后记录 panic 摘要并阻止导航,桌面无 panic
+                // 时零差异
+                let allow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle_gateway_navigation(&app, url)
+                }))
+                .unwrap_or_else(|payload| {
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .map(|s| (*s).to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| format!("{payload:?}"));
+                    diag(&app, &format!("[PANIC 屏障] 导航回调 panic 已拦截: {msg}"));
+                    false // panic 态一律阻止真实导航
+                });
+                allow
             }
         })
         .on_page_load({
