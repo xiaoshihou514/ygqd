@@ -186,6 +186,13 @@ export interface NovelHit {
   tags?: string[]
 }
 
+/** 小说搜索分页结果(站点每页 30 条,热门词可达数百页) */
+export interface NovelSearchPage {
+  hits: NovelHit[]
+  page: number
+  totalPages: number
+}
+
 export interface NovelPage {
   title: string
   author: string

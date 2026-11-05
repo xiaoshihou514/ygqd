@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { gatewayOpen, novelAdd, novelRemove, novelShelf, novelProgress, novelSearch, novelLatest } from '@/services/api'
+import { gatewayOpen, novelAdd, novelRemove, novelShelf, novelProgress, novelSearchPage, novelLatest } from '@/services/api'
 import type { NovelHit, NovelSeries } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -22,6 +22,15 @@ const searchKeyword = ref('')
 const searching = ref(false)
 const searchError = ref('')
 const addingHitId = ref('')
+// 搜索分页:站点每页 30 条(热门词数百页);反爬闸按频率触发,
+// 相邻抓取保底 3 秒间隔(不足由加载更多内部等待补齐)
+const searchPage = ref(1)
+const searchTotalPages = ref(1)
+const loadingMoreHits = ref(false)
+const activeKeyword = ref('')
+let lastSearchFetchAt = 0
+const SEARCH_MIN_INTERVAL = 3000
+const hasMoreHits = computed(() => searchPage.value < searchTotalPages.value)
 
 async function refresh() {
   loading.value = true
@@ -65,12 +74,40 @@ async function handleSearch() {
   searchError.value = ''
   discoverHint.value = ''
   try {
-    hits.value = await novelSearch(kw)
+    lastSearchFetchAt = Date.now()
+    const res = await novelSearchPage(kw, 1)
+    hits.value = res.hits
+    searchPage.value = res.page
+    searchTotalPages.value = res.totalPages
+    activeKeyword.value = kw
     if (!hits.value.length) searchError.value = '没有匹配的系列'
   } catch (e) {
     searchError.value = errorMessage(e) || '搜索失败'
   } finally {
     searching.value = false
+  }
+}
+
+/** 加载更多:相邻抓取保底 3 秒间隔(反爬闸按频率触发,撞闸多等 20 秒) */
+async function loadMoreHits() {
+  if (loadingMoreHits.value || !hasMoreHits.value || !activeKeyword.value) return
+  loadingMoreHits.value = true
+  searchError.value = ''
+  try {
+    const elapsed = Date.now() - lastSearchFetchAt
+    if (elapsed < SEARCH_MIN_INTERVAL) {
+      await new Promise((resolve) => setTimeout(resolve, SEARCH_MIN_INTERVAL - elapsed))
+    }
+    lastSearchFetchAt = Date.now()
+    const res = await novelSearchPage(activeKeyword.value, searchPage.value + 1)
+    const seen = new Set(hits.value.map((h) => h.id))
+    hits.value.push(...res.hits.filter((h) => !seen.has(h.id)))
+    searchPage.value = res.page
+    searchTotalPages.value = res.totalPages
+  } catch (e) {
+    searchError.value = errorMessage(e) || '加载更多失败'
+  } finally {
+    loadingMoreHits.value = false
   }
 }
 
@@ -187,6 +224,19 @@ onMounted(() => {
             {{ addingHitId === hit.id ? '添加中…' : '+ 书架' }}
           </button>
         </div>
+      </div>
+
+      <div v-if="hits.length && hasMoreHits" class="hit-more">
+        <button class="hit-more-btn" :disabled="loadingMoreHits" @click="loadMoreHits">
+          {{
+            loadingMoreHits
+              ? '加载中…(站点限速约 3 秒/次)'
+              : `加载更多(第 ${searchPage + 1}/${searchTotalPages} 页)`
+          }}
+        </button>
+      </div>
+      <div v-else-if="hits.length && !hasMoreHits && activeKeyword" class="hit-end">
+        已展示全部匹配系列
       </div>
 
       <LoadingSpinner v-if="loading" message="加载书架..." />
@@ -344,6 +394,39 @@ onMounted(() => {
   color: var(--color-text-secondary);
   background: var(--color-canvas);
   white-space: nowrap;
+}
+
+.hit-more {
+  display: flex;
+  justify-content: center;
+  padding: var(--spacing-sm) 0;
+}
+
+.hit-more-btn {
+  padding: 8px var(--spacing-lg);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-card-bg);
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.hit-more-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+.hit-more-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.hit-end {
+  text-align: center;
+  padding: var(--spacing-sm) 0;
+  font-size: var(--font-size-fine-print, 12px);
+  color: var(--color-text-secondary);
 }
 
 .hit-add {

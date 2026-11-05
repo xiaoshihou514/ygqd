@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BikaRankTT, SourceId } from '@/config/sources'
-import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, NovelHit, NovelPage, NovelSeries, SearchParams, SearchResult, FollowedAuthor, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
+import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowedAuthor, NovelHit, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
@@ -38,6 +38,8 @@ export const searchVideos = (keyword: string, page = 1) => invoke<VideoListResul
 export const fetchVideoDetail = (code: string) => invoke<VideoDetail>('fetch_video_detail', { code })
 export const novelAdd = (input: string) => invoke<NovelSeries>('novel_add', { input })
 export const novelSearch = (keyword: string) => invoke<NovelHit[]>('novel_search', { keyword })
+export const novelSearchPage = (keyword: string, page: number) =>
+  invoke<NovelSearchPage>('novel_search_page', { keyword, page })
 export const novelLatest = () => invoke<NovelHit[]>('novel_latest')
 export const novelShelf = () => invoke<NovelSeries[]>('novel_shelf')
 export const novelRemove = (id: string) => invoke<void>('novel_remove', { id })
