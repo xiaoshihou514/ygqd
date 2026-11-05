@@ -6,6 +6,7 @@ import { gatewayOpen, novelAdd, novelRemove, novelShelf, novelProgress, novelSea
 import type { NovelHit, NovelSeries } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 
 const router = useRouter()
 const shelf = ref<NovelSeries[]>([])
@@ -243,27 +244,23 @@ onMounted(() => {
       <EmptyState
         v-else-if="!shelf.length"
         title="书架还是空的"
-        message="点右上「登录 / 浏览 hlib」,在弹出的窗口中登录并浏览;找到喜欢的系列后复制地址栏中的链接,回到这里粘贴添加"
+        message="用下方搜索找小说,或点「最新」发现作品,点「+ 书架」收藏;首次使用会弹出 hlib 窗口,完成一次登录即可"
       >
         <button class="hlib-btn" @click="openHlib">打开 hlib</button>
       </EmptyState>
-      <div v-else class="shelf-list">
-        <div
-          v-for="s in shelf"
-          :key="s.id"
-          class="shelf-card"
-          @click="open(s)"
-        >
-          <div class="shelf-main">
-            <span class="shelf-title">{{ s.title || s.id }}</span>
-            <span class="shelf-meta">
-              {{ s.author || '未知作者' }} · {{ s.chapters.length }} 章
-              <template v-if="progressMap[s.id]">
-                · 读到第 {{ progressMap[s.id]![0] }} 章第 {{ progressMap[s.id]![1] }} 页
-              </template>
-            </span>
-          </div>
-          <button class="shelf-remove" title="移出书架" @click.stop="handleRemove(s.id)">
+      <div v-else class="shelf-grid">
+        <div v-for="s in shelf" :key="s.id" class="shelf-cell">
+          <NovelSeriesCard
+            :series="s"
+            :progress="progressMap[s.id] ?? null"
+            @open="open(s)"
+          />
+          <button
+            class="shelf-remove"
+            title="移出书架"
+            aria-label="移出书架"
+            @click.stop="handleRemove(s.id)"
+          >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="currentColor" />
             </svg>
@@ -456,49 +453,24 @@ onMounted(() => {
   margin: 0 0 var(--spacing-sm);
 }
 
-.shelf-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-}
-
-.shelf-card {
-  display: flex;
-  align-items: center;
+.shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: var(--spacing-md);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  cursor: pointer;
 }
 
-.shelf-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.shelf-title {
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.shelf-meta {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
+.shelf-cell {
+  position: relative;
 }
 
 .shelf-remove {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  z-index: 2;
   border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
   cursor: pointer;
   padding: 6px;
   border-radius: 50%;

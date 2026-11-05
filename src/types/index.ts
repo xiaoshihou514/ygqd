@@ -173,6 +173,10 @@ export interface NovelSeries {
   id: string
   title: string
   author: string
+  /** 系列封面 URL(hlib 站点不提供,恒为空串;展示层走占位图标) */
+  cover?: string
+  /** 简介(来源页面 meta description,可能含站点文案,展示层截断) */
+  introduction?: string
   chapters: NovelChapter[]
   addedAt: number
 }

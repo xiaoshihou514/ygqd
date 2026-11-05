@@ -40,7 +40,8 @@ export const novelAdd = (input: string) => invoke<NovelSeries>('novel_add', { in
 export const novelSearch = (keyword: string) => invoke<NovelHit[]>('novel_search', { keyword })
 export const novelSearchPage = (keyword: string, page: number) =>
   invoke<NovelSearchPage>('novel_search_page', { keyword, page })
-export const novelLatest = () => invoke<NovelHit[]>('novel_latest')
+export const novelLatest = (page?: number) =>
+  invoke<NovelHit[]>('novel_latest', { page })
 export const novelShelf = () => invoke<NovelSeries[]>('novel_shelf')
 export const novelRemove = (id: string) => invoke<void>('novel_remove', { id })
 export const novelRead = (chapterId: string, page: number) => invoke<NovelPage>('novel_read', { chapterId, page })
