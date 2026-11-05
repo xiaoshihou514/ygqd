@@ -45,9 +45,9 @@ async fn fetch_html(app: &AppHandle, url: &str) -> Result<String, String> {
         return Err("hlib 安全验证未通过:已在弹出窗口中打开 hlib,请完成验证/登录后重试".into());
     }
     if is_login_page(&html) {
-        // 登录墙:网关已在前台(或弹出),用户登录一次即 cookie 持久复用
-        show_hlib_gateway(app);
-        return Err("hlib 需要登录:已在弹出窗口中打开 hlib,请登录后重试".into());
+        // 登录墙:网关直接打开登录页并前置,用户登录一次即 cookie 持久复用
+        gateway::navigate_and_present(app, LABEL, "https://hlib.cc/login");
+        return Err("hlib 需要登录:已在弹出窗口打开登录页,请登录后重试".into());
     }
     Ok(html)
 }

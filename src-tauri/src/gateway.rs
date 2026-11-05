@@ -228,6 +228,25 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
             diag(app, "[通道观测] gwresult 经导航通道到达");
             match parse_nav_reply(query) {
                 Some(reply) => {
+                    // 临时取证:小说相关页面落盘供离线 DOM 结构分析(不渲染
+                    // 查看);验收后移除。目录用 DIAG_DIR 缓存(任何线程安全)
+                    if let Some(dir) = DIAG_DIR.get() {
+                        let p = url.as_str();
+                        if p.contains("/s/")
+                            || p.contains("/n/")
+                            || p.contains("/search")
+                            || p.contains("/tag/")
+                        {
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis();
+                            let _ = std::fs::write(
+                                dir.join(format!("hlib_sample_{ts}.html")),
+                                &reply.body,
+                            );
+                        }
+                    }
                     app.state::<GatewayManager>().resolve_reply(reply.clone());
                     // 收回交给 gateway_fetch_inner 的成功路径(非挑战非闸才收):
                     // 此处无差别收回会在挑战态把网关藏起,用户无法交互验证
@@ -250,7 +269,8 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
     false // 阻止真实导航,页面留在原地
 }
 
-/// 完成栏注入 JS:顶部悬浮「完成,返回应用」,点击经主框架导航
+/// 完成栏注入 JS:底部悬浮「完成,返回应用」(放底部:顶部会盖住站点导航栏
+/// 的登录入口,Android 全面屏下还与状态栏重叠、易误触通知),点击经主框架导航
 /// `ygwd-gw://finish` 通知宿主(on_navigation 拦截处理,页面不跳转)
 fn finish_bar_js(label: &str) -> String {
     let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".into());
@@ -260,7 +280,7 @@ fn finish_bar_js(label: &str) -> String {
             if (document.getElementById('ygwd-gw-bar')) return;
             var bar = document.createElement('div');
             bar.id = 'ygwd-gw-bar';
-            bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px;text-align:center;font-size:16px;font-weight:600;cursor:pointer';
+            bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px 14px calc(14px + env(safe-area-inset-bottom));text-align:center;font-size:16px;font-weight:600;cursor:pointer';
             bar.textContent = '\\u2713 完成,返回应用';
             bar.addEventListener('click', function() {{
               location.href = 'ygwd-gw://finish?label=' + encodeURIComponent({label_json});
@@ -615,6 +635,19 @@ pub fn finish(app: &AppHandle, label: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// 把网关导航到指定站内地址并带到前台(登录墙:直接落在登录表单,
+/// 免得用户在站点折叠菜单里找登录入口)
+pub fn navigate_and_present(app: &AppHandle, label: &str, url: &str) {
+    use tauri::Manager as _;
+    let Some(window) = app.get_webview_window(&format!("gateway_{label}")) else {
+        return;
+    };
+    if let Ok(target) = url.parse::<tauri::Url>() {
+        let _ = window.navigate(target);
+    }
+    present(&window);
 }
 
 /// 把网关窗口带到前台供用户操作(验证/登录/人机校验)
