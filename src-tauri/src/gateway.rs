@@ -14,7 +14,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
     time::Duration,
@@ -71,6 +71,10 @@ pub struct GatewayManager {
     /// 就绪探测序号:已发出的最大值 / 页面报到过的最大值
     ready_issued: AtomicU64,
     ready_seen: AtomicU64,
+    /// Android:系统回收 GatewayActivity 后网关窗口对象失效的标记
+    /// (失效时 close 旧窗口重建,恢复抓取能力)
+    #[cfg(target_os = "android")]
+    gateway_stale: AtomicBool,
 }
 
 impl Default for GatewayManager {
@@ -79,6 +83,8 @@ impl Default for GatewayManager {
             pending: Mutex::new(HashMap::new()),
             ready_issued: AtomicU64::new(0),
             ready_seen: AtomicU64::new(0),
+            #[cfg(target_os = "android")]
+            gateway_stale: AtomicBool::new(false),
         }
     }
 }
@@ -94,6 +100,18 @@ impl GatewayManager {
 
     fn mark_ready(&self, nonce: u64) {
         self.ready_seen.fetch_max(nonce, Ordering::SeqCst);
+    }
+
+    /// Android:标记网关窗口失效(Activity 被系统回收)
+    #[cfg(target_os = "android")]
+    fn mark_gateway_stale(&self) {
+        self.gateway_stale.store(true, Ordering::Release);
+    }
+
+    /// Android:取走并清零失效标记
+    #[cfg(target_os = "android")]
+    fn take_gateway_stale(&self) -> bool {
+        self.gateway_stale.swap(false, Ordering::AcqRel)
     }
 
     fn ready_seen(&self) -> u64 {
@@ -292,6 +310,16 @@ fn finish_bar_js(label: &str) -> String {
 pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
     use tauri::Manager as _;
     let window_label = format!("gateway_{label}");
+    // Android:系统回收 GatewayActivity 后 Rust 窗口对象失效(exec 报
+    // Activity 不存在),close 清注册后走下方建窗流程完整重建
+    // (activity_name 重新 startActivity 重建 Activity 与 webview)
+    #[cfg(target_os = "android")]
+    if app.state::<GatewayManager>().take_gateway_stale() {
+        diag(app, "[网关链路] 检测到失效标记,close 旧网关窗口重建");
+        if let Some(w) = app.get_webview_window(&window_label) {
+            let _ = w.close();
+        }
+    }
     if app.get_webview_window(&window_label).is_some() {
         return Ok(false);
     }
@@ -701,7 +729,10 @@ where
     let result = window.with_webview(move |platform| {
         platform.jni_handle().exec(move |env, activity, webview| {
             let outcome = if activity.is_null() {
-                "Activity 不存在".to_string()
+                if let Some(manager) = app.state::<GatewayManager>().try_state() {
+                    manager.mark_gateway_stale();
+                }
+                "Activity 不存在(系统回收,标记失效待重建)".to_string()
             } else {
                 match op(env, activity, webview) {
                     Ok(()) => "完成".to_string(),
