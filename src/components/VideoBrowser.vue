@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchVideoList, searchVideos, fetchVideoWatchedIds } from '@/services/api'
@@ -65,7 +66,7 @@ async function load(reset: boolean) {
     } catch { /* 查询失败不影响列表 */ }
     page.value += 1
   } catch (e) {
-    error.value = (e as Error).message || '加载失败'
+    error.value = errorMessage(e) || '加载失败'
   } finally {
     loading.value = false
     loadingMore.value = false

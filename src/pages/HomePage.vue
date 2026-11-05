@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchCategoryList, fetchBikaCategories, fetchBikaLeaderboard } from '@/services/api'
@@ -158,7 +159,7 @@ async function loadFirstPage() {
       state.page = 0
     }
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     loading.value = false
   }
@@ -180,7 +181,7 @@ async function loadNextPage() {
       state.page = nextPage
     }
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     loadingMore.value = false
   }

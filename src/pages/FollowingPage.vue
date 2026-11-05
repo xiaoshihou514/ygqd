@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
@@ -119,7 +120,7 @@ async function unfavorite(fav: FavoriteEntry) {
       (v) => !(v.source === fav.source && v.comicId === fav.comicId),
     )
   } catch (e) {
-    syncError.value = (e as Error).message || '取消收藏失败'
+    syncError.value = errorMessage(e) || '取消收藏失败'
   }
 }
 

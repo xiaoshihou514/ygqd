@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { gatewayOpen, novelAdd, novelRemove, novelShelf, novelProgress, novelSearch, novelLatest } from '@/services/api'
@@ -51,7 +52,7 @@ async function loadDiscover() {
   try {
     hits.value = await novelLatest()
   } catch (e) {
-    discoverHint.value = (e as Error).message || '加载失败'
+    discoverHint.value = errorMessage(e) || '加载失败'
   } finally {
     discoverLoading.value = false
   }
@@ -67,7 +68,7 @@ async function handleSearch() {
     hits.value = await novelSearch(kw)
     if (!hits.value.length) searchError.value = '没有匹配的系列'
   } catch (e) {
-    searchError.value = (e as Error).message || '搜索失败'
+    searchError.value = errorMessage(e) || '搜索失败'
   } finally {
     searching.value = false
   }
@@ -81,7 +82,7 @@ async function addHit(hit: NovelHit) {
     await novelAdd(hit.id)
     await refresh()
   } catch (e) {
-    searchError.value = (e as Error).message || '添加失败'
+    searchError.value = errorMessage(e) || '添加失败'
   } finally {
     addingHitId.value = ''
   }
@@ -99,7 +100,7 @@ async function handleAdd() {
     addHint.value = '已加入书架'
     await refresh()
   } catch (e) {
-    addError.value = (e as Error).message || '添加失败'
+    addError.value = errorMessage(e) || '添加失败'
   } finally {
     adding.value = false
     setTimeout(() => { addHint.value = '' }, 3000)

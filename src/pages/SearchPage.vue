@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchComics } from '@/services/api'
@@ -205,7 +206,7 @@ async function reSearchWithCacheBuster() {
       error.value = outcome.errors[0]!
     }
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
     items.value = []
   } finally {
     loadingMore.value = false
@@ -318,7 +319,7 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
       error.value = outcome.errors[0]!
     }
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
     items.value = []
   } finally {
     loading.value = false

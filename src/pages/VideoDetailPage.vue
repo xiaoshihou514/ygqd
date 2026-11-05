@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -36,7 +37,7 @@ async function load() {
     detail.value = await fetchVideoDetail(code)
     void recordVideoWatched(code)
   } catch (e) {
-    error.value = (e as Error).message || '加载失败'
+    error.value = errorMessage(e) || '加载失败'
   } finally {
     loading.value = false
   }

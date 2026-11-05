@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { novelProgress, novelRead, novelSetProgress, novelShelf } from '@/services/api'
@@ -39,7 +40,7 @@ async function loadPage(silent = false) {
       )
     }
   } catch (e) {
-    error.value = (e as Error).message || '加载失败'
+    error.value = errorMessage(e) || '加载失败'
   } finally {
     pageLoading.value = false
     loading.value = false
@@ -98,7 +99,7 @@ onMounted(async () => {
     }
     jumpToProgress()
   } catch (e) {
-    error.value = (e as Error).message || '加载失败'
+    error.value = errorMessage(e) || '加载失败'
     loading.value = false
   }
 })

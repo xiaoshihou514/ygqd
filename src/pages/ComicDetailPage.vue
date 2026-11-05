@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { ref, onMounted, onUnmounted, onActivated, nextTick, computed } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { fetchComicDetail, fetchComicImages, bikaSwitchLike, addFavorite, removeFavorite, isFavorite } from '@/services/api'
@@ -68,7 +69,7 @@ async function toggleLike() {
     const count = Number(detail.value.likes) || 0
     detail.value.likes = String(Math.max(0, count + (next ? 1 : -1)))
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     actionBusy.value = false
   }
@@ -94,7 +95,7 @@ async function toggleFavourite() {
     }
     favourited.value = next
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
   } finally {
     actionBusy.value = false
   }
@@ -117,7 +118,7 @@ async function loadImagesPage(reset = false) {
     imagePage.value = page
     imageHasNext.value = result.pagination.hasNext
   } catch (e) {
-    imageError.value = (e as Error).message
+    imageError.value = errorMessage(e)
   } finally {
     imageLoading.value = false
     await nextTick()
@@ -211,7 +212,7 @@ async function loadComic(categoryId: number, id: string) {
       await loadImagesPage(true)
     }
   } catch (e) {
-    error.value = (e as Error).message
+    error.value = errorMessage(e)
     detail.value = null
   } finally {
     loading.value = false

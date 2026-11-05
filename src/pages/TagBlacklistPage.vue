@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useTheme } from '@/composables/useTheme'
@@ -76,7 +77,7 @@ async function handleSyncAddresses() {
       await handleSelectAddress(list[0]!)
     }
   } catch (e) {
-    bikaAddressError.value = (e as Error).message || '同步分流地址失败'
+    bikaAddressError.value = errorMessage(e) || '同步分流地址失败'
   } finally {
     bikaAddressSyncing.value = false
   }
@@ -88,7 +89,7 @@ async function handleSelectAddress(address: string) {
     await setBikaAddress(address)
     bikaAddress.value = address
   } catch (e) {
-    bikaAddressError.value = (e as Error).message || '设置分流地址失败'
+    bikaAddressError.value = errorMessage(e) || '设置分流地址失败'
   }
 }
 
@@ -135,7 +136,7 @@ async function handleBikaLogin() {
     bikaPassword.value = ''
     bikaMessage.value = '哔咔登录成功'
   } catch (e) {
-    bikaError.value = (e as Error).message || '哔咔登录失败'
+    bikaError.value = errorMessage(e) || '哔咔登录失败'
   } finally {
     bikaLoggingIn.value = false
   }
@@ -150,7 +151,7 @@ async function handleBikaLogout() {
     bikaAccountEmail.value = ''
     bikaMessage.value = '已退出哔咔账号'
   } catch (e) {
-    bikaError.value = (e as Error).message || '退出失败'
+    bikaError.value = errorMessage(e) || '退出失败'
   }
 }
 
