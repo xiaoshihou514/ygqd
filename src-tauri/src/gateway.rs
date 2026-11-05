@@ -228,25 +228,6 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
             diag(app, "[通道观测] gwresult 经导航通道到达");
             match parse_nav_reply(query) {
                 Some(reply) => {
-                    // 临时取证:小说相关页面落盘供离线 DOM 结构分析(不渲染
-                    // 查看);验收后移除。目录用 DIAG_DIR 缓存(任何线程安全)
-                    if let Some(dir) = DIAG_DIR.get() {
-                        let p = url.as_str();
-                        if p.contains("/s/")
-                            || p.contains("/n/")
-                            || p.contains("/search")
-                            || p.contains("/tag/")
-                        {
-                            let ts = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis();
-                            let _ = std::fs::write(
-                                dir.join(format!("hlib_sample_{ts}.html")),
-                                &reply.body,
-                            );
-                        }
-                    }
                     app.state::<GatewayManager>().resolve_reply(reply.clone());
                     // 收回交给 gateway_fetch_inner 的成功路径(非挑战非闸才收):
                     // 此处无差别收回会在挑战态把网关藏起,用户无法交互验证
@@ -280,7 +261,7 @@ fn finish_bar_js(label: &str) -> String {
             if (document.getElementById('ygwd-gw-bar')) return;
             var bar = document.createElement('div');
             bar.id = 'ygwd-gw-bar';
-            bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px 14px calc(14px + env(safe-area-inset-bottom));text-align:center;font-size:16px;font-weight:600;cursor:pointer';
+            bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px 14px max(env(safe-area-inset-bottom), 16px);text-align:center;font-size:16px;font-weight:600;cursor:pointer';
             bar.textContent = '\\u2713 完成,返回应用';
             bar.addEventListener('click', function() {{
               location.href = 'ygwd-gw://finish?label=' + encodeURIComponent({label_json});

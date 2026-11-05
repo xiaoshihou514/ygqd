@@ -376,9 +376,43 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
 const SEARCH_URL: &str = "https://hlib.cc/s/search?query=";
 
 pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHit>, String> {
+    Ok(search_series_page(app, keyword, 1).await?.hits)
+}
+
+/// 搜索结果的一页。站点按页返回(实测每页 30 条;热门词如 NTR 达 336 页),
+/// 页码选择器 select[onchange*="rp('p'"] 的最大值即总页数
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelSearchPage {
+    pub hits: Vec<NovelHit>,
+    pub page: i64,
+    pub total_pages: i64,
+}
+
+/// 第 page 页的搜索地址(page<=1 为首页,不带 p 参数)
+fn search_url(keyword: &str, page: i64) -> String {
     let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
-    let html = fetch_html(app, &format!("{SEARCH_URL}{encoded}")).await?;
-    Ok(extract_series(&html))
+    if page <= 1 {
+        format!("{SEARCH_URL}{encoded}")
+    } else {
+        format!("{SEARCH_URL}{encoded}&p={page}")
+    }
+}
+
+pub async fn search_series_page(
+    app: &AppHandle,
+    keyword: &str,
+    page: i64,
+) -> Result<NovelSearchPage, String> {
+    let page = page.max(1);
+    let html = fetch_html(app, &search_url(keyword, page)).await?;
+    let hits = extract_series(&html);
+    let total_pages = total_pages(&Html::parse_document(&html)).max(page);
+    Ok(NovelSearchPage {
+        hits,
+        page,
+        total_pages,
+    })
 }
 
 /// 发现:首页提取最新系列(不依赖具体列表结构)
@@ -428,6 +462,16 @@ mod tests {
         assert_eq!(hits[1].author, "");
         assert!(hits[1].tags.is_empty());
         assert_eq!(hits[1].title, "示例系列标题二");
+    }
+
+    #[test]
+    fn builds_paged_search_url() {
+        assert_eq!(search_url("NTR", 1), "https://hlib.cc/s/search?query=NTR");
+        assert_eq!(search_url("NTR", 0), "https://hlib.cc/s/search?query=NTR");
+        assert_eq!(
+            search_url("汉服", 3),
+            "https://hlib.cc/s/search?query=%E6%B1%89%E6%9C%8D&p=3"
+        );
     }
 
     #[test]

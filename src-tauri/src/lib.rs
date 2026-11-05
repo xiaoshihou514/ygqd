@@ -240,6 +240,16 @@ async fn novel_search(
 }
 
 /// 发现:首页最新系列
+/// 分页搜索:返回该页命中与总页数(前端「加载更多」用)
+#[tauri::command]
+async fn novel_search_page(
+    app: AppHandle,
+    keyword: String,
+    page: Option<i64>,
+) -> Result<sources::novel::NovelSearchPage, String> {
+    sources::novel::search_series_page(&app, &keyword, page.unwrap_or(1)).await
+}
+
 #[tauri::command]
 async fn novel_latest(app: AppHandle) -> Result<Vec<sources::novel::NovelHit>, String> {
     sources::novel::latest_series(&app).await
@@ -1039,6 +1049,7 @@ pub fn run() {
             gateway_result,
             novel_add,
             novel_search,
+            novel_search_page,
             novel_latest,
             novel_shelf,
             novel_remove,
