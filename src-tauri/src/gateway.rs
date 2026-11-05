@@ -290,6 +290,11 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
     // 完成栏注入用 on_page_load(Android 上 initialization_script 不可靠);
     // 每次页面加载完成都会重新注入
     let bar_js = finish_bar_js(label);
+    // Android:建网关前先登记主界面 webview(此刻 Activity 当前 webview 仍是它)
+    #[cfg(target_os = "android")]
+    if let Some(main) = app.get_webview_window("main") {
+        android_capture_current_view(&main, &ANDROID_MAIN_VIEW);
+    }
     let window = WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(url))
         .title(title)
         .inner_size(400.0, 720.0)
@@ -334,6 +339,9 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
         })
         .build()
         .map_err(|e| format!("创建网关失败: {e}"))?;
+    // Android:网关建好后 Activity 当前 webview 即网关,登记之
+    #[cfg(target_os = "android")]
+    android_capture_current_view(&window, &ANDROID_GATEWAY_VIEW);
     // 用户点关闭键时改为隐藏:保住登录/验证会话
     let close_label = window_label.clone();
     let app_owned = app.clone();
@@ -597,7 +605,7 @@ pub fn finish(app: &AppHandle, label: &str) -> Result<(), String> {
     {
         let _ = label;
         if let Some(main) = app.get_webview_window("main") {
-            android_set_content_view(app, &main);
+            android_set_content_view(app, &main, &ANDROID_MAIN_VIEW);
         }
     }
     #[cfg(not(target_os = "android"))]
@@ -618,7 +626,7 @@ pub fn present(window: &tauri::WebviewWindow) {
     #[cfg(target_os = "android")]
     {
         use tauri::Manager as _;
-        android_set_content_view(window.app_handle(), window);
+        android_set_content_view(window.app_handle(), window, &ANDROID_GATEWAY_VIEW);
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -630,35 +638,77 @@ pub fn present(window: &tauri::WebviewWindow) {
 /// Android 显隐:wry 每建一个 webview 就对同一 Activity `setContentView`
 /// 顶替(网关创建即把主界面 webview 摘下),而 tao 的 set_visible 是空实现,
 /// show/hide 在 Android 上全部无效——网关一旦弹出主界面就再也回不来
-/// (实机:点「完成」后内容视图仍是网关 webview)。这里经 JNI 直接把目标
-/// webview 设回内容视图;已挂在视图树上(即当前可见)则不动。
+/// (实机:点「完成」后内容视图仍是网关 webview)。
+///
+/// 切换要拿到目标 webview 的 Java 引用:`JniHandle::exec` 递来的 webview
+/// 是 Activity 代理里「最后创建的那个」(即网关),与调用它的窗口无关
+/// (wry main_pipe.rs:420),故在建网关前后各登记一次全局引用,切换时取用。
+#[cfg(target_os = "android")]
+type AndroidViewSlot = Mutex<Option<tauri::wry::prelude::GlobalRef>>;
+#[cfg(target_os = "android")]
+static ANDROID_MAIN_VIEW: AndroidViewSlot = Mutex::new(None);
+#[cfg(target_os = "android")]
+static ANDROID_GATEWAY_VIEW: AndroidViewSlot = Mutex::new(None);
+
+/// 登记 Activity 当前 webview 的全局引用(经 MainPipe 与建窗消息保序)
+#[cfg(target_os = "android")]
+fn android_capture_current_view(window: &tauri::WebviewWindow, slot: &'static AndroidViewSlot) {
+    let _ = window.with_webview(move |platform| {
+        platform.jni_handle().exec(move |env, _activity, webview| {
+            if webview.is_null() {
+                return;
+            }
+            if let Ok(global) = env.new_global_ref(webview) {
+                if let Ok(mut guard) = slot.lock() {
+                    *guard = Some(global);
+                }
+            }
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+            }
+        });
+    });
+}
+
+/// 把登记的目标 webview 设为 Activity 内容视图;已挂在视图树上则不动。
 /// 任何 JNI 异常都清掉再返回,避免挂起的 Java 异常污染后续 JNI 调用。
 #[cfg(target_os = "android")]
-fn android_set_content_view(app: &AppHandle, window: &tauri::WebviewWindow) {
+fn android_set_content_view(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    slot: &'static AndroidViewSlot,
+) {
     use tauri::Manager as _;
     let app = app.clone();
     let label = window.label().to_string();
     let result = window.with_webview(move |platform| {
-        platform.jni_handle().exec(move |env, activity, webview| {
-            let attached = env
-                .call_method(webview, "getParent", "()Landroid/view/ViewParent;", &[])
-                .and_then(|v| v.l())
-                .map(|parent| !parent.is_null());
-            let outcome = match attached {
-                Ok(true) => "已在前台",
-                Ok(false) => match env.call_method(
-                    activity,
-                    "setContentView",
-                    "(Landroid/view/View;)V",
-                    &[webview.into()],
-                ) {
-                    Ok(_) => {
-                        let _ = env.call_method(webview, "requestFocus", "()Z", &[]);
-                        "已切换"
+        platform.jni_handle().exec(move |env, activity, _latest| {
+            let target = slot.lock().ok().and_then(|guard| guard.clone());
+            let outcome = match target {
+                None => "未登记目标 webview",
+                Some(target) => {
+                    let view = target.as_obj();
+                    let attached = env
+                        .call_method(view, "getParent", "()Landroid/view/ViewParent;", &[])
+                        .and_then(|v| v.l())
+                        .map(|parent| !parent.is_null());
+                    match attached {
+                        Ok(true) => "已在前台",
+                        Ok(false) => match env.call_method(
+                            activity,
+                            "setContentView",
+                            "(Landroid/view/View;)V",
+                            &[view.into()],
+                        ) {
+                            Ok(_) => {
+                                let _ = env.call_method(view, "requestFocus", "()Z", &[]);
+                                "已切换"
+                            }
+                            Err(_) => "切换失败",
+                        },
+                        Err(_) => "查询失败",
                     }
-                    Err(_) => "切换失败",
-                },
-                Err(_) => "查询失败",
+                }
             };
             if env.exception_check().unwrap_or(false) {
                 let _ = env.exception_clear();
