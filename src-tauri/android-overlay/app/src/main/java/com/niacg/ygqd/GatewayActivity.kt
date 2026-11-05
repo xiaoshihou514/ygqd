@@ -23,9 +23,13 @@ import androidx.activity.OnBackPressedCallback
  *   Activity 与 webview 保活(不 finish——Rust 侧网关窗口对象需持续有效)
  * - 再次前置:Rust 以本类重新 startActivity,singleTask 走 onNewIntent,不重建
  * - 返回键:等同收回,回到主界面而不是销毁网关
+ *
+ * 必须继承 TauriActivity:tauri 建 webview 时会对所在 Activity 调 getPluginManager()
+ * (manager/webview.rs),只继承 WryActivity 会 NoSuchMethodError 闪退(真机实测)。
+ * PluginManager.onActivityCreate 只认第一个 Activity(已初始化即返回),插件仍绑定主界面。
  */
-class GatewayActivity : WryActivity() {
-    // 关掉 WryActivity 的默认返回键处理(网页后退,退到底就 finish 本 Activity)
+class GatewayActivity : TauriActivity() {
+    // 不走默认返回键处理(网页后退,退到底就结束本 Activity)
     override val handleBackNavigation: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
