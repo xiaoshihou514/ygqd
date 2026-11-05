@@ -83,8 +83,39 @@ class GatewayActivity : TauriActivity() {
             }
             return
         }
+        setupGatewayChromeClient(webview)
         wrapWebViewWithInsets(webview)
         safeAreaWrapped = true
+    }
+
+    /**
+     * 网关专用 WebChromeClient:站点 alert/confirm(如「本站没有软件」)
+     * 自动确认不弹窗——真机实证会卡住网关等人点 OK(移动端看不到弹窗)。
+     * 简化替换 wry 的 RustWebChromeClient:网关场景无需文件选择/媒体捕获
+     * 等完整功能,hlib 页面的 JS 交互仅 alert/confirm/console。
+     */
+    private fun setupGatewayChromeClient(webview: WebView) {
+        webview.webChromeClient = object : android.webkit.WebChromeClient() {
+            override fun onJsAlert(
+                view: WebView,
+                url: String,
+                message: String,
+                result: android.webkit.JsResult,
+            ): Boolean {
+                result.confirm()
+                return true
+            }
+
+            override fun onJsConfirm(
+                view: WebView,
+                url: String,
+                message: String,
+                result: android.webkit.JsResult,
+            ): Boolean {
+                result.confirm()
+                return true
+            }
+        }
     }
 
     private fun findWebView(root: View): WebView? {
