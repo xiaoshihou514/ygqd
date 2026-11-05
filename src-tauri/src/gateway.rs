@@ -342,7 +342,11 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
     let window = builder
         .title(title)
         .inner_size(400.0, 720.0)
-        .visible(true)
+        // 静默化:后台创建不抢焦点——JS 挑战自动求解在隐藏 webview 照常
+        // 运行,就绪后抓取成功自动收回,用户全程无感;交互式挑战在重试
+        // 轮次足够后前置转人工(见 gateway_fetch_inner)。Android 的
+        // Activity 启动由系统管理,visible 属性大概率无效(如实)
+        .visible(false)
         .on_navigation({
             let app = app.clone();
             move |url| {
@@ -539,7 +543,7 @@ async fn gateway_fetch_inner(
     );
 
     let mut last_status: Option<u16> = None;
-    for _attempt in 0..4 {
+    for i in 0..4u32 {
         let reply = match tokio::time::timeout(Duration::from_secs(60), rx).await {
             Ok(Ok(r)) => r,
             Ok(Err(_)) => {
@@ -593,7 +597,17 @@ async fn gateway_fetch_inner(
                 );
             }
         } else {
-            // CF 挑战:静默重试(网关已在前台供用户操作,不重复抢焦点)
+            // CF 挑战:先静默等待自动求解(JS 挑战在隐藏 webview 照常跑);
+            // 第 2 轮起前置转人工(交互式 Turnstile 需要用户点击,隐藏态
+            // 永远过不去)——前置即打扰,仅在自动求解无望时发生
+            if i >= 1 {
+                diag(
+                    app,
+                    &format!("[网关链路] 挑战第 {} 轮未就绪,前置转人工", i + 1),
+                );
+                window.show().ok();
+                window.set_focus().ok();
+            }
             diag(app, "[网关链路] 挑战态,等待就绪后重试");
             wait_until_ready(&window, 60).await;
         }
