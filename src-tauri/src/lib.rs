@@ -254,7 +254,7 @@ async fn novel_search_page(
 async fn novel_latest(
     app: AppHandle,
     page: Option<i64>,
-) -> Result<Vec<sources::novel::NovelHit>, String> {
+) -> Result<sources::novel::NovelLatestPage, String> {
     // page 可选:前端不传视为第 1 页(旧调用兼容)
     let page = page.unwrap_or(1);
     sources::novel::latest_series(&app, page).await

@@ -133,11 +133,9 @@ fn site(label: &str) -> Option<(&'static str, &'static str)> {
 // 拦截——主框架导航不受页面 CSP connect-src/frame-src 约束(navigate-to
 // 已废弃),hlib 挑战页 CSP 仅放行 'self' 与 challenges.cloudflare.com,
 // 旧版回环 fetch 与 IPC fetch 传输均被拦导致网关死路;导航式零 CSP 交互。
-// Android 的 IPC 走 JavaBridge(非 fetch)可能不受 CSP,故 Android 优先
-// 试 IPC,失败回退导航式(YGWD_IPC_ERR 写 title 留判据)。
-// IPC 失败原因写入 document.title(YGWD_IPC_ERR 前缀)供 Rust 诊断读取。
-// Android IPC 预留:JavaBridge 通道(非 fetch)可能不受 CSP,实机验证
-// 通过后再接线(分支形态见 B' 设计文档「Android IPC 优先判据」)
+// Android 的 IPC 走 JavaBridge(非 fetch)不受页面 CSP——实机与源码
+// 核查确认后,Android IPC 优先分支已移除(见 git 历史),导航式为唯一
+// 通道;JavaBridge 通道的实机行为待 Android 实机验证后再评估接线
 
 /// 从 query 串取单参数(不做 percent 解码,解码在取值后单独处理)
 fn parse_query_param(query: &str, key: &str) -> Option<String> {
@@ -228,6 +226,21 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
             diag(app, "[通道观测] gwresult 经导航通道到达");
             match parse_nav_reply(query) {
                 Some(reply) => {
+                    // 临时取证:hlib 页面(样本特征 title「H图书馆」)落盘供
+                    // 离线 DOM 结构分析(不渲染查看);验收后移除。目录用
+                    // DIAG_DIR 缓存(任何线程安全)
+                    if let Some(dir) = DIAG_DIR.get() {
+                        if reply.body.contains("图书馆") || reply.body.contains("hlib.cc/s/") {
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis();
+                            let _ = std::fs::write(
+                                dir.join(format!("hlib_sample_{ts}.html")),
+                                &reply.body,
+                            );
+                        }
+                    }
                     app.state::<GatewayManager>().resolve_reply(reply.clone());
                     // 收回交给 gateway_fetch_inner 的成功路径(非挑战非闸才收):
                     // 此处无差别收回会在挑战态把网关藏起,用户无法交互验证
@@ -307,13 +320,24 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
             move |url| {
                 // 入口诊断:记录每条导航(截断防撑爆日志)——Android 退出
                 // 瞬间的最后一条入口 diag 即触发源定位证据
-                let nav_url = url.as_str();
-                let cut = nav_url
-                    .char_indices()
-                    .nth(300)
-                    .map(|(i, _)| i)
-                    .unwrap_or(nav_url.len());
-                diag(&app, &format!("[导航入口] {}", &nav_url[..cut]));
+                // 参数键名入日志,不含 d 值(d 携带页面全文,脱敏防日志膨胀)
+                let keys = url
+                    .query()
+                    .map(|q| {
+                        q.split('&')
+                            .filter_map(|kv| kv.split('=').next())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                diag(
+                    &app,
+                    &format!(
+                        "[导航入口] {}://{} keys={keys}",
+                        url.scheme(),
+                        url.host_str().unwrap_or(""),
+                    ),
+                );
                 // panic 屏障:回调经 JNI 在 Android 主线程执行,Rust panic
                 // 穿过 JNI 边界无法 unwind 会直接 abort 进程(「应用退出」
                 // 候选①);拦截后记录 panic 摘要并阻止导航,桌面无 panic
@@ -446,18 +470,9 @@ fn dispatch_fetch(
     // 字节校验一致;JS 的 String.length 是 UTF-16 单元数,含中文时必不匹配)
     const payload = status + '|' + body;
     const payloadLen = new TextEncoder().encode(payload).length;
-    // Android: IPC 走 JavaBridge(非 fetch)可能不受页面 CSP——优先试,
-    // 失败原因写 title(YGWD_IPC_ERR 判据)后回退导航式
-    const android = /android/i.test(navigator.userAgent);
-    if (android && window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {{
-      window.__TAURI_INTERNALS__.invoke('gateway_result', {{ result: {{ id: {js_id}, status: status, body: body }} }})
-        .catch(function(e) {{
-          document.title = 'YGWD_IPC_ERR|INVOKE_FAIL|' + String(e).slice(0, 180);
-          location.href = 'ygwd-gw://r?id={url_id}&len=' + payloadLen + '&d=' + encodeURIComponent(payload);
-        }});
-      return;
-    }}
-    // 桌面/通用:主框架导航回传(on_navigation 拦截,不真跳转,零 CSP 交互)
+    // 主框架导航回传(on_navigation 拦截,不真跳转,零 CSP 交互)。
+    // Android 的 JavaBridge IPC 优先分支已移除:实机与源码核查确认该
+    // 传输在 Linux 被页面 CSP 拦(死路),导航式是唯一可靠通道(on_navigation 拦截,不真跳转,零 CSP 交互)
     location.href = 'ygwd-gw://r?id={url_id}&len=' + payloadLen + '&d=' + encodeURIComponent(payload);
   }};
   try {{
@@ -470,27 +485,6 @@ fn dispatch_fetch(
 }})();"#
     );
     window.eval(&js).map_err(|e| format!("网关执行失败: {e}"))?;
-    // IPC 失败观测:页面 ygwdInvoke 失败时会把 YGWD_IPC_ERR|原因 写入
-    // document.title(写 title 不受页面 CSP 约束),3 秒后读取入 diag
-    {
-        use tauri::Manager as _;
-        let diag_window = window.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            for _ in 0..2 {
-                if let Ok(t) = diag_window.title() {
-                    if let Some(reason) = t.strip_prefix("YGWD_IPC_ERR|") {
-                        diag(
-                            diag_window.app_handle(),
-                            &format!("[IPC 诊断] invoke 失败: {reason}"),
-                        );
-                        return;
-                    }
-                }
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        });
-    }
     Ok(rx)
 }
 
