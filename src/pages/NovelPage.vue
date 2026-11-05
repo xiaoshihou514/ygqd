@@ -105,9 +105,9 @@ async function loadLatestFirst() {
   try {
     await guardHlibInterval()
     const res = await novelLatest(1)
-    hits.value = res
-    latestPage.value = 1
-    hasMoreLatest.value = res.length > 0
+    hits.value = res.hits
+    latestPage.value = res.page
+    hasMoreLatest.value = res.page < res.totalPages
   } catch (e) {
     searchError.value = errorMessage(e) || '加载失败'
   } finally {
@@ -157,12 +157,18 @@ async function loadMore() {
       searchTotalPages.value = res.totalPages
     } else {
       const res = await novelLatest(latestPage.value + 1)
-      appendHits(res)
-      latestPage.value += 1
-      hasMoreLatest.value = res.length > 0
+      appendHits(res.hits)
+      latestPage.value = res.page
+      hasMoreLatest.value = res.page < res.totalPages
     }
   } catch (e) {
-    searchError.value = errorMessage(e) || '加载更多失败'
+    const msg = errorMessage(e)
+    // 空页后端抛「未解析到系列链接」:视为到达末尾,静默收终态不报错
+    if (msg.includes('未解析到系列链接')) {
+      hasMoreLatest.value = false
+    } else {
+      searchError.value = msg || '加载更多失败'
+    }
   } finally {
     loadingMoreHits.value = false
   }
@@ -257,7 +263,7 @@ async function handleRemove(id: string) {
 }
 
 function open(series: NovelSeries) {
-  router.push(`/novels/${series.id}`)
+  router.push(`/novels/series/${series.id}`)
 }
 
 onMounted(() => {

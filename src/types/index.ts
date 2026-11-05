@@ -197,6 +197,13 @@ export interface NovelSearchPage {
   totalPages: number
 }
 
+/** 发现流最新系列的一页(首页第 1 页不带参数,深页走 ?p=;空页后端抛错终止) */
+export interface NovelLatestPage {
+  hits: NovelHit[]
+  page: number
+  totalPages: number
+}
+
 export interface NovelPage {
   title: string
   author: string

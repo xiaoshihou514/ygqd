@@ -174,6 +174,18 @@ onMounted(async () => {
       loading.value = false
       return
     }
+    // 详情页「章节列表」直达:query.chapter(源站章节序号)优先于续读进度
+    const chapterQuery = route.query.chapter
+    const targetOrder = chapterQuery ? Number(String(chapterQuery)) : null
+    if (targetOrder && Number.isFinite(targetOrder)) {
+      const idx = chapters.value.findIndex((c) => c.order === targetOrder)
+      if (idx >= 0) {
+        chapterIndex.value = idx
+        articlePage.value = 1
+        await loadPage()
+        return
+      }
+    }
     jumpToProgress()
   } catch (e) {
     error.value = errorMessage(e) || '加载失败'
