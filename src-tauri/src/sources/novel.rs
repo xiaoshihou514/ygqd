@@ -137,13 +137,31 @@ fn total_pages(doc: &Html) -> i64 {
     max
 }
 
-/// 解析系列目录一页,返回(标题, 作者, 本页章节)
-fn parse_series_page(html: &str) -> (String, String, Vec<NovelChapter>) {
+/// 解析系列目录一页,返回(标题, 作者, 简介, 本页章节)
+fn parse_series_page(html: &str) -> (String, String, String, Vec<NovelChapter>) {
     let doc = Html::parse_document(html);
     let title = doc
         .select(&sel("h3.text-center"))
         .next()
         .map(|h| h.text().collect::<String>())
+        .unwrap_or_default();
+    // 简介:meta description(结构稳定)优先,正文区「简介」li 兜底
+    let introduction = doc
+        .select(&sel("meta[name=description]"))
+        .next()
+        .and_then(|m| m.value().attr("content"))
+        .map(str::to_string)
+        .or_else(|| {
+            doc.select(&sel("ul.list-group li.list-group-item"))
+                .map(|li| li.text().collect::<String>())
+                .find(|t| t.trim() == "简介")
+                .and_then(|_| {
+                    doc.select(&sel("ul.list-group li.list-group-item"))
+                        .map(|li| li.text().collect::<String>())
+                        .find(|t| t.trim() != "简介" && !t.trim().is_empty())
+                })
+        })
+        .map(|t| normalize_text(&t))
         .unwrap_or_default();
     let author = doc
         .select(&sel("a[href^='/u/']"))
@@ -182,7 +200,12 @@ fn parse_series_page(html: &str) -> (String, String, Vec<NovelChapter>) {
             title: chapter_title,
         });
     }
-    (normalize_text(&title), normalize_text(&author), chapters)
+    (
+        normalize_text(&title),
+        normalize_text(&author),
+        introduction,
+        chapters,
+    )
 }
 
 /// 拉取整个系列目录(分页)入库。调用方负责入库与限速。
@@ -190,6 +213,7 @@ pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, Stri
     let mut all: Vec<NovelChapter> = Vec::new();
     let mut title = String::new();
     let mut author = String::new();
+    let mut introduction = String::new();
     let mut page = 1;
     loop {
         let url = if page == 1 {
@@ -201,10 +225,13 @@ pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, Stri
         if is_challenge(&html) {
             return Err("hlib 安全验证未通过:请在网关窗口完成验证/登录后重试".into());
         }
-        let (t, a, chapters) = parse_series_page(&html);
+        let (t, a, introduction_page, chapters) = parse_series_page(&html);
         if title.is_empty() {
             title = t;
             author = a;
+            if introduction.is_empty() {
+                introduction = introduction_page;
+            }
         }
         // tendril(非 Send)不能跨 await,放进临时作用域即取即弃
         let tp = { total_pages(&Html::parse_document(&html)) };
@@ -228,6 +255,8 @@ pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, Stri
         id: id.to_string(),
         title,
         author,
+        cover: String::new(),
+        introduction,
         chapters: all,
         added_at: 0,
     })
@@ -280,6 +309,11 @@ pub struct NovelHit {
     /// 标签集合(条目级 .tags 容器的 /tag/ 链接文本)
     #[serde(default)]
     pub tags: Vec<String>,
+    /// 封面 URL。hlib 站点不提供系列封面(系列页/列表页均无封面元素,
+    /// 样本取证确认),恒为空串——字段保留供接口一致性与前端占位逻辑,
+    /// 封面图展示走 fetch_image 代理的通用占位
+    #[serde(default)]
+    pub cover: String,
 }
 
 /// 从站内任意形式的系列链接(/s/{id})提取标识,兼容绝对与相对地址。
@@ -335,6 +369,7 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
                 title: final_title,
                 author,
                 tags,
+                cover: String::new(),
             });
         }
         if !out.is_empty() {
@@ -362,6 +397,7 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
             title,
             author: String::new(),
             tags: Vec::new(),
+            cover: String::new(),
         });
     }
     out
@@ -416,8 +452,14 @@ pub async fn search_series_page(
 }
 
 /// 发现:首页提取最新系列(不依赖具体列表结构)
-pub async fn latest_series(app: &AppHandle) -> Result<Vec<NovelHit>, String> {
-    let html = fetch_html(app, "https://hlib.cc/").await?;
+pub async fn latest_series(app: &AppHandle, page: i64) -> Result<Vec<NovelHit>, String> {
+    // 发现流:首页(第 1 页不带参数),深页走全站统一的 ?p= 页码机制
+    let url = if page <= 1 {
+        "https://hlib.cc/".to_string()
+    } else {
+        format!("https://hlib.cc/?p={page}")
+    };
+    let html = fetch_html(app, &url).await?;
     if is_challenge(&html) {
         return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
     }
@@ -483,6 +525,34 @@ mod tests {
         assert!(!is_login_page(
             "<html><head><title>系列 - H图书馆</title></head><body><a>登录</a></body></html>"
         ));
+    }
+
+    #[test]
+    fn parses_series_introduction_from_meta_description() {
+        // 真实样本(系列页 /s/1457728)结构:meta description 与「简介」li
+        // 并存,meta 结构稳定作为优先来源
+        let html = r#"
+          <html><head>
+            <meta name="description" content="示例简介文本——来自 meta description">
+            <title>示例系列 - H图书馆</title>
+          </head><body>
+            <h3 class="text-center">示例系列标题</h3>
+            <a href="/u/123">示例作者</a>
+            <ul class="list-group mt-2">
+              <li class="list-group-item">简介</li>
+              <li class="list-group-item">示例简介文本——来自简介 li</li>
+            </ul>
+            <a href="/n/10001"><span>#1 示例章节</span></a>
+          </body></html>"#;
+        let (title, author, introduction, chapters) = parse_series_page(html);
+        assert_eq!(title, "示例系列标题");
+        assert_eq!(author, "示例作者");
+        assert_eq!(
+            introduction, "示例简介文本——来自 meta description",
+            "简介应取 meta description(优先于简介 li)"
+        );
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].order, 1);
     }
 
     #[test]

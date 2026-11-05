@@ -268,6 +268,10 @@ pub fn novel_shelf(db: &Connection) -> Result<Vec<crate::models::NovelSeries>, S
                 id: r.get(0)?,
                 title: r.get(1)?,
                 author: r.get(2)?,
+                // cover/introduction 暂不入库(hlib 站点不提供封面;简介在
+                // 详情页实时获取),书架恢复时为空值
+                cover: String::new(),
+                introduction: String::new(),
                 chapters: serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or_default(),
                 added_at: r.get(4)?,
             })

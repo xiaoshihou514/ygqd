@@ -214,6 +214,13 @@ pub struct NovelSeries {
     pub id: String,
     pub title: String,
     pub author: String,
+    /// 系列封面 URL(hlib 站点当前不提供系列封面,恒为空串;字段保留供
+    /// 其他来源与前端占位逻辑)。展示走 fetch_image 代理(Referer 分流)
+    #[serde(default)]
+    pub cover: String,
+    /// 系列简介(来源页 meta description;可能含站点文案,前端截断展示)
+    #[serde(default)]
+    pub introduction: String,
     pub chapters: Vec<NovelChapter>,
     pub added_at: i64,
 }
