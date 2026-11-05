@@ -78,6 +78,9 @@
 | `novel_latest` | — | `NovelHit[]`（首页最新系列，发现页用） |
 | `novel_shelf` | — | `NovelSeries[]`（本地书架） |
 | `novel_remove` | `id` | `void`（移出书架） |
+| `novel_series_info` | `id` | `NovelSeries`（按 ID 抓取系列信息含章节列表/简介，**不入库**——浏览漏斗用；首次弹网关验证/登录） |
+| `novel_search_page` | `keyword`, `page?` | `NovelSearchPage`（分页搜索：hits + page + totalPages；page 不传视为第 1 页。真端点 /s/search?query=，需登录） |
+| `novel_latest` | `page?` | `NovelLatestPage`（发现流最新系列分页：hits + page + totalPages；page 不传视为第 1 页，深页走全站 ?p= 机制） |
 | `novel_read` | `chapterId`, `page` | `NovelPage`（读取章节某页正文；未登录/未验证时返回引导错误） |
 | `novel_progress` | `seriesId` | `[chapterOrder, page] | null`（阅读进度，无记录返回 `null`；`chapterOrder` 为源站目录「#N」的原样章节序号、非数组下标，续读按 order 精确匹配章节；`page` 为章节正文页码，从 1 开始） |
 | `novel_set_progress` | `seriesId`, `chapterOrder`, `page` | `void`（写入阅读进度） |
@@ -111,8 +114,10 @@ Rust 模型使用 `#[serde(rename_all = "camelCase")]` 保持与 TypeScript 字�
 | `VideoCard` | `VideoCard` | `code` 为番号（小写），是视频详情的 id；中字变体带 `-chinese-subtitle` 后缀 |
 | `VideoListResult` | `VideoListResult` | `{ items: VideoCard[], pagination }` |
 | `VideoDetail` | `VideoDetail` | `m3u8` 为本地流代理地址（见 `fetch_video_detail` 说明）；`provider` 区分 fs1/missav |
-| `NovelHit` | `NovelHit` | `{ id, title }`，搜索/发现页条目 |
-| `NovelSeries` | `NovelSeries` | `{ id, title, author, chapters: NovelChapter[], addedAt }` |
+| `NovelHit` | `NovelHit` | `{ id, title, author?, tags? }`，搜索/发现页条目（author/tags 为 2024-11 扩展，hlib 列表页 DOM 含作者与标签元素） |
+| `NovelSearchPage` | `NovelSearchPage` | `{ hits, page, totalPages }`——搜索结果的一页（hlib 每页 30 条） |
+| `NovelLatestPage` | `NovelLatestPage` | `{ hits, page, totalPages }`——发现流最新系列的一页 |
+| `NovelSeries` | `NovelSeries` | `{ id, title, author, chapters: NovelChapter[], addedAt, cover?, introduction? }`——cover 恒空(hlib 不提供系列封面)、introduction 来源页 meta description |
 | `NovelPage` | `NovelPage` | `{ title, author, text, totalPages }` |
 
 翻页基准提醒：漫画系命令（`fetch_category` / `search_comics` / `fetch_comic_images` /

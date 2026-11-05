@@ -212,6 +212,14 @@ fn gateway_set_visible(app: AppHandle, label: String, visible: bool) -> Result<(
     }
 }
 
+/// 系列详情预览:按 hlib 系列 ID 抓取系列信息(章节列表/简介),
+/// 不入库——供「浏览 → 决策 → 加书架」漏斗的浏览阶段使用。
+/// 首次会弹出网关窗口(登录/安全验证与 novel_add 同一套会话)。
+#[tauri::command]
+async fn novel_series_info(app: AppHandle, id: String) -> Result<NovelSeries, String> {
+    sources::novel::fetch_series(&app, &id).await
+}
+
 /// 添加小说系列到书架:输入 hlib 系列链接或纯 ID。
 /// 首次会弹出网关窗口,需用户完成一次登录/安全验证。
 #[tauri::command]
@@ -1054,6 +1062,7 @@ pub fn run() {
             diag_read,
             diag_clear,
             gateway_result,
+            novel_series_info,
             novel_add,
             novel_search,
             novel_search_page,
