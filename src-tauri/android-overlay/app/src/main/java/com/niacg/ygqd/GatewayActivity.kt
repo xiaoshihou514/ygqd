@@ -1,7 +1,15 @@
 package com.niacg.ygqd
 
+import android.graphics.Color
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
+import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 
 /**
  * 小说源网关专用 Activity(hlib 的 CF 验证/登录/抓取都在这里的 webview 里跑)。
@@ -32,6 +40,9 @@ class GatewayActivity : TauriActivity() {
     // 不走默认返回键处理(网页后退,退到底就结束本 Activity)
     override val handleBackNavigation: Boolean = false
 
+    // 安全区包裹是否已完成(WebView 异步挂载,轮询等待后只做一次)
+    private var safeAreaWrapped = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(
@@ -42,5 +53,73 @@ class GatewayActivity : TauriActivity() {
                 }
             },
         )
+        setupGatewaySafeArea()
+    }
+
+    /**
+     * 网关安全区适配:tauri Android 默认 edge-to-edge,WebView 内容延伸到
+     * 系统栏下——注入的完成栏(fixed top:0)落进状态栏区域,点击会误触
+     * 通知横幅。WebView 本体忽略自身 padding,不能直接 setPadding;正确
+     * 做法是把框架挂载的 WebView 从父容器移出,包进带顶部 padding 的
+     * FrameLayout,并监听 WindowInsets 动态适配状态栏高度(跨设备)。
+     * 状态栏底色涂成完成栏蓝(#0066cc),视觉上完成栏延伸到屏幕顶。
+     *
+     * WebView 由 tauri 在 onCreate 之后异步挂载,轮询等待其出现在视图树。
+     */
+    private fun setupGatewaySafeArea() {
+        // 状态栏底色与完成栏一致(视觉一体化)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.parseColor("#0066cc")
+        pollWrapWebView()
+    }
+
+    private fun pollWrapWebView(attempt: Int = 0) {
+        if (safeAreaWrapped) return
+        val webview = findWebView(window.decorView)
+        if (webview == null) {
+            if (attempt < 25) {
+                window.decorView.postDelayed({ pollWrapWebView(attempt + 1) }, 200)
+            } else {
+                android.util.Log.w("GatewayActivity", "WebView 挂载轮询超时,安全区适配放弃(慢设备兜底)")
+            }
+            return
+        }
+        wrapWebViewWithInsets(webview)
+        safeAreaWrapped = true
+    }
+
+    private fun findWebView(root: View): WebView? {
+        if (root is WebView) return root
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                findWebView(root.getChildAt(i))?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun wrapWebViewWithInsets(webview: WebView) {
+        val parent = webview.parent as? ViewGroup ?: return
+        val index = parent.indexOfChild(webview)
+        val lp = webview.layoutParams
+        parent.removeView(webview)
+
+        val wrapper = FrameLayout(this)
+        parent.addView(wrapper, index, lp)
+        wrapper.addView(
+            webview,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+
+        // 动态适配系统栏高度:不消费 insets,让子视图照常收到
+        ViewCompat.setOnApplyWindowInsetsListener(wrapper) { v, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top
+            v.setPadding(0, top, 0, 0)
+            insets
+        }
+        ViewCompat.requestApplyInsets(wrapper)
     }
 }
