@@ -2,7 +2,7 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { novelProgress, novelRead, novelSetProgress, novelShelf } from '@/services/api'
+import { novelAdd, novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
 import type { NovelPage, NovelSeries } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -11,6 +11,9 @@ const route = useRoute()
 const router = useRouter()
 
 const series = ref<NovelSeries | null>(null)
+/** 是否已在书架:未入库系列(novel_series_info 预览)阅读中可加书架 */
+const inShelf = ref(false)
+const addingShelf = ref(false)
 const page = ref<NovelPage | null>(null)
 const chapterIndex = ref(0)
 const articlePage = ref(1)
@@ -145,6 +148,20 @@ function goChapter(index: number) {
   void loadPage()
 }
 
+/** 阅读中收藏:未入库系列加书架,成功后转书架态(按钮收起) */
+async function addShelf() {
+  if (addingShelf.value || inShelf.value) return
+  addingShelf.value = true
+  try {
+    await novelAdd(id)
+    inShelf.value = true
+  } catch (e) {
+    error.value = errorMessage(e) || '加书架失败,请重试'
+  } finally {
+    addingShelf.value = false
+  }
+}
+
 function jumpToProgress() {
   void (async () => {
     if (!series.value) return
@@ -167,8 +184,17 @@ onMounted(async () => {
   loadSettings()
   const id = String(route.params.id || '')
   try {
+    // 数据源两级:书架内系列走本地;未入库(详情页/搜索直进)走
+    // novel_series_info 预览——支持「阅读中加书架」的收藏闭环
     const shelf = await novelShelf()
-    series.value = shelf.find((s) => s.id === id) ?? null
+    const inShelfSeries = shelf.find((s) => s.id === id)
+    if (inShelfSeries) {
+      series.value = inShelfSeries
+      inShelf.value = true
+    } else {
+      series.value = await novelSeriesInfo(id)
+      inShelf.value = false
+    }
     if (!series.value) {
       error.value = '书架中找不到该系列,请重新添加'
       loading.value = false
@@ -203,6 +229,14 @@ onMounted(async () => {
         <span v-if="page" class="hdr-page">第 {{ articlePage }}/{{ page.totalPages }} 页</span>
       </div>
       <div class="hdr-actions">
+        <button
+          v-if="!inShelf"
+          class="hdr-btn shelf-add"
+          :disabled="addingShelf"
+          @click="addShelf"
+        >
+          {{ addingShelf ? '收藏中…' : '+ 书架' }}
+        </button>
         <button class="hdr-btn" @click="toggleSettings">Aa</button>
         <button class="hdr-btn" @click="toggleChapters">目录</button>
       </div>

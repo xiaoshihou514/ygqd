@@ -2,21 +2,18 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { gatewayOpen, novelAdd, novelRemove, novelShelf, novelProgress, novelSearchPage, novelLatest } from '@/services/api'
-import type { NovelHit, NovelSeries } from '@/types'
+import { novelAdd, novelShelf, novelSearchPage, novelLatest } from '@/services/api'
+import type { NovelHit } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
-import EmptyState from '@/components/EmptyState.vue'
-import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 import { createSearchHistory } from '@/composables/useSearchHistory'
 
 const router = useRouter()
-const shelf = ref<NovelSeries[]>([])
-const loading = ref(true)
+// 书架数量角标(书架降级为二级入口,数量从本地库轻量拉取)
+const shelfCount = ref(0)
 const adding = ref(false)
 const addError = ref('')
 const addHint = ref('')
 const input = ref('')
-const progressMap = ref<Record<string, [number, number]>>({})
 const hits = ref<NovelHit[]>([])
 const searchKeyword = ref('')
 const searching = ref(false)
@@ -30,9 +27,6 @@ const loadingMoreHits = ref(false)
 const activeKeyword = ref('')
 const hasMoreHits = computed(() => searchPage.value < searchTotalPages.value)
 
-// 页内分段:书架(默认)/发现(搜索+最新)
-const segment = ref<'shelf' | 'discover'>('shelf')
-const discoverLoaded = ref(false)
 // 结果区来源:最近一次是「最新」流还是「搜索」流,加载更多据此分发
 const discoverMode = ref<'latest' | 'search'>('latest')
 const loadingLatest = ref(false)
@@ -68,34 +62,11 @@ const moreLabel = computed(() =>
     : '加载更多',
 )
 
-async function refresh() {
-  loading.value = true
+/** 书架数量角标:novelShelf 走本地库,轻量查询 */
+async function refreshShelfCount() {
   try {
-    shelf.value = await novelShelf()
-    for (const s of shelf.value) {
-      try {
-        const p = await novelProgress(s.id)
-        if (p) progressMap.value[s.id] = p
-      } catch { /* 进度读取失败忽略 */ }
-    }
-  } finally {
-    loading.value = false
-  }
-}
-
-async function openHlib() {
-  try {
-    await gatewayOpen('hlib')
-  } catch { /* 网关创建失败忽略,用户可重试 */ }
-}
-
-function switchDiscover() {
-  segment.value = 'discover'
-  // 首次切到发现分段自动拉最新(hits 非空即继续的分页模式)
-  if (!discoverLoaded.value) {
-    discoverLoaded.value = true
-    void loadLatestFirst()
-  }
+    shelfCount.value = (await novelShelf()).length
+  } catch { /* 角标失败忽略 */ }
 }
 
 async function loadLatestFirst() {
@@ -228,7 +199,7 @@ async function addHit(hit: NovelHit) {
   addingHitId.value = hit.id
   try {
     await novelAdd(hit.id)
-    await refresh()
+    await refreshShelfCount()
   } catch (e) {
     searchError.value = errorMessage(e) || '添加失败'
   } finally {
@@ -246,7 +217,7 @@ async function handleAdd() {
     await novelAdd(value)
     input.value = ''
     addHint.value = '已加入书架'
-    await refresh()
+    await refreshShelfCount()
   } catch (e) {
     addError.value = errorMessage(e) || '添加失败'
   } finally {
@@ -255,19 +226,10 @@ async function handleAdd() {
   }
 }
 
-async function handleRemove(id: string) {
-  try {
-    await novelRemove(id)
-    shelf.value = shelf.value.filter((s) => s.id !== id)
-  } catch { /* 忽略 */ }
-}
-
-function open(series: NovelSeries) {
-  router.push(`/novels/series/${series.id}`)
-}
-
 onMounted(() => {
-  void refresh()
+  // 打开即内容流;书架数量角标后台补(本地库轻量查询)
+  void loadLatestFirst()
+  void refreshShelfCount()
 })
 </script>
 
@@ -276,63 +238,20 @@ onMounted(() => {
     <div class="container">
       <div class="page-heading">
         <h2 class="page-title">小说</h2>
-        <button class="hlib-btn" @click="openHlib">登录 / 浏览 hlib</button>
-      </div>
-
-      <div class="segment-bar" role="tablist" aria-label="小说板块">
         <button
-          type="button"
-          class="segment-btn"
-          :class="{ active: segment === 'shelf' }"
-          role="tab"
-          :aria-selected="segment === 'shelf'"
-          @click="segment = 'shelf'"
+          class="shelf-entry"
+          title="书架"
+          aria-label="打开书架"
+          @click="router.push('/novels/shelf')"
         >
-          书架
-        </button>
-        <button
-          type="button"
-          class="segment-btn"
-          :class="{ active: segment === 'discover' }"
-          role="tab"
-          :aria-selected="segment === 'discover'"
-          @click="switchDiscover"
-        >
-          发现
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+          </svg>
+          <span v-if="shelfCount" class="shelf-count">{{ shelfCount }}</span>
         </button>
       </div>
 
-      <template v-if="segment === 'shelf'">
-        <LoadingSpinner v-if="loading" message="加载书架..." />
-        <EmptyState
-          v-else-if="!shelf.length"
-          title="书架还是空的"
-          message="切到「发现」用搜索找小说或浏览最新作品,点「+ 书架」收藏;首次使用会弹出 hlib 窗口,完成一次登录即可"
-        >
-          <button class="hlib-btn" @click="openHlib">打开 hlib</button>
-        </EmptyState>
-        <div v-else class="shelf-grid">
-          <div v-for="s in shelf" :key="s.id" class="shelf-cell">
-            <NovelSeriesCard
-              :series="s"
-              :progress="progressMap[s.id] ?? null"
-              @open="open(s)"
-            />
-            <button
-              class="shelf-remove"
-              title="移出书架"
-              aria-label="移出书架"
-              @click.stop="handleRemove(s.id)"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="currentColor" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </template>
-
-      <template v-else>
         <form class="add-bar" @submit.prevent="handleSearch">
           <div class="search-wrap">
             <input
@@ -446,7 +365,6 @@ onMounted(() => {
         </form>
         <p v-if="addHint" class="add-hint">{{ addHint }}</p>
         <p v-if="addError" class="add-error">{{ addError }}</p>
-      </template>
     </div>
   </div>
 </template>
@@ -760,30 +678,33 @@ onMounted(() => {
   margin: 0 0 var(--spacing-sm);
 }
 
-.shelf-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--spacing-md);
-}
-
-.shelf-cell {
+.shelf-entry {
   position: relative;
-}
-
-.shelf-remove {
-  position: absolute;
-  right: 6px;
-  top: 6px;
-  z-index: 2;
-  border: none;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-card-bg);
+  color: var(--color-text-secondary);
+  padding: 6px 12px;
   cursor: pointer;
-  padding: 6px;
-  border-radius: 50%;
+  transition: border-color 0.15s, color 0.15s;
 }
 
-.shelf-remove:hover {
-  color: var(--color-error);
+.shelf-entry:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.shelf-entry svg {
+  width: 16px;
+  height: 16px;
+}
+
+.shelf-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-primary);
 }
 </style>
