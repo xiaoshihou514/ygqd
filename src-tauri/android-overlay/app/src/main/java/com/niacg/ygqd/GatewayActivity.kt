@@ -1,6 +1,5 @@
 package com.niacg.ygqd
 
-import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -58,18 +57,18 @@ class GatewayActivity : TauriActivity() {
 
     /**
      * 网关安全区适配:tauri Android 默认 edge-to-edge,WebView 内容延伸到
-     * 系统栏下——注入的完成栏(fixed top:0)落进状态栏区域,点击会误触
-     * 通知横幅。WebView 本体忽略自身 padding,不能直接 setPadding;正确
+     * 系统栏下——hlib 页面顶栏被状态栏遮挡(完成栏已移底,顶部无 fixed
+     * 元素)。WebView 本体忽略自身 padding,不能直接 setPadding;正确
      * 做法是把框架挂载的 WebView 从父容器移出,包进带顶部 padding 的
      * FrameLayout,并监听 WindowInsets 动态适配状态栏高度(跨设备)。
-     * 状态栏底色涂成完成栏蓝(#0066cc),视觉上完成栏延伸到屏幕顶。
+     * 状态栏保持透明(edge-to-edge 标准做法),视觉融合不另涂色。
      *
      * WebView 由 tauri 在 onCreate 之后异步挂载,轮询等待其出现在视图树。
      */
     private fun setupGatewaySafeArea() {
-        // 状态栏底色与完成栏一致(视觉一体化)
+        // 状态栏保持透明(edge-to-edge 标准做法):完成栏已移底,顶部无
+        // fixed 元素,透明状态栏让 hlib 页面顶栏自然延伸到系统栏下
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.parseColor("#0066cc")
         pollWrapWebView()
     }
 
