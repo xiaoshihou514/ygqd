@@ -194,7 +194,8 @@ fn gateway_open(app: AppHandle, label: String) -> Result<(), String> {
     let window = app
         .get_webview_window(&format!("gateway_{label}"))
         .ok_or("网关窗口不存在")?;
-    window.show().map_err(|e| e.to_string())
+    gateway::present(&window);
+    Ok(())
 }
 
 /// 显示/隐藏网关窗口(挑战已过后隐藏)
@@ -204,9 +205,10 @@ fn gateway_set_visible(app: AppHandle, label: String, visible: bool) -> Result<(
         .get_webview_window(&format!("gateway_{label}"))
         .ok_or("网关窗口不存在")?;
     if visible {
-        window.show().map_err(|e| e.to_string())
+        gateway::present(&window);
+        Ok(())
     } else {
-        window.hide().map_err(|e| e.to_string())
+        gateway::finish(&app, &label)
     }
 }
 

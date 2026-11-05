@@ -501,7 +501,6 @@ async fn gateway_fetch_inner(
     label: &str,
     url: &str,
 ) -> Result<String, String> {
-    use tauri::Manager as _;
     let window = ensure_ready(app, label).await?;
     let mut rx = dispatch_fetch(&window, manager, url)?;
     diag(
@@ -540,12 +539,8 @@ async fn gateway_fetch_inner(
             ),
         );
         if !is_challenge && !is_gate {
-            // 成功:隐藏网关转后台(会话保留),主窗口回前台
-            let _ = window.hide();
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.show();
-                let _ = main.set_focus();
-            }
+            // 成功:收回网关(会话保留),主界面回前台
+            let _ = finish(app, label);
             return Ok(reply.body);
         }
         last_status = Some(status);
@@ -560,8 +555,7 @@ async fn gateway_fetch_inner(
             if let Ok(target) = url.parse::<tauri::Url>() {
                 let _ = window.navigate(target);
             }
-            let _ = window.show();
-            let _ = window.set_focus();
+            present(&window);
             if !wait_until_ready(&window, 120).await {
                 return Err(
                     "hlib 人机校验未通过:已在弹出窗口打开校验页,请等待勾选完成(或手动点一下)后重试"
@@ -577,8 +571,7 @@ async fn gateway_fetch_inner(
         diag(app, "[网关链路] 重试 dispatch 已发起");
     }
     // 全部重试失败:网关带回前台让用户看到站点状态
-    let _ = window.show();
-    let _ = window.set_focus();
+    present(&window);
     match last_status {
         Some(status) => Err(format!(
             "网关未完成(状态 {status});已在网关窗口打开站点,请完成验证/登录后重试"
@@ -600,14 +593,88 @@ pub async fn gateway_fetch(
 /// 完成网关操作:隐藏网关并把主窗口带回前台
 pub fn finish(app: &AppHandle, label: &str) -> Result<(), String> {
     use tauri::Manager as _;
-    if let Some(window) = app.get_webview_window(&format!("gateway_{label}")) {
-        let _ = window.hide();
+    #[cfg(target_os = "android")]
+    {
+        let _ = label;
+        if let Some(main) = app.get_webview_window("main") {
+            android_set_content_view(app, &main);
+        }
     }
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Some(window) = app.get_webview_window(&format!("gateway_{label}")) {
+            let _ = window.hide();
+        }
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.show();
+            let _ = main.set_focus();
+        }
     }
     Ok(())
+}
+
+/// 把网关窗口带到前台供用户操作(验证/登录/人机校验)
+pub fn present(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager as _;
+        android_set_content_view(window.app_handle(), window);
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Android 显隐:wry 每建一个 webview 就对同一 Activity `setContentView`
+/// 顶替(网关创建即把主界面 webview 摘下),而 tao 的 set_visible 是空实现,
+/// show/hide 在 Android 上全部无效——网关一旦弹出主界面就再也回不来
+/// (实机:点「完成」后内容视图仍是网关 webview)。这里经 JNI 直接把目标
+/// webview 设回内容视图;已挂在视图树上(即当前可见)则不动。
+/// 任何 JNI 异常都清掉再返回,避免挂起的 Java 异常污染后续 JNI 调用。
+#[cfg(target_os = "android")]
+fn android_set_content_view(app: &AppHandle, window: &tauri::WebviewWindow) {
+    use tauri::Manager as _;
+    let app = app.clone();
+    let label = window.label().to_string();
+    let result = window.with_webview(move |platform| {
+        platform.jni_handle().exec(move |env, activity, webview| {
+            let attached = env
+                .call_method(webview, "getParent", "()Landroid/view/ViewParent;", &[])
+                .and_then(|v| v.l())
+                .map(|parent| !parent.is_null());
+            let outcome = match attached {
+                Ok(true) => "已在前台",
+                Ok(false) => match env.call_method(
+                    activity,
+                    "setContentView",
+                    "(Landroid/view/View;)V",
+                    &[webview.into()],
+                ) {
+                    Ok(_) => {
+                        let _ = env.call_method(webview, "requestFocus", "()Z", &[]);
+                        "已切换"
+                    }
+                    Err(_) => "切换失败",
+                },
+                Err(_) => "查询失败",
+            };
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+            }
+            diag(
+                &app,
+                &format!("[网关显隐] Android 内容视图 → {label}:{outcome}"),
+            );
+        });
+    });
+    if let Err(e) = result {
+        diag(
+            window.app_handle(),
+            &format!("[网关显隐] with_webview 失败: {e}"),
+        );
+    }
 }
 
 #[cfg(test)]

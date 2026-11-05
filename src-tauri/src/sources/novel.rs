@@ -24,8 +24,7 @@ fn sel(v: &str) -> Selector {
 fn show_hlib_gateway(app: &AppHandle) {
     use tauri::Manager as _;
     if let Some(window) = app.get_webview_window("gateway_hlib") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        gateway::present(&window);
     }
 }
 
