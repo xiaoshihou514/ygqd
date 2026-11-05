@@ -982,6 +982,7 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
+            gateway::init_diag_dir(dir.clone());
             let mut headers = HeaderMap::new();
             headers.insert(
                 USER_AGENT,

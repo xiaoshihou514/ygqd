@@ -22,15 +22,27 @@ use std::{
 use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::oneshot;
 
+/// diag.log 所在目录:setup 时解析一次缓存。不能每次现解析——Android 上
+/// `app.path()` 走移动插件同步调用(投递主线程再阻塞等回音),而网关导航
+/// 回调(shouldOverrideUrlLoading)本身就在主线程,现解析即主线程自锁死:
+/// 实机表现为点开书架黑屏(MIUI 判 APP_SCOUT_HANG,栈顶 Rust.shouldOverride)。
+static DIAG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// setup 阶段登记 diag 目录(先于任何网关导航)
+pub fn init_diag_dir(dir: std::path::PathBuf) {
+    let _ = DIAG_DIR.set(dir);
+}
+
 /// 诊断日志:写应用内部数据目录 diag.log;查看走应用内入口
-/// (release 无法 run-as/logcat,应用内读取是唯一通道)
-pub fn diag(app: &AppHandle, msg: &str) {
+/// (release 无法 run-as/logcat,应用内读取是唯一通道)。
+/// 只用 setup 缓存的目录,任何线程(含 Android 主线程回调)调用都安全;
+/// 未登记时静默丢弃。
+pub fn diag(_app: &AppHandle, msg: &str) {
     use std::io::Write;
-    use tauri::Manager as _;
-    let Ok(dir) = app.path().app_data_dir() else {
+    let Some(dir) = DIAG_DIR.get() else {
         return;
     };
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::create_dir_all(dir);
     let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -117,15 +129,15 @@ fn site(label: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// 网关页面与宿主间的回传桥:主框架导航 `ygwd-gw://` + on_navigation
-/// 拦截——主框架导航不受页面 CSP connect-src/frame-src 约束(navigate-to
-/// 已废弃),hlib 挑战页 CSP 仅放行 'self' 与 challenges.cloudflare.com,
-/// 旧版回环 fetch 与 IPC fetch 传输均被拦导致网关死路;导航式零 CSP 交互。
-/// Android 的 IPC 走 JavaBridge(非 fetch)可能不受 CSP,故 Android 优先
-/// 试 IPC,失败回退导航式(YGWD_IPC_ERR 写 title 留判据)。
-/// IPC 失败原因写入 document.title(YGWD_IPC_ERR 前缀)供 Rust 诊断读取。
-/// Android IPC 预留:JavaBridge 通道(非 fetch)可能不受 CSP,实机验证
-/// 通过后再接线(分支形态见 B' 设计文档「Android IPC 优先判据」)
+// 网关页面与宿主间的回传桥:主框架导航 `ygwd-gw://` + on_navigation
+// 拦截——主框架导航不受页面 CSP connect-src/frame-src 约束(navigate-to
+// 已废弃),hlib 挑战页 CSP 仅放行 'self' 与 challenges.cloudflare.com,
+// 旧版回环 fetch 与 IPC fetch 传输均被拦导致网关死路;导航式零 CSP 交互。
+// Android 的 IPC 走 JavaBridge(非 fetch)可能不受 CSP,故 Android 优先
+// 试 IPC,失败回退导航式(YGWD_IPC_ERR 写 title 留判据)。
+// IPC 失败原因写入 document.title(YGWD_IPC_ERR 前缀)供 Rust 诊断读取。
+// Android IPC 预留:JavaBridge 通道(非 fetch)可能不受 CSP,实机验证
+// 通过后再接线(分支形态见 B' 设计文档「Android IPC 优先判据」)
 
 /// 从 query 串取单参数(不做 percent 解码,解码在取值后单独处理)
 fn parse_query_param(query: &str, key: &str) -> Option<String> {
@@ -185,6 +197,15 @@ fn parse_nav_reply(query: &str) -> Option<GatewayReply> {
     })
 }
 
+/// 回调内(Android 为主线程)不直接操作窗口:收回动作投到异步运行时执行,
+/// 回调本身只做纯内存操作(解析/oneshot 投递/原子计数),杜绝主线程重入
+fn finish_off_main_thread(app: &AppHandle, label: String) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = finish(&app, &label);
+    });
+}
+
 /// 网关导航分流:处理 ygwd-gw 协议的 finish/r/ready 三类报到,
 /// 返回是否放行该导航(ygwd-gw 一律 false 阻止;其他 scheme 放行)
 fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
@@ -199,26 +220,23 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
         "finish" => {
             let label =
                 parse_query_param(query, "label").unwrap_or_else(|| label_from_registry(host));
-            diag(&app, "[通道观测] gwfinish 经导航通道到达");
-            let _ = finish(&app, &label);
+            diag(app, "[通道观测] gwfinish 经导航通道到达");
+            finish_off_main_thread(app, label);
         }
         // 抓取回传:ygwd-gw://r?id=..&len=..&d=..
         "r" => {
-            diag(&app, "[通道观测] gwresult 经导航通道到达");
+            diag(app, "[通道观测] gwresult 经导航通道到达");
             match parse_nav_reply(query) {
                 Some(reply) => {
                     app.state::<GatewayManager>().resolve_reply(reply.clone());
-                    // P3 自动收回:结果回传即收网关回主界面
-                    let _ = finish(&app, "hlib");
+                    // 收回交给 gateway_fetch_inner 的成功路径(非挑战非闸才收):
+                    // 此处无差别收回会在挑战态把网关藏起,用户无法交互验证
                     diag(
-                        &app,
-                        &format!(
-                            "[网关链路] 回传到达 bytes={} 自动收回网关",
-                            reply.body.len()
-                        ),
+                        app,
+                        &format!("[网关链路] 回传到达 bytes={}", reply.body.len()),
                     );
                 }
-                None => diag(&app, "[通道观测] gwresult 解析失败"),
+                None => diag(app, "[通道观测] gwresult 解析失败"),
             }
         }
         // 就绪报到:ygwd-gw://ready?n=序号(非挑战态才会发出)
@@ -227,7 +245,7 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
                 app.state::<GatewayManager>().mark_ready(n);
             }
         }
-        _ => diag(&app, "[通道观测] 未知 ygwd-gw 导航已拦截"),
+        _ => diag(app, "[通道观测] 未知 ygwd-gw 导航已拦截"),
     }
     false // 阻止真实导航,页面留在原地
 }
