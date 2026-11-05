@@ -251,8 +251,13 @@ async fn novel_search_page(
 }
 
 #[tauri::command]
-async fn novel_latest(app: AppHandle) -> Result<Vec<sources::novel::NovelHit>, String> {
-    sources::novel::latest_series(&app).await
+async fn novel_latest(
+    app: AppHandle,
+    page: Option<i64>,
+) -> Result<Vec<sources::novel::NovelHit>, String> {
+    // page 可选:前端不传视为第 1 页(旧调用兼容)
+    let page = page.unwrap_or(1);
+    sources::novel::latest_series(&app, page).await
 }
 
 #[tauri::command]
@@ -964,11 +969,13 @@ fn spawn_novel_selftest(app: AppHandle) {
             Err(e) => return log(format!("fetch_series FAIL id={}: {e}", first.id)),
         };
         log(format!(
-            "fetch_series OK id={} 章节数={} 标题字符数={} 作者非空={}",
+            "fetch_series OK id={} 章节数={} 标题字符数={} 作者非空={} 简介非空={} cover空={}",
             series.id,
             series.chapters.len(),
             series.title.chars().count(),
-            !series.author.is_empty()
+            !series.author.is_empty(),
+            !series.introduction.is_empty(),
+            series.cover.is_empty()
         ));
         let Some(chapter) = series.chapters.first() else {
             return;
