@@ -153,7 +153,7 @@ async function addShelf() {
   if (addingShelf.value || inShelf.value) return
   addingShelf.value = true
   try {
-    await novelAdd(id)
+    await novelAdd(String(route.params.id || ''))
     inShelf.value = true
   } catch (e) {
     error.value = errorMessage(e) || '加书架失败,请重试'
