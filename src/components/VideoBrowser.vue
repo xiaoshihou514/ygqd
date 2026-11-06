@@ -1,27 +1,18 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchVideoList, searchVideos, fetchVideoWatchedIds } from '@/services/api'
+import { fetchVideoList, fetchVideoWatchedIds } from '@/services/api'
 import type { VideoCard } from '@/types'
-import { createSearchHistory } from '@/composables/useSearchHistory'
 import ProxyImage from '@/components/ProxyImage.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const router = useRouter()
-// 视频搜索历史:独立 key(番号/标题词与漫画作品名语义不同,不共用)
-const videoHistory = createSearchHistory('niacg-video-search-history')
-const showHistory = ref(false)
-const selectedHistoryIndex = ref(-1)
-const searchInput = ref<HTMLInputElement | null>(null)
-const matchedHistory = computed(() => videoHistory.suggestions(keyword.value))
 const items = ref<VideoCard[]>([])
 const loading = ref(true)
 const loadingMore = ref(false)
 const error = ref('')
-const keyword = ref('')
-const activeKeyword = ref('')
 const page = ref(1)
 const hasNext = ref(true)
 const watched = ref<Set<string>>(new Set())
@@ -49,9 +40,7 @@ async function load(reset: boolean) {
     loadingMore.value = true
   }
   try {
-    const result = activeKeyword.value
-      ? await searchVideos(activeKeyword.value, page.value)
-      : await fetchVideoList(page.value)
+    const result = await fetchVideoList(page.value)
     if (reset) {
       items.value = result.items
     } else {
@@ -73,71 +62,13 @@ async function load(reset: boolean) {
   }
 }
 
-function submitSearch() {
-  activeKeyword.value = keyword.value.trim().toLowerCase()
-  showHistory.value = false
-  selectedHistoryIndex.value = -1
-  if (activeKeyword.value) videoHistory.add(activeKeyword.value)
-  void load(true)
-}
 
-function selectHistory(keywordText: string) {
-  keyword.value = keywordText
-  showHistory.value = false
-  selectedHistoryIndex.value = -1
-  activeKeyword.value = keywordText
-  videoHistory.add(keywordText)
-  void load(true)
-}
 
-function removeHistory(keywordText: string) {
-  videoHistory.remove(keywordText)
-}
 
-function clearAllHistory() {
-  videoHistory.clear()
-  showHistory.value = false
-  selectedHistoryIndex.value = -1
-}
 
-function onInputFocus() {
-  if (videoHistory.history.value.length > 0) {
-    showHistory.value = true
-  }
-}
 
-function onInputBlur() {
-  // 延迟让下拉内 mousedown 先行(SearchForm 同款交互)
-  setTimeout(() => {
-    showHistory.value = false
-    selectedHistoryIndex.value = -1
-  }, 150)
-}
 
-function onInputKeydown(e: KeyboardEvent) {
-  const list = matchedHistory.value
-  if (list.length === 0) return
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    showHistory.value = true
-    selectedHistoryIndex.value = Math.min(selectedHistoryIndex.value + 1, list.length - 1)
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    selectedHistoryIndex.value = Math.max(selectedHistoryIndex.value - 1, -1)
-  } else if (e.key === 'Enter' && selectedHistoryIndex.value >= 0) {
-    e.preventDefault()
-    selectHistory(list[selectedHistoryIndex.value]!)
-  } else if (e.key === 'Escape') {
-    showHistory.value = false
-    selectedHistoryIndex.value = -1
-  }
-}
 
-function clearSearch() {
-  keyword.value = ''
-  activeKeyword.value = ''
-  void load(true)
-}
 
 /** 徽标展示用基础番号:剥无码流出与中字后缀(先长后短,与后端 title
  *  剥离同序)。跳转 / 去重 / 已看记录仍用完整 code,不受展示层影响。 */
@@ -188,69 +119,16 @@ onUnmounted(() => {
 
 <template>
   <div class="video-browser">
-      <div class="video-heading">
-        <form class="video-search" @submit.prevent="submitSearch">
-          <div class="video-search-wrap">
-            <input
-              ref="searchInput"
-              v-model="keyword"
-              type="search"
-              class="video-search-input"
-              placeholder="输入番号或关键词,如 ssis-406"
-              autocomplete="off"
-              @focus="onInputFocus"
-              @blur="onInputBlur"
-              @keydown="onInputKeydown"
-            >
-            <ul v-if="showHistory && matchedHistory.length > 0" class="history-dropdown">
-              <li
-                v-for="(s, i) in matchedHistory"
-                :key="s"
-                class="history-item"
-                :class="{ highlighted: i === selectedHistoryIndex }"
-                @mousedown.prevent="selectHistory(s)"
-              >
-                <svg class="history-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-                <span class="history-text">{{ s }}</span>
-                <button
-                  type="button"
-                  class="history-remove"
-                  title="删除该条历史"
-                  aria-label="删除该条历史"
-                  @mousedown.stop.prevent="removeHistory(s)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </li>
-              <li class="history-clear-row">
-                <button type="button" class="history-clear" @mousedown.stop.prevent="clearAllHistory()">
-                  清空搜索历史
-                </button>
-              </li>
-            </ul>
-          </div>
-          <button type="submit" class="video-search-btn">搜索</button>
-          <button v-if="activeKeyword" type="button" class="video-search-btn" @click="clearSearch">
-            清除
-          </button>
-        </form>
-      </div>
-
       <LoadingSpinner v-if="loading" message="加载中..." />
       <EmptyState
         v-else-if="error"
-        :title="activeKeyword ? '搜索失败' : '加载失败'"
+        title="加载失败"
         :message="error"
       />
       <EmptyState
         v-else-if="!items.length"
-        :title="activeKeyword ? '没有找到结果' : '暂无内容'"
-        :message="activeKeyword ? `没有与「${activeKeyword}」匹配的视频,换个番号试试` : '稍后再来看看'"
+        title="暂无内容"
+        message="暂无内容"
       />
       <div v-else class="video-grid">
         <button
@@ -297,131 +175,6 @@ onUnmounted(() => {
   margin-bottom: var(--spacing-md);
 }
 
-.video-search {
-  display: flex;
-  gap: var(--spacing-xs);
-  flex: 1;
-  max-width: 420px;
-}
-
-.video-search-wrap {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-}
-
-.video-search-input {
-  width: 100%;
-  padding: 8px 14px;
-  border: 1px solid var(--color-border, var(--color-hairline));
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-caption);
-  box-sizing: border-box;
-}
-
-.history-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  margin: 0;
-  padding: 4px 0;
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  z-index: 100;
-  overflow: hidden;
-  list-style: none;
-}
-
-.history-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px var(--spacing-md);
-  font-size: var(--font-size-body);
-  color: var(--color-text-primary);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.history-item:hover,
-.history-item.highlighted {
-  background: var(--color-primary-focus);
-}
-
-.history-icon {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  opacity: 0.5;
-}
-
-.history-text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.history-remove {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
-}
-
-.history-item:hover .history-remove {
-  opacity: 0.7;
-}
-
-.history-remove:hover {
-  opacity: 1;
-  background: rgba(0, 0, 0, 0.08);
-}
-
-.history-clear-row {
-  border-top: 1px solid var(--color-hairline);
-  margin-top: 4px;
-  padding: 6px var(--spacing-md);
-}
-
-.history-clear {
-  width: 100%;
-  padding: 4px 0;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-fine-print);
-  cursor: pointer;
-  text-align: center;
-  transition: color 0.15s;
-}
-
-.history-clear:hover {
-  color: var(--color-text-primary);
-}
-
-.video-search-btn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-primary);
-  color: #fff;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
 
 .video-grid {
   display: grid;
