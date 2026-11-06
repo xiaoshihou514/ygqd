@@ -203,6 +203,23 @@ export interface AuthorFollow {
   authorName: string
 }
 
+/** 视频关注条目(video_follow_list;follow_target 统一表) */
+export interface FollowTargetEntry {
+  source: string
+  kind: string
+  targetId: string
+  displayName: string
+  followedAt: number
+}
+
+/** 可关注目标(video_follow_targets;厂商/女优列表条目) */
+export interface FollowTargetItem {
+  targetId: string
+  displayName: string
+  /** 作品数(站点提供则有,可选) */
+  workCount?: number
+}
+
 /** 发现流最新系列的一页(首页第 1 页不带参数,深页走 ?p=;空页后端抛错终止) */
 export interface NovelLatestPage {
   hits: NovelHit[]

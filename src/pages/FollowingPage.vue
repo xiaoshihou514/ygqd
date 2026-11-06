@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
-import type { AuthorFollow, NovelHit } from '@/types'
+import { videoFollow, videoFollowList, videoFollowTargets, videoFollowWorks, videoUnfollow as apiVideoUnfollow, novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
+import type { AuthorFollow, FollowTargetEntry, FollowTargetItem, NovelHit, VideoCard } from '@/types'
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
@@ -96,6 +96,126 @@ function unfollowNovelAuthor(author: AuthorFollow) {
       console.error('[following]', errorMessage(e))
     }
   })()
+}
+
+// —— 视频关注(批次 3:厂商/女优 chips + 关注列表 + 管理关注 + 作品流) ——
+type VideoKind = 'actress' | 'maker'
+type VideoSource = 'missav' | 'fs1'
+const VIDEO_KINDS: Array<{ key: VideoKind; label: string }> = [
+  { key: 'actress', label: '女优' },
+  { key: 'maker', label: '厂商' },
+]
+
+function kindLabel(kind: string): string {
+  return kind === 'maker' ? '厂商' : '女优'
+}
+
+/** 视频行标题:剥中字后缀大写(与视频板块展示一致) */
+function basicVideoTitle(code: string): string {
+  return code.replace('-chinese-subtitle', '').toUpperCase()
+}
+
+function isVideoFollowed(targetId: string): boolean {
+  return videoFollows.value.some((f) => f.targetId === targetId)
+}
+const videoKind = ref<VideoKind>('actress')
+const videoSource = ref<VideoSource>('missav')
+const videoManage = ref(false)
+const videoFollows = ref<FollowTargetEntry[]>([])
+const videoFollowsLoading = ref(false)
+const videoTargets = ref<FollowTargetItem[]>([])
+const videoTargetsLoading = ref(false)
+const selectedVideoTarget = ref<FollowTargetEntry | null>(null)
+const targetWorks = ref<VideoCard[]>([])
+const targetWorksPage = ref(1)
+const targetWorksHasNext = ref(false)
+const targetWorksLoading = ref(false)
+const targetWorksError = ref('')
+
+async function loadVideoFollows() {
+  if (videoFollowsLoading.value) return
+  videoFollowsLoading.value = true
+  try {
+    videoFollows.value = await videoFollowList(videoSource.value, videoKind.value)
+  } catch (e) {
+    console.error('[following]', errorMessage(e))
+  } finally {
+    videoFollowsLoading.value = false
+  }
+}
+
+async function loadVideoTargets() {
+  if (videoTargetsLoading.value) return
+  videoTargetsLoading.value = true
+  try {
+    videoTargets.value = await videoFollowTargets(videoSource.value, videoKind.value)
+  } catch (e) {
+    console.error('[following]', errorMessage(e))
+  } finally {
+    videoTargetsLoading.value = false
+  }
+}
+
+function toggleVideoManage() {
+  videoManage.value = !videoManage.value
+  if (videoManage.value && !videoTargets.value.length) void loadVideoTargets()
+}
+
+async function followVideoTarget(item: FollowTargetItem) {
+  try {
+    await videoFollow(videoSource.value, videoKind.value, item.targetId, item.displayName)
+    await Promise.all([loadVideoFollows(), loadVideoTargets()])
+  } catch (e) {
+    console.error('[following]', errorMessage(e))
+  }
+}
+
+async function unfollowVideoTarget(entry: FollowTargetEntry) {
+  try {
+    await apiVideoUnfollow(videoSource.value, videoKind.value, entry.targetId)
+    videoFollows.value = videoFollows.value.filter((f) => f.targetId !== entry.targetId)
+    if (selectedVideoTarget.value?.targetId === entry.targetId) {
+      selectedVideoTarget.value = null
+      targetWorks.value = []
+    }
+  } catch (e) {
+    console.error('[following]', errorMessage(e))
+  }
+}
+
+async function loadTargetWorks(reset = true) {
+  const t = selectedVideoTarget.value
+  if (!t || targetWorksLoading.value) return
+  if (reset) targetWorksPage.value = 1
+  targetWorksLoading.value = true
+  targetWorksError.value = ''
+  try {
+    const res = await videoFollowWorks(videoSource.value, videoKind.value, t.targetId, targetWorksPage.value)
+    if (reset) targetWorks.value = res.items
+    else {
+      const seen = new Set(targetWorks.value.map((v) => v.code))
+      targetWorks.value.push(...res.items.filter((v) => !seen.has(v.code)))
+    }
+    targetWorksHasNext.value = res.pagination.hasNext
+  } catch (e) {
+    targetWorksError.value = errorMessage(e) || '作品加载失败'
+  } finally {
+    targetWorksLoading.value = false
+  }
+}
+
+function selectVideoTarget(entry: FollowTargetEntry) {
+  selectedVideoTarget.value = entry
+  void loadTargetWorks(true)
+}
+
+// 切换视频关注类型/来源时刷新关注列表
+function switchVideoScope(kind: VideoKind, source: VideoSource) {
+  videoKind.value = kind
+  videoSource.value = source
+  selectedVideoTarget.value = null
+  targetWorks.value = []
+  void loadVideoFollows()
 }
 /** 后台同步哔咔服务器收藏进行中(不阻塞本地列表展示) */
 const favSyncing = ref(false)
@@ -513,10 +633,95 @@ onUnmounted(() => {
         </template>
 
         <template v-else-if="activeTab === 'videos'">
-          <EmptyState
-            title="视频关注即将上线"
-            message="关注厂商与女优的功能正在建设中,上线后可在这里跟踪她们的新作品"
-          />
+          <div class="video-kind-row">
+            <button
+              v-for="k in VIDEO_KINDS"
+              :key="k.key"
+              type="button"
+              class="kind-chip"
+              :class="{ active: videoKind === k.key }"
+              @click="switchVideoScope(k.key, 'missav')"
+            >
+              {{ k.label }}
+            </button>
+            <button type="button" class="manage-toggle" @click="toggleVideoManage">
+              {{ videoManage ? '完成' : '管理关注' }}
+            </button>
+          </div>
+
+          <div v-if="videoManage" class="manage-panel">
+            <LoadingSpinner v-if="videoTargetsLoading" message="加载可关注目标..." />
+            <EmptyState
+              v-else-if="!videoTargets.length"
+              title="暂无可关注目标"
+              message="该分类下没有解析到关注目标"
+            />
+            <div v-else class="target-list">
+              <div
+                v-for="t in videoTargets"
+                :key="t.targetId"
+                class="target-row"
+              >
+                <span class="target-name">{{ t.displayName }}</span>
+                <span v-if="t.workCount" class="target-count">{{ t.workCount }} 部作品</span>
+                <button
+                  type="button"
+                  class="target-follow-btn"
+                  :disabled="isVideoFollowed(t.targetId)"
+                  @click="followVideoTarget(t)"
+                >
+                  {{ isVideoFollowed(t.targetId) ? '已关注' : '+ 关注' }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <template v-else>
+            <LoadingSpinner v-if="videoFollowsLoading" message="加载关注列表..." />
+            <EmptyState
+              v-else-if="!videoFollows.length"
+              title="还没有关注目标"
+              message="点「管理关注」添加想跟踪的厂商或女优"
+            />
+            <div v-else class="follow-rows">
+              <button
+                v-for="f in videoFollows"
+                :key="f.targetId"
+                type="button"
+                class="follow-row"
+                @click="selectVideoTarget(f)"
+              >
+                <span class="follow-name">{{ f.displayName }}</span>
+                <span class="follow-kind">{{ kindLabel(f.kind) }}</span>
+              </button>
+            </div>
+
+            <template v-if="selectedVideoTarget">
+              <div class="works-header">
+                <span class="works-title">{{ selectedVideoTarget.displayName }} 的作品</span>
+                <button type="button" class="works-close" @click="selectedVideoTarget = null">×</button>
+              </div>
+              <LoadingSpinner v-if="targetWorksLoading" message="加载作品..." />
+              <p v-else-if="targetWorksError" class="works-error">{{ targetWorksError }}</p>
+              <div v-else-if="targetWorks.length" class="works-rows">
+                <button
+                  v-for="v in targetWorks"
+                  :key="v.code"
+                  type="button"
+                  class="work-row"
+                  @click="router.push(`/videos/${v.code}`)"
+                >
+                  <span class="work-title">{{ basicVideoTitle(v.code) }}</span>
+                  <span v-if="v.chinese" class="work-cs">中字</span>
+                </button>
+                <div v-if="targetWorksHasNext" class="works-more-row">
+                  <button type="button" class="works-more-btn" :disabled="targetWorksLoading" @click="loadTargetWorks(false)">
+                    {{ targetWorksLoading ? '加载中…' : '加载更多' }}
+                  </button>
+                </div>
+              </div>
+            </template>
+          </template>
         </template>
         <template v-else-if="activeTab === 'novel-authors'">
           <LoadingSpinner v-if="novelAuthorsLoading" message="加载关注的小说作者..." />
@@ -949,5 +1154,225 @@ onUnmounted(() => {
 .works-error {
   font-size: var(--font-size-caption);
   color: var(--color-error);
+}
+
+.video-kind-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.kind-chip {
+  padding: 6px 16px;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.kind-chip.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.manage-toggle {
+  margin-left: auto;
+  padding: 6px 14px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-fine-print);
+  cursor: pointer;
+}
+
+.manage-toggle:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.manage-panel {
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  padding: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.target-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 8px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+}
+
+.target-row:hover {
+  background: var(--color-primary-focus);
+}
+
+.target-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-count {
+  flex-shrink: 0;
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-muted);
+}
+
+.target-follow-btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-size-fine-print);
+  cursor: pointer;
+}
+
+.target-follow-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.follow-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.follow-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-md);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+}
+
+.follow-row:hover {
+  border-color: var(--color-primary);
+}
+
+.follow-name {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.follow-kind {
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+}
+
+.works-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: var(--spacing-lg) 0 var(--spacing-sm);
+}
+
+.works-title {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.works-close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.works-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.work-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 10px var(--spacing-md);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+}
+
+.work-row:hover {
+  border-color: var(--color-primary);
+}
+
+.work-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-cs {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #e8590c;
+  color: #fff;
+  font-size: 10px;
+}
+
+.works-more-row {
+  display: flex;
+  justify-content: center;
+  padding: var(--spacing-sm) 0;
+}
+
+.works-more-btn {
+  padding: 8px var(--spacing-lg);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-card-bg);
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.works-more-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 </style>

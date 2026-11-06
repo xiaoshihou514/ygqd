@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BikaRankTT, SourceId } from '@/config/sources'
-import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowedAuthor, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
+import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowTargetEntry, FollowTargetItem, FollowedAuthor, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
@@ -56,6 +56,20 @@ export const novelFollowedAuthors = () =>
   invoke<AuthorFollow[]>('novel_followed_authors')
 export const novelFollowedAuthorWorks = (authorId: string) =>
   invoke<NovelHit[]>('novel_followed_author_works', { authorId })
+export const videoFollow = (source: string, kind: string, targetId: string, displayName: string) =>
+  invoke<void>('video_follow', { source, kind, targetId, displayName })
+export const videoUnfollow = (source: string, kind: string, targetId: string) =>
+  invoke<void>('video_unfollow', { source, kind, targetId })
+export const videoFollowList = (source: string, kind: string) =>
+  invoke<FollowTargetEntry[]>('video_follow_list', { source, kind })
+export const videoFollowTargets = (source: string, kind: string) =>
+  invoke<FollowTargetItem[]>('video_follow_targets', { source, kind })
+export const videoFollowWorks = (
+  source: string,
+  kind: string,
+  targetId: string,
+  page?: number,
+) => invoke<VideoListResult>('video_follow_works', { source, kind, targetId, page })
 export const novelLatest = (page?: number) =>
   invoke<NovelLatestPage>('novel_latest', { page })
 export const novelShelf = () => invoke<NovelSeries[]>('novel_shelf')
