@@ -91,8 +91,45 @@ adb -s <串号> shell pm list packages | grep niacg   # 是否已安装
 - 连接方法:电脑上用 Chromium 打开 `chrome://inspect/#devices`,勾选 Discover USB devices,
   就能在设备下列出每个 WebView(主界面、网关各一个)。点 inspect 后可用 Console 执行 JS、
   看 Network。
-- **安全纪律提醒**:inspect 窗口会**渲染页面画面**(屏幕投射)。网关页属于站点内容,
-  **不要打开网关 WebView 的 inspect 画面**;只对主界面 WebView 用,或只在 Console 里做计数类断言。
+- **安全纪律提醒**:inspect 窗口一打开就会自动开始**屏幕投射**(screencast),把设备画面
+  渲染到电脑上。主界面画面里也有站点封面缩略图,所以**任何 WebView(包括主界面)都不要
+  打开 DevTools 窗口**。只能用下面的「仅 Console 模式」。
+
+#### 仅 Console 模式:用 DevTools 协议脚本求值,完全不产生画面
+
+不打开 chrome://inspect 的 DevTools 窗口,而是用脚本直连 WebView 的调试端口,只发
+`Runtime.evaluate`,只取回求值结果。这条路径不经过任何渲染。
+
+```sh
+# 1. 找调试套接字(需 debug 构建或 devtools 特性,见上)
+adb -s <串号> shell cat /proc/net/unix | grep -o 'webview_devtools_remote_[0-9]*' | sort -u
+# 2. 转发到本机端口
+adb -s <串号> forward tcp:9222 localabstract:webview_devtools_remote_<进程号>
+# 3. 列出目标:只看 type/url(元数据),主界面的 url 是应用自己的本地地址,
+#    网关的 url 是 https://hlib.cc/...;只对主界面目标求值
+curl -s http://127.0.0.1:9222/json | python3 -c "import json,sys;[print(t['id'],t['type'],t['url'][:40]) for t in json.load(sys.stdin)]"
+# 4. 求值(node 22 自带 WebSocket);<目标id> 取自第 3 步
+node -e '
+const [id, expr] = process.argv.slice(1);
+const ws = new WebSocket(`ws://127.0.0.1:9222/devtools/page/${id}`);
+ws.onopen = () => ws.send(JSON.stringify({id: 1, method: "Runtime.evaluate",
+  params: {expression: expr, returnByValue: true}}));
+ws.onmessage = (m) => { const r = JSON.parse(m.data);
+  if (r.id === 1) { console.log(JSON.stringify(r.result.result.value)); ws.close(); } };
+' <目标id> 'document.querySelectorAll(".hit-row").length'
+# 5. 用完解除转发
+adb -s <串号> forward --remove tcp:9222
+```
+
+求值表达式的纪律:
+- **返回值只能是数字或布尔**,例如 `.length`、`!!document.querySelector(...)`、
+  `[...rows].filter(r => r.querySelector(".hit-meta")).length`。
+  **不要返回 DOM 节点、`textContent`、`innerHTML`、图片地址**,它们本身就是站点内容。
+- 只发 `Runtime.evaluate`,**不要订阅** `Runtime.consoleAPICalled`、`Log`、`Page.screencast`
+  一类事件(页面自己打的日志里可能带内容)。
+- **分工**:操作靠 adb(`input tap/text`,先查焦点,见 3.1),断言靠求值脚本。
+  步骤是:adb 点击导航 → 等页面稳定 → 求值断言 → adb 进入下一步。
+  也可以在求值里调用应用自己的函数来触发操作,但要模拟用户真实路径的验证,优先用 adb。
 
 ### 2.2 logcat 过滤
 
@@ -215,7 +252,7 @@ adb -s <串号> shell rm -f /sdcard/u.xml
 | 允许 | 禁止 |
 |---|---|
 | 节点存在性(如登录表单有 `password="true"` 的输入框) | `screencap` / `screenrecord` 截屏录屏 |
-| 计数(结果行数、文本节点数、条目数) | 打开网关 WebView 的 inspect 画面 |
+| 计数(结果行数、文本节点数、条目数) | 打开任何 WebView 的 DevTools 窗口(一打开就自动投屏,见 2.1) |
 | 包名、Activity 名、实例标识、bounds 坐标 | 在浏览器里打开站点样本 HTML |
 | HTTP 状态码、字节数、日志关键字 | **宽泛地打印**界面导出里的全部文本 |
 | 我们自己的界面文案(按钮、提示) | |
@@ -223,6 +260,14 @@ adb -s <串号> shell rm -f /sdcard/u.xml
 教训:有一次我用「所有短文本」的宽泛条件筛选界面导出,结果把网关列表页的标题和标签打印了出来,
 违背了纪律。**导出筛选一律精确匹配**:要么匹配我们已知的文案(`text="登录"`、`返回应用`),
 要么只输出计数和布尔值。站点弹窗的提示文案可以读一行,用来判断流程走到哪一步。
+
+需要把站点页面落盘做离线结构分析时(取证),必须同时满足:
+- **门控**:只在 debug 构建或环境变量开启时生效,不能进 release;
+- **限量**:只存需要的路径,数量或大小有上限;
+- **线程**:在导航回调里不要同步写盘,先把 body 移进 `spawn` 出去的任务里再写,回调照常投递回传、
+  不等待写盘。diag 标记在写盘完成后、由该任务自己写(如 `[取证] 落盘 bytes=…`),
+  所以它会排在 `[网关链路] 回传到达` 之后,不会打乱链路日志的先后;
+- **清理**:用完就删,提交前确认取证代码没有混进暂存区(见 4.4)。
 
 离线结构分析用代码完成:对抓下来的 HTML 统计 `li.list-group-item` 的数量,
 或用页码选择器的最大值确定总页数。最好直接复用应用自己的解析器
@@ -262,9 +307,16 @@ adb -s <串号> shell rm -f /sdcard/u.xml
   `startActivity`(singleTask 走 onNewIntent)。网关里按返回键 = 收回。
   对应代码在 `gateway.rs` 的 `finish` / `present` / `android_exec_on_gateway`。
 - 网关与宿主之间的回传走主框架导航 `ygwd-gw://{r|finish|ready}`,在 on_navigation 里拦截。
-  **这个回调在 Android 主线程上执行**:回调里不能做任何「投递到主线程再阻塞等结果」的事,
-  比如 `app.path()`、同步的移动插件调用、`window.navigate`,否则主线程自锁、界面黑屏。
-  需要做的副作用一律 `tauri::async_runtime::spawn` 出去。
+  **这个回调在 Android 主线程上执行**,而且 wry 调用它时还持有 `URL_LOADING_OVERRIDE` 锁。
+  回调里**禁止**以下两类操作:
+  - 「投递到主线程再阻塞等结果」:`app.path()`(移动插件同步调用,`diag()` 早期版本就是因此
+    死锁的)、任何 `run_mobile_plugin` 同步调用、需要等待回音的窗口操作;
+  - 会重入导航回调的操作:`window.navigate` 和 `loadUrl` 会再次进入 shouldOverride,
+    去抢同一把锁,同线程死锁。
+
+  回调里只做纯内存操作(解析、oneshot 投递、原子计数、写 `diag`——它只用启动时缓存的目录)。
+  窗口收回等副作用一律 `tauri::async_runtime::spawn` 出去(参考 `finish_off_main_thread`)。
+  大块同步 IO(比如把回传 body 写盘)虽然不会死锁,但会卡主线程,也要 spawn 出去。
 - `JniHandle::exec` 递来的 webview 是该 Activity **最后创建的** WebView,与你从哪个窗口调用无关。
   要操作特定 WebView,必须通过它自己的 Activity 去做(网关就有自己的 Activity)。
 - 站点在 WebView 里会弹出「本站没有软件……」的 `alert`,不点 OK 网关会一直卡着(见 3.2 对话框判断)。
