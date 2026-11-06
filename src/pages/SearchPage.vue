@@ -658,7 +658,159 @@ function goToSplit() {
   </div>
 </template>
 
-<style scoped>
+
+/* ============ 统一搜索范围(批次 1):chips/表单/结果行/加载更多 ============ */
+.scope-bar {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.scope-btn {
+  flex: 1;
+  max-width: 120px;
+  padding: 6px 0;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.scope-btn.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.scope-search {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+
+.scope-search-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.scope-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-card-bg);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+}
+
+.scope-btn-submit {
+  padding: 8px 18px;
+  border: none;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.scope-btn-submit:disabled {
+  opacity: 0.5;
+}
+
+.scope-error {
+  font-size: var(--font-size-caption);
+  color: var(--color-error);
+  margin: 0 0 var(--spacing-sm);
+}
+
+/* 1920 横屏行长可读性:全宽背景下结果列限宽居中 */
+.scope-rows {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.scope-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px var(--spacing-md);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+}
+
+.scope-row:hover {
+  border-color: var(--color-primary);
+}
+
+.scope-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.scope-row-title {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scope-row-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: var(--color-divider-soft);
+  color: var(--color-text-secondary);
+}
+
+.scope-row-sub {
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scope-more-row {
+  display: flex;
+  justify-content: center;
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.scope-more-btn {
+  padding: 8px var(--spacing-lg);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-card-bg);
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.scope-more-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.scope-bar {
 .search-page .container {
   max-width: none;
   padding: 0 var(--spacing-md);
