@@ -2,8 +2,9 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { novelAdd, novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
+import { novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
 import type { NovelPage, NovelSeries } from '@/types'
+import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -11,9 +12,12 @@ const route = useRoute()
 const router = useRouter()
 
 const series = ref<NovelSeries | null>(null)
-/** 是否已在书架:未入库系列(novel_series_info 预览)阅读中可加书架 */
+// 收藏 = 关注作者(复用关注机制,followed_authors 表;数据写接口已就绪)
+const { followed: followedAuthors, load: loadFollowedAuthors, follow: followAuthorApi, isFollowing: isFollowingAuthor } = useFollowedAuthors()
+const authorFollowed = computed(() =>
+  series.value?.author ? isFollowingAuthor(series.value.author) : false,
+)
 const inShelf = ref(false)
-const addingShelf = ref(false)
 const page = ref<NovelPage | null>(null)
 const chapterIndex = ref(0)
 const articlePage = ref(1)
@@ -148,17 +152,14 @@ function goChapter(index: number) {
   void loadPage()
 }
 
-/** 阅读中收藏:未入库系列加书架,成功后转书架态(按钮收起) */
-async function addShelf() {
-  if (addingShelf.value || inShelf.value) return
-  addingShelf.value = true
+/** 阅读中关注作者:复用关注机制(关注后「关注」tab 可跟踪新作品) */
+async function followNovelAuthor() {
+  const a = series.value?.author
+  if (!a || isFollowingAuthor(a)) return
   try {
-    await novelAdd(String(route.params.id || ''))
-    inShelf.value = true
+    await followAuthorApi(a)
   } catch (e) {
-    error.value = errorMessage(e) || '操作失败,请重试'
-  } finally {
-    addingShelf.value = false
+    error.value = errorMessage(e) || '关注失败,请重试'
   }
 }
 
@@ -182,6 +183,7 @@ function jumpToProgress() {
 
 onMounted(async () => {
   loadSettings()
+  void loadFollowedAuthors()
   const id = String(route.params.id || '')
   try {
     // 数据源两级:书架内系列走本地;未入库(详情页/搜索直进)走
@@ -229,7 +231,15 @@ onMounted(async () => {
         <span v-if="page" class="hdr-page">第 {{ articlePage }}/{{ page.totalPages }} 页</span>
       </div>
       <div class="hdr-actions">
-        <!-- 收藏按钮过渡期隐藏:批次 2 关注作者上线后恢复为「关注作者」 -->
+        <button
+          v-if="!inShelf && series?.author"
+          class="hdr-btn"
+          :disabled="authorFollowed"
+          :title="authorFollowed ? '已关注该作者' : `关注 ${series.author}`"
+          @click="followNovelAuthor"
+        >
+          {{ authorFollowed ? '已关注' : '+ 关注作者' }}
+        </button>
         <button class="hdr-btn" @click="toggleSettings">Aa</button>
         <button class="hdr-btn" @click="toggleChapters">目录</button>
       </div>

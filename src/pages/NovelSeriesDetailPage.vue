@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { gatewayOpen, novelAdd, novelProgress, novelRemove, novelSeriesInfo, novelShelf } from '@/services/api'
 import type { NovelSeries } from '@/types'
+import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -12,7 +13,11 @@ const router = useRouter()
 
 const series = ref<NovelSeries | null>(null)
 const progress = ref<[number, number] | null>(null)
-/** 是否已在书架:书架内→续读/移出;未入库(搜索直进)→加书架漏斗 */
+// 收藏 = 关注作者(复用关注机制),数据写接口已就绪;移除保留(novelRemove 真实数据操作)
+const { followed: followedAuthors, load: loadFollowedAuthors, follow: followAuthorApi, isFollowing: isFollowingAuthor } = useFollowedAuthors()
+const authorFollowed = computed(() =>
+  series.value?.author ? isFollowingAuthor(series.value.author) : false,
+)
 const inShelf = ref(false)
 const addingShelf = ref(false)
 const loading = ref(true)
@@ -64,6 +69,17 @@ function startReading() {
   router.push(`/novels/${id.value}`)
 }
 
+/** 关注作者:未入库浏览态的收藏动作(批次 2 关注 tab 小说分组数据源) */
+async function followNovelAuthor() {
+  const a = series.value?.author
+  if (!a || authorFollowed.value) return
+  try {
+    await followAuthorApi(a)
+  } catch (e) {
+    error.value = errorMessage(e) || '关注失败,请重试'
+  }
+}
+
 /** 未入库系列的决策动作:加书架(重新抓取目录并入库),成功后转书架态 */
 async function addShelf() {
   if (addingShelf.value) return
@@ -98,6 +114,7 @@ function openHlib() {
 }
 
 onMounted(() => {
+  void loadFollowedAuthors()
   void load()
 })
 </script>
@@ -141,6 +158,20 @@ onMounted(() => {
           <!-- 未入库系列:直接阅读(R2 数据源两级支持,阅读进度自动保留);
                收藏(关注作者)批次 2 上线后在此恢复按钮 -->
           <button class="read-btn primary" @click="startReading">开始阅读</button>
+          <button
+            v-if="series.author && !authorFollowed"
+            class="read-btn ghost"
+            @click="followNovelAuthor"
+          >
+            + 关注作者
+          </button>
+          <button
+            v-else-if="series.author && authorFollowed"
+            class="read-btn ghost"
+            disabled
+          >
+            已关注作者
+          </button>
           <button v-if="inShelf" class="read-btn ghost" @click="handleRemove">移除</button>
         </div>
       </div>
