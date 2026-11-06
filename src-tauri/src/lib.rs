@@ -243,6 +243,39 @@ async fn novel_series_info(app: AppHandle, id: String) -> Result<NovelSeries, St
     sources::novel::fetch_series(&app, &id).await
 }
 
+// ── 批次 4:全局历史(item_history 统一时间线) ──
+
+/// 记录全局历史(视频/小说;漫画继续走 record_history 存量)
+#[tauri::command]
+fn record_item_history(
+    source: String,
+    kind: String,
+    item_id: String,
+    title: String,
+    progress: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::item_history_record(&conn, &source, &kind, &item_id, &title, progress.as_deref())
+}
+
+/// 全局历史查询(source/kind 可选过滤;None=全板块时间线)
+#[tauri::command]
+fn fetch_item_history(
+    source: Option<String>,
+    kind: Option<String>,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Vec<db::ItemHistoryEntry>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::item_history_fetch(
+        &conn,
+        source.as_deref(),
+        kind.as_deref(),
+        limit.unwrap_or(100),
+    )
+}
+
 // ── 批次 3:视频关注(follow_target 统一表首个用例) ──
 
 /// 关注/取关视频目标(厂商/女优;source: fs1|missav, kind: maker|actress)
@@ -1210,7 +1243,7 @@ pub fn run() {
             app.manage(GatewayManager::new());
             let proxy_port = stream_proxy::spawn()?;
             stream_proxy::set_app(app.handle().clone());
-            gateway::diag(&app.handle(), &format!("app setup done, proxy port={proxy_port}"));
+            gateway::diag(app.handle(), &format!("app setup done, proxy port={proxy_port}"));
             #[cfg(debug_assertions)]
             spawn_novel_selftest(app.handle().clone());
             app.manage(AppState {
@@ -1240,6 +1273,8 @@ pub fn run() {
             diag_read,
             diag_clear,
             gateway_result,
+            record_item_history,
+            fetch_item_history,
             video_follow,
             video_unfollow,
             video_follow_list,

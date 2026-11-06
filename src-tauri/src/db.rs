@@ -13,6 +13,10 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
     db.execute_batch("PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS followed_authors(author TEXT PRIMARY KEY, followed_at INTEGER NOT NULL, last_checked_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS follow_target(source TEXT NOT NULL, kind TEXT NOT NULL, target_id TEXT NOT NULL, display_name TEXT NOT NULL, followed_at INTEGER NOT NULL, PRIMARY KEY(source, kind, target_id));
+      CREATE TABLE IF NOT EXISTS item_history(source TEXT NOT NULL, kind TEXT NOT NULL, item_id TEXT NOT NULL, title TEXT NOT NULL, viewed_at INTEGER NOT NULL, progress TEXT, PRIMARY KEY(source, kind, item_id));
+      CREATE INDEX IF NOT EXISTS idx_item_history_viewed ON item_history(viewed_at DESC);
+      INSERT OR IGNORE INTO follow_target(source,kind,target_id,display_name,followed_at)
+        SELECT 'bika','author',author,author,followed_at FROM followed_authors;
       CREATE TABLE IF NOT EXISTS view_history(comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, viewed_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS tag_blacklist(tag TEXT PRIMARY KEY, mode TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bika_account(id INTEGER PRIMARY KEY CHECK(id=1), email TEXT NOT NULL, password TEXT NOT NULL, token TEXT NOT NULL);
@@ -51,7 +55,9 @@ fn migrate_view_history(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 pub fn follows(db: &Connection) -> Result<Vec<FollowedAuthor>, String> {
-    let mut s=db.prepare("SELECT author,followed_at,last_checked_at FROM followed_authors ORDER BY followed_at DESC").map_err(|e|e.to_string())?;
+    // 批次 4 迁移:实现切换到 follow_target 统一表(接口 FollowedAuthor 不变;
+    // last_checked_at 由 followed_at 兼容填充)
+    let mut s=db.prepare("SELECT target_id,followed_at,followed_at FROM follow_target WHERE source='bika' AND kind='author' ORDER BY followed_at DESC").map_err(|e|e.to_string())?;
     let rows = s
         .query_map([], |r| {
             Ok(FollowedAuthor {
@@ -67,6 +73,8 @@ pub fn follows(db: &Connection) -> Result<Vec<FollowedAuthor>, String> {
 }
 pub fn follow(db: &Connection, author: &str) -> Result<FollowedAuthor, String> {
     let time = now();
+    follow_target_add(db, "bika", "author", author, author)?;
+    // followed_authors 双写保留(回滚安全;批次 4 收口后移除)
     db.execute("INSERT INTO followed_authors VALUES(?1,?2,?2) ON CONFLICT(author) DO UPDATE SET last_checked_at=?2",params![author,time]).map_err(|e|e.to_string())?;
     Ok(FollowedAuthor {
         author: author.into(),
@@ -75,6 +83,7 @@ pub fn follow(db: &Connection, author: &str) -> Result<FollowedAuthor, String> {
     })
 }
 pub fn unfollow(db: &Connection, author: &str) -> Result<(), String> {
+    follow_target_remove(db, "bika", "author", author)?;
     db.execute("DELETE FROM followed_authors WHERE author=?1", [author])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -315,6 +324,16 @@ pub fn novel_progress(db: &Connection, series_id: &str) -> Result<Option<(i64, i
     .map_err(|e: rusqlite::Error| e.to_string())
 }
 
+/// 系列标题查询(时间线条目展示用;书架未收录返回 None)
+pub fn novel_series_title(db: &Connection, series_id: &str) -> Option<String> {
+    db.query_row(
+        "SELECT title FROM novel_series WHERE id=?1",
+        params![series_id],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+}
+
 pub fn novel_set_progress(
     db: &Connection,
     series_id: &str,
@@ -326,6 +345,11 @@ pub fn novel_set_progress(
         params![series_id, chapter_order, page, now()],
     )
     .map_err(|e| e.to_string())?;
+    // 双写全局时间线(批次 4):progress 表保精确续读,item_history 保
+    // 时间线;item_id 用系列,progress JSON 记章节与页码
+    let progress_json = format!("{{\"chapter\":{},\"page\":{}}}", chapter_order, page);
+    let title = novel_series_title(db, series_id).unwrap_or_else(|| format!("系列 {series_id}"));
+    item_history_record(db, "hlib", "novel", series_id, &title, Some(&progress_json))?;
     Ok(())
 }
 
@@ -445,6 +469,68 @@ pub fn follow_targets(
                 target_id: r.get(2)?,
                 display_name: r.get(3)?,
                 followed_at: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// 全局历史条目(批次 4;视频/小说写入,漫画保留 view_history 存量)
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemHistoryEntry {
+    pub source: String,
+    pub kind: String,
+    pub item_id: String,
+    pub title: String,
+    pub viewed_at: i64,
+    pub progress: Option<String>,
+}
+
+/// 记录全局历史(存在则更新时间与进度,时间线条目唯一)
+pub fn item_history_record(
+    conn: &Connection,
+    source: &str,
+    kind: &str,
+    item_id: &str,
+    title: &str,
+    progress: Option<&str>,
+) -> Result<(), String> {
+    let time = now();
+    conn.execute(
+        "INSERT INTO item_history VALUES(?1,?2,?3,?4,?5,?6)
+         ON CONFLICT(source,kind,item_id) DO UPDATE SET title=?4, viewed_at=?5, progress=?6",
+        params![source, kind, item_id, title, time, progress],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 全局历史查询(source/kind 可选过滤,None=不过滤;按时间倒序)
+pub fn item_history_fetch(
+    conn: &Connection,
+    source: Option<&str>,
+    kind: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ItemHistoryEntry>, String> {
+    let mut s = conn
+        .prepare(
+            "SELECT source,kind,item_id,title,viewed_at,progress FROM item_history
+             WHERE (?1 IS NULL OR source=?1) AND (?2 IS NULL OR kind=?2)
+             ORDER BY viewed_at DESC LIMIT ?3",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = s
+        .query_map(params![source, kind, limit], |r| {
+            Ok(ItemHistoryEntry {
+                source: r.get(0)?,
+                kind: r.get(1)?,
+                item_id: r.get(2)?,
+                title: r.get(3)?,
+                viewed_at: r.get(4)?,
+                progress: r.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?
