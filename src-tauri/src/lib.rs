@@ -243,6 +243,80 @@ async fn novel_series_info(app: AppHandle, id: String) -> Result<NovelSeries, St
     sources::novel::fetch_series(&app, &id).await
 }
 
+// ── 批次 3:视频关注(follow_target 统一表首个用例) ──
+
+/// 关注/取关视频目标(厂商/女优;source: fs1|missav, kind: maker|actress)
+#[tauri::command]
+fn video_follow(
+    source: String,
+    kind: String,
+    target_id: String,
+    display_name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::follow_target_add(&conn, &source, &kind, &target_id, &display_name)
+}
+
+#[tauri::command]
+fn video_unfollow(
+    source: String,
+    kind: String,
+    target_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::follow_target_remove(&conn, &source, &kind, &target_id)
+}
+
+/// 关注目标列表(按来源+类型过滤)
+#[tauri::command]
+fn video_follow_list(
+    source: String,
+    kind: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<db::FollowTargetEntry>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::follow_targets(&conn, &source, &kind)
+}
+
+/// 可关注目标列表(fs1 女优 / missav 厂商 / missav 女优排行)
+#[tauri::command]
+async fn video_follow_targets(
+    source: String,
+    kind: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<sources::video::FollowTargetItem>, String> {
+    match (source.as_str(), kind.as_str()) {
+        ("fs1", "actress") => state.video.fs1_models_list().await,
+        ("missav", "maker") => state.video.missav_makers_list().await,
+        ("missav", "actress") => state.video.missav_actresses_list().await,
+        _ => Err(format!("不支持的关注类型 {source}/{kind}")),
+    }
+}
+
+/// 关注对象的作品流(详情页视频列表,复用现有解析;串行闸保站点友好)
+#[tauri::command]
+async fn video_follow_works(
+    source: String,
+    kind: String,
+    target_id: String,
+    page: Option<i32>,
+    state: State<'_, AppState>,
+) -> Result<sources::video::VideoListResult, String> {
+    let page = page.unwrap_or(1).max(1);
+    match (source.as_str(), kind.as_str()) {
+        ("fs1", "actress") => state.video.fs1_model_works(&target_id, page).await,
+        ("missav", kind @ ("maker" | "actress")) => {
+            state
+                .video
+                .missav_follow_works(kind, &target_id, page)
+                .await
+        }
+        _ => Err(format!("不支持的作品流类型 {source}/{kind}")),
+    }
+}
+
 /// 推荐流:hlib 首页聚合(最新+推荐位混合,进入即看到内容)
 #[tauri::command]
 async fn novel_recommend(
@@ -1166,6 +1240,11 @@ pub fn run() {
             diag_read,
             diag_clear,
             gateway_result,
+            video_follow,
+            video_unfollow,
+            video_follow_list,
+            video_follow_targets,
+            video_follow_works,
             novel_recommend,
             novel_ranking,
             novel_followed_author_works,

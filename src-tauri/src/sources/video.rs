@@ -157,6 +157,40 @@ pub struct VideoCard {
     pub chinese: bool,
 }
 
+/// 关注目标的可选条目(列表页提取;target_id 用于 follow/works)
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowTargetItem {
+    pub target_id: String,
+    pub display_name: String,
+    /// 作品数(站点有的话;可选)
+    pub work_count: Option<i64>,
+}
+
+fn strip_tags(s: &str) -> String {
+    let re = regex::Regex::new(r"<[^>]+>").unwrap();
+    let t = re.replace_all(s, " ");
+    t.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn percent_decode_simple(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// 基础番号:去掉 -chinese-subtitle 后缀
 fn base_code(code: &str) -> &str {
     code.strip_suffix("-chinese-subtitle").unwrap_or(code)
@@ -453,6 +487,73 @@ impl VideoApi {
     }
 
     /// 最新上市列表,page 从 1 开始
+    // ── 批次 3:视频关注(侦察取证形态) ──
+
+    /// fs1 女优列表:/models/ 页卡片(链接 hash slug + h6.title 名字)
+    pub async fn fs1_models_list(&self) -> Result<Vec<FollowTargetItem>, String> {
+        let html = self.get("/models/").await?;
+        Ok(Self::parse_fs1_models(&html))
+    }
+
+    /// fs1 女优作品流:/models/{hash}/ 的视频卡片,复用 parse_cards;
+    /// Jable 系分页 /{path}/{page}/
+    pub async fn fs1_model_works(&self, slug: &str, page: i32) -> Result<VideoListResult, String> {
+        let path = if page <= 1 {
+            format!("/models/{slug}/")
+        } else {
+            format!("/models/{slug}/{page}/")
+        };
+        let html = self.get(&path).await?;
+        let items = Self::parse_cards(&html);
+        Ok(VideoListResult {
+            pagination: PaginationInfo {
+                current: page - 1,
+                total: 0,
+                has_next: items.len() >= 24,
+                has_prev: page > 1,
+            },
+            items,
+        })
+    }
+
+    /// missav 厂商列表:/makers 页(相对链接 slug + 文本名)
+    pub async fn missav_makers_list(&self) -> Result<Vec<FollowTargetItem>, String> {
+        let html = self.missav_get("/makers").await?;
+        Ok(Self::parse_missav_makers(&html))
+    }
+
+    /// missav 女优列表:/actresses/ranking 页(dm 前缀路由 + percent 名字)
+    pub async fn missav_actresses_list(&self) -> Result<Vec<FollowTargetItem>, String> {
+        let html = self.missav_get("/actresses/ranking").await?;
+        Ok(Self::parse_missav_actresses(&html))
+    }
+
+    /// missav 厂商/女优作品流:/makers/{slug} 或 /actresses/{name},
+    /// 复用 parse_missav_search;分页 /{path}/{page}
+    pub async fn missav_follow_works(
+        &self,
+        kind: &str,
+        target_id: &str,
+        page: i32,
+    ) -> Result<VideoListResult, String> {
+        let path = if page <= 1 {
+            format!("/{kind}/{target_id}")
+        } else {
+            format!("/{kind}/{target_id}/{page}")
+        };
+        let html = self.missav_get(&path).await?;
+        let items = Self::parse_missav_search(&html);
+        Ok(VideoListResult {
+            pagination: PaginationInfo {
+                current: page - 1,
+                total: 0,
+                has_next: items.len() >= 24,
+                has_prev: page > 1,
+            },
+            items,
+        })
+    }
+
     pub async fn list(&self, page: i32) -> Result<VideoListResult, String> {
         let html = self.get(&format!("/new-release/{page}/")).await?;
         let items = Self::parse_cards(&html);
@@ -523,6 +624,78 @@ impl VideoApi {
     /// 解析 missav 搜索结果页:通用 href 提取(任意形态路径,join 后取
     /// 末段判定番号;SSR 与 Vue hydration 后的 DOM 均适用) +
     /// fourhoi.com/{code}/cover-t.jpg 规律封面 + 番号前缀归属标题
+    /// fs1 女优卡片解析:链接 hash slug + 块内 h6.title 名字
+    fn parse_fs1_models(html: &str) -> Vec<FollowTargetItem> {
+        let mut out = Vec::new();
+        // 逐卡片块:链接 + 块内 h6.title
+        let re_block = regex::Regex::new(
+            r#"<a[^>]*href="https://fs1\.app/models/([a-f0-9]+)/"[\s\S]*?<h6 class="title">([^<]+)</h6>"#,
+        )
+        .unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for cap in re_block.captures_iter(html) {
+            let slug = cap[1].to_string();
+            let name = cap[2].trim().to_string();
+            if slug.is_empty() || name.is_empty() || !seen.insert(slug.clone()) {
+                continue;
+            }
+            out.push(FollowTargetItem {
+                target_id: slug,
+                display_name: name,
+                work_count: None,
+            });
+        }
+        out
+    }
+
+    /// missav 厂商解析:相对链接 slug + 文本名
+    fn parse_missav_makers(html: &str) -> Vec<FollowTargetItem> {
+        let mut out = Vec::new();
+        let re_block =
+            regex::Regex::new(r#"<a[^>]*href="(/makers/[^"]+)"[^>]*>([\s\S]{0,120}?)</a>"#)
+                .unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for cap in re_block.captures_iter(html) {
+            let slug = cap[1].trim_start_matches("/makers/").to_string();
+            let name = strip_tags(&cap[2]);
+            if slug.is_empty() || name.is_empty() || !seen.insert(slug.clone()) {
+                continue;
+            }
+            out.push(FollowTargetItem {
+                target_id: slug,
+                display_name: name,
+                work_count: None,
+            });
+        }
+        out
+    }
+
+    /// missav 女优解析:dm 前缀路由 + percent 名字,target_id 存解码名
+    fn parse_missav_actresses(html: &str) -> Vec<FollowTargetItem> {
+        let mut out = Vec::new();
+        // dm{N}/actresses/{percent-name},卡片文本 text-nord13
+        let re_block = regex::Regex::new(
+            r#"<a[^>]*href="[^"]*/actresses/([^"]+)"[^>]*class="text-nord13"[^>]*>([\s\S]{0,120}?)</a>"#,
+        )
+        .unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for cap in re_block.captures_iter(html) {
+            let raw = cap[1].to_string();
+            // target_id 用 percent 解码后的名字(直连 /actresses/{name} 可达)
+            let decoded = percent_decode_simple(&raw);
+            let name = strip_tags(&cap[2]);
+            if decoded.is_empty() || name.is_empty() || !seen.insert(decoded.clone()) {
+                continue;
+            }
+            out.push(FollowTargetItem {
+                target_id: decoded,
+                display_name: name,
+                work_count: None,
+            });
+        }
+        out
+    }
+
     fn parse_missav_search(html: &str) -> Vec<VideoCard> {
         let re_href = Regex::new(r#"href="([^"]+)""#).expect("static regex");
         // 番号形态校验用公共 is_video_code(与兜底扫描同一模式定义)。

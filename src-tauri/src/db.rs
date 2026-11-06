@@ -12,6 +12,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
     let db = Connection::open(path).map_err(|e| e.to_string())?;
     db.execute_batch("PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS followed_authors(author TEXT PRIMARY KEY, followed_at INTEGER NOT NULL, last_checked_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS follow_target(source TEXT NOT NULL, kind TEXT NOT NULL, target_id TEXT NOT NULL, display_name TEXT NOT NULL, followed_at INTEGER NOT NULL, PRIMARY KEY(source, kind, target_id));
       CREATE TABLE IF NOT EXISTS view_history(comic_id TEXT NOT NULL, title TEXT NOT NULL, thumbnail TEXT NOT NULL, category_id INTEGER NOT NULL, author TEXT NOT NULL, viewed_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS tag_blacklist(tag TEXT PRIMARY KEY, mode TEXT NOT NULL, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS bika_account(id INTEGER PRIMARY KEY CHECK(id=1), email TEXT NOT NULL, password TEXT NOT NULL, token TEXT NOT NULL);
@@ -376,4 +377,78 @@ pub fn comic_viewed_ids(
         }
     }
     Ok(out)
+}
+
+// ── follow_target 统一关注表(批次 3 视频关注首个用例;后续跨源扩展) ──
+
+/// 关注目标条目
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowTargetEntry {
+    pub source: String,
+    pub kind: String,
+    pub target_id: String,
+    pub display_name: String,
+    pub followed_at: i64,
+}
+
+/// 关注目标(存在则更新时间)
+pub fn follow_target_add(
+    conn: &Connection,
+    source: &str,
+    kind: &str,
+    target_id: &str,
+    display_name: &str,
+) -> Result<(), String> {
+    let time = now();
+    conn.execute(
+        "INSERT INTO follow_target VALUES(?1,?2,?3,?4,?5)
+         ON CONFLICT(source,kind,target_id) DO UPDATE SET display_name=?4, followed_at=?5",
+        params![source, kind, target_id, display_name, time],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 取消关注目标
+pub fn follow_target_remove(
+    conn: &Connection,
+    source: &str,
+    kind: &str,
+    target_id: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM follow_target WHERE source=?1 AND kind=?2 AND target_id=?3",
+        params![source, kind, target_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 关注目标列表(按关注时间倒序)
+pub fn follow_targets(
+    conn: &Connection,
+    source: &str,
+    kind: &str,
+) -> Result<Vec<FollowTargetEntry>, String> {
+    let mut s = conn
+        .prepare(
+            "SELECT source,kind,target_id,display_name,followed_at FROM follow_target
+             WHERE source=?1 AND kind=?2 ORDER BY followed_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = s
+        .query_map(params![source, kind], |r| {
+            Ok(FollowTargetEntry {
+                source: r.get(0)?,
+                kind: r.get(1)?,
+                target_id: r.get(2)?,
+                display_name: r.get(3)?,
+                followed_at: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
 }
