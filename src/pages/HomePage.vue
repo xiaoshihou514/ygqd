@@ -374,16 +374,7 @@ onUnmounted(() => {
             >
               {{ tab.label }}
             </button>
-          </div>
-          <span class="page-count">共 {{ filteredItems.length }} 部</span>
-          <div class="filter-group">
-            <input
-              v-model.number="minLikes"
-              type="number"
-              class="filter-input"
-              placeholder="最低星标数"
-              min="0"
-            />
+            <span class="tabs-page-count">共 {{ filteredItems.length }} 部</span>
           </div>
         </div>
 
@@ -477,6 +468,14 @@ onUnmounted(() => {
   transition: color 0.18s, background 0.18s, box-shadow 0.18s;
 }
 
+.tabs-page-count {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
 .content-tab.active {
   color: var(--color-text-primary);
   background: var(--color-card-bg);
@@ -558,6 +557,18 @@ onUnmounted(() => {
 .filter-group {
   margin-left: auto;
   flex-shrink: 0;
+}
+
+/* 极窄屏降级:filter-group 完整换行到第二行(不裁切) */
+@media (max-width: 560px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-group {
+    margin-left: 0;
+  }
 }
 
 .filter-input {

@@ -3,6 +3,8 @@ import { errorMessage } from '@/utils/errors'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchVideoList, fetchVideoWatchedIds } from '@/services/api'
+import { formatCount } from '@/utils/formatCount'
+import { parseLikes } from '@/utils/likes'
 import type { VideoCard } from '@/types'
 import ProxyImage from '@/components/ProxyImage.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -139,7 +141,7 @@ onUnmounted(() => {
         >
           <div class="video-thumb-wrap">
             <ProxyImage :src="card.thumbnail" source="video" class="video-thumb" loading="lazy" />
-            <span v-if="card.views" class="video-views">▶ {{ card.views }}</span>
+            <span v-if="card.views" class="video-views">▶ {{ formatCount(parseLikes(card.views)) }}</span>
             <span v-if="watched.has(card.code)" class="video-watched">已看</span>
           </div>
           <div class="video-card-body">

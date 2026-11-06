@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { formatCount } from '@/utils/formatCount'
 import { videoFollow, videoFollowList, videoFollowTargets, videoFollowWorks, videoUnfollow as apiVideoUnfollow, novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
 import type { AuthorFollow, FollowTargetEntry, FollowTargetItem, NovelHit, VideoCard } from '@/types'
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
@@ -663,7 +664,7 @@ onUnmounted(() => {
                 class="target-row"
               >
                 <span class="target-name">{{ t.displayName }}</span>
-                <span v-if="t.workCount" class="target-count">{{ t.workCount }} 部作品</span>
+                <span v-if="t.workCount" class="target-count">{{ formatCount(t.workCount) }} 部作品</span>
                 <button
                   type="button"
                   class="target-follow-btn"
