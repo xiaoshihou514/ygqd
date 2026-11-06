@@ -12,6 +12,7 @@
 use crate::gateway;
 use crate::models::{NovelChapter, NovelPage, NovelSeries};
 use scraper::{Html, Selector};
+use serde::Deserialize;
 use std::time::Duration;
 use tauri::AppHandle;
 
@@ -449,14 +450,14 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
 const SEARCH_URL: &str = "https://hlib.cc/s/search?query=";
 
 pub async fn search_series(app: &AppHandle, keyword: &str) -> Result<Vec<NovelHit>, String> {
-    Ok(search_series_page(app, keyword, 1).await?.hits)
+    Ok(search_series_page(app, keyword, 1, None).await?.hits)
 }
 
 /// 搜索结果的一页。站点按页返回(实测每页 30 条;热门词如 NTR 达 336 页),
 /// 页码选择器 select[onchange*="rp('p'"] 的最大值即总页数
 /// 发现流(最新系列)的一页。站点首页/深页统一 ?p= 页码机制,
 /// 总页数取页码控件(select[onchange*="rp('p'"])的最大值
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Deserialize, Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NovelLatestPage {
     pub hits: Vec<NovelHit>,
@@ -466,7 +467,7 @@ pub struct NovelLatestPage {
 
 /// 搜索结果的一页。站点按页返回(实测每页 30 条;热门词如 NTR 达 336 页),
 /// 页码选择器 select[onchange*="rp('p'"] 的最大值即总页数
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Deserialize, Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NovelSearchPage {
     pub hits: Vec<NovelHit>,
@@ -474,23 +475,35 @@ pub struct NovelSearchPage {
     pub total_pages: i64,
 }
 
-/// 第 page 页的搜索地址(page<=1 为首页,不带 p 参数)
-fn search_url(keyword: &str, page: i64) -> String {
+/// 第 page 页的搜索地址(page<=1 为首页,不带 p 参数;sort 可选排序)
+fn search_url(keyword: &str, page: i64, sort: Option<&str>) -> String {
     let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
+    let sort_seg = valid_sort(sort)
+        .map(|s| format!("&sort={s}"))
+        .unwrap_or_default();
     if page <= 1 {
-        format!("{SEARCH_URL}{encoded}")
+        format!("{SEARCH_URL}{encoded}{sort_seg}")
     } else {
-        format!("{SEARCH_URL}{encoded}&p={page}")
+        format!("{SEARCH_URL}{encoded}&p={page}{sort_seg}")
     }
+}
+
+/// 榜单端点(系列排行榜;/rank/s 需登录,登录后会话 cookie 可用)
+const RANK_URL: &str = "https://hlib.cc/rank/s";
+
+/// 高级搜索的合法排序值(列表页 rp() 脚本四维实锤;非法值忽略)
+fn valid_sort(sort: Option<&str>) -> Option<&str> {
+    sort.filter(|s| matches!(*s, "date" | "total" | "char" | "like"))
 }
 
 pub async fn search_series_page(
     app: &AppHandle,
     keyword: &str,
     page: i64,
+    sort: Option<&str>,
 ) -> Result<NovelSearchPage, String> {
     let page = page.max(1);
-    let html = fetch_html(app, &search_url(keyword, page)).await?;
+    let html = fetch_html(app, &search_url(keyword, page, sort)).await?;
     let hits = extract_series(&html);
     let total_pages = total_pages(&Html::parse_document(&html)).max(page);
     Ok(NovelSearchPage {
@@ -498,6 +511,65 @@ pub async fn search_series_page(
         page,
         total_pages,
     })
+}
+
+/// 作者页作品流:提取 /u/{author} 页面的 /n/ 单篇列表。
+/// 侦察取证(recon_2):作者页 title 含作者名,作品为 /n/ 链接集合,
+/// 无需登录即可访问。
+pub async fn author_page_works(app: &AppHandle, author_id: &str) -> Result<Vec<NovelHit>, String> {
+    let url = format!("https://hlib.cc/u/{author_id}");
+    let html = fetch_html(app, &url).await?;
+    if is_challenge(&html) {
+        return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
+    }
+    let doc = Html::parse_document(&html);
+    // /n/ 链接文本即作品标题;去重保持出现顺序
+    let mut out: Vec<NovelHit> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for a in doc.select(&sel("a[href^='/n/']")) {
+        let href = a.value().attr("href").unwrap_or_default();
+        let id = href
+            .trim_start_matches("/n/")
+            .split('?')
+            .next()
+            .unwrap_or("");
+        if id.is_empty() || !seen.insert(id.to_string()) {
+            continue;
+        }
+        let title = normalize_text(&a.text().collect::<String>());
+        if title.is_empty() {
+            continue;
+        }
+        out.push(NovelHit {
+            id: format!("n_{id}"),
+            title,
+            author: String::new(),
+            tags: Vec::new(),
+            cover: String::new(),
+        });
+    }
+    if out.is_empty() {
+        return Err("作者页未解析到作品链接".into());
+    }
+    Ok(out)
+}
+
+/// 系列排行榜(/rank/s,需登录;未登录返回登录页由调用方引导)。
+/// 排行条目与搜索/列表页同构(/s/ 系列 + 标题),复用 extract_series。
+pub async fn rank_series(app: &AppHandle) -> Result<Vec<NovelHit>, String> {
+    let html = fetch_html(app, RANK_URL).await?;
+    if is_challenge(&html) {
+        return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
+    }
+    if is_login_page(&html) {
+        show_hlib_gateway(app);
+        return Err("hlib 榜单需要登录:已在弹出窗口中打开 hlib,请登录后重试".into());
+    }
+    let hits = extract_series(&html);
+    if hits.is_empty() {
+        return Err("排行榜未解析到系列链接".into());
+    }
+    Ok(hits)
 }
 
 /// 发现:首页提取最新系列(不依赖具体列表结构)
@@ -563,11 +635,35 @@ mod tests {
 
     #[test]
     fn builds_paged_search_url() {
-        assert_eq!(search_url("NTR", 1), "https://hlib.cc/s/search?query=NTR");
-        assert_eq!(search_url("NTR", 0), "https://hlib.cc/s/search?query=NTR");
         assert_eq!(
-            search_url("汉服", 3),
+            search_url("NTR", 1, None),
+            "https://hlib.cc/s/search?query=NTR"
+        );
+        assert_eq!(
+            search_url("NTR", 0, None),
+            "https://hlib.cc/s/search?query=NTR"
+        );
+        assert_eq!(
+            search_url("汉服", 3, None),
             "https://hlib.cc/s/search?query=%E6%B1%89%E6%9C%8D&p=3"
+        );
+    }
+
+    #[test]
+    fn builds_sorted_search_url() {
+        // 合法排序值直通;非法值忽略(列表页 rp() 四维之外不透传)
+        assert_eq!(
+            search_url("NTR", 1, Some("date")),
+            "https://hlib.cc/s/search?query=NTR&sort=date"
+        );
+        assert_eq!(
+            search_url("NTR", 2, Some("like")),
+            "https://hlib.cc/s/search?query=NTR&p=2&sort=like"
+        );
+        assert_eq!(
+            search_url("NTR", 1, Some("bogus")),
+            "https://hlib.cc/s/search?query=NTR",
+            "非法排序值应被忽略"
         );
     }
 

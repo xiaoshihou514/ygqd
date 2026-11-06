@@ -33,6 +33,8 @@ struct AppState {
     cache: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
     /// niacg 搜索全局限速:串行化并保证间隔,避免触发 5 秒限制拿到空结果
     niacg_search_gate: tokio::sync::Mutex<Instant>,
+    /// hlib 抓取全局限速:串行化并保证间隔,对齐站点「连续抓取敏感」
+    hlib_gate: tokio::sync::Mutex<Instant>,
 }
 impl AppState {
     /// 取当前哔咔客户端快照(clone 便宜,reqwest::Client 内部为 Arc)
@@ -72,6 +74,27 @@ impl AppState {
             return None;
         }
         serde_json::from_value(v.clone()).ok()
+    }
+    /// TTL 参数化的缓存读取(批次 2 访问预算:手动刷新数据 30 分钟)
+    fn cached_ttl<T: serde::de::DeserializeOwned>(&self, key: &str, ttl: Duration) -> Option<T> {
+        let cache = self.cache.lock().ok()?;
+        let (at, v) = cache.get(key)?;
+        if at.elapsed() > ttl {
+            return None;
+        }
+        serde_json::from_value(v.clone()).ok()
+    }
+
+    /// hlib 抓取统一闸:串行化并保证间隔(对齐站点反爬敏感度)。
+    /// 与 niacg_search_gate 同架构;锁跨 await 持有(串行化语义)。
+    async fn hlib_throttle(&self) {
+        let mut gate = self.hlib_gate.lock().await;
+        let min = Duration::from_secs(3);
+        let elapsed = gate.elapsed();
+        if elapsed < min {
+            tokio::time::sleep(min - elapsed).await;
+        }
+        *gate = std::time::Instant::now();
     }
     fn put<T: serde::Serialize>(&self, key: String, value: &T) {
         if let Ok(v) = serde_json::to_value(value) {
@@ -220,6 +243,85 @@ async fn novel_series_info(app: AppHandle, id: String) -> Result<NovelSeries, St
     sources::novel::fetch_series(&app, &id).await
 }
 
+/// 推荐流:hlib 首页聚合(最新+推荐位混合,进入即看到内容)
+#[tauri::command]
+async fn novel_recommend(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    page: Option<i64>,
+) -> Result<sources::novel::NovelLatestPage, String> {
+    state.hlib_throttle().await;
+    let key = format!("novel_recommend_p{}", page.unwrap_or(1));
+    // 访问预算:手动刷新数据缓存 30 分钟(批次 2 默认)
+    if let Some(hit) =
+        state.cached_ttl::<sources::novel::NovelLatestPage>(&key, Duration::from_secs(1800))
+    {
+        return Ok(hit);
+    }
+    let res = sources::novel::latest_series(&app, page.unwrap_or(1)).await;
+    if let Ok(page_data) = &res {
+        state.put(key, page_data);
+    }
+    res
+}
+
+/// 系列排行榜(日/周/月;/rank/s 需登录,登录后网关会话可用)
+#[tauri::command]
+async fn novel_ranking(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    period: Option<String>,
+    page: Option<i64>,
+) -> Result<sources::novel::NovelLatestPage, String> {
+    state.hlib_throttle().await;
+    let period = period.unwrap_or_else(|| "day".into());
+    let key = format!("novel_ranking_{}_p{}", period, page.unwrap_or(1));
+    if let Some(hit) =
+        state.cached_ttl::<sources::novel::NovelLatestPage>(&key, Duration::from_secs(1800))
+    {
+        return Ok(hit);
+    }
+    // 排行条目与列表页同构,复用 extract_series;period 的端点参数
+    // 形态待登录后取证,首版抓基础榜单(单页)
+    let _ = &period;
+    let hits = sources::novel::rank_series(&app).await?;
+    let page_data = sources::novel::NovelLatestPage {
+        hits,
+        page: page.unwrap_or(1),
+        total_pages: 1,
+    };
+    state.put(key, &page_data);
+    Ok(page_data)
+}
+
+/// 关注作者的作品流:/u/{author_id} 页面的 /n/ 单篇列表
+#[tauri::command]
+async fn novel_followed_author_works(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    author_id: String,
+) -> Result<Vec<sources::novel::NovelHit>, String> {
+    state.hlib_throttle().await;
+    let key = format!("novel_author_works_{author_id}");
+    if let Some(hit) =
+        state.cached_ttl::<Vec<sources::novel::NovelHit>>(&key, Duration::from_secs(1800))
+    {
+        return Ok(hit);
+    }
+    let res = sources::novel::author_page_works(&app, &author_id).await;
+    if let Ok(works) = &res {
+        state.put(key, works);
+    }
+    res
+}
+
+/// 关注作者列表(复用漫画源 followed_authors 表;authorId 以作者名充当)
+#[tauri::command]
+fn novel_followed_authors(state: State<'_, AppState>) -> Result<Vec<FollowedAuthor>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::follows(&conn)
+}
+
 /// 添加小说系列到书架:输入 hlib 系列链接或纯 ID。
 /// 首次会弹出网关窗口,需用户完成一次登录/安全验证。
 #[tauri::command]
@@ -254,8 +356,9 @@ async fn novel_search_page(
     app: AppHandle,
     keyword: String,
     page: Option<i64>,
+    sort: Option<String>,
 ) -> Result<sources::novel::NovelSearchPage, String> {
-    sources::novel::search_series_page(&app, &keyword, page.unwrap_or(1)).await
+    sources::novel::search_series_page(&app, &keyword, page.unwrap_or(1), sort.as_deref()).await
 }
 
 #[tauri::command]
@@ -1045,6 +1148,7 @@ pub fn run() {
                 db: Mutex::new(conn),
                 cache: Mutex::new(HashMap::new()),
                 niacg_search_gate: tokio::sync::Mutex::new(Instant::now() - Duration::from_secs(3600)),
+            hlib_gate: tokio::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(10)),
             });
             Ok(())
         })
@@ -1062,6 +1166,10 @@ pub fn run() {
             diag_read,
             diag_clear,
             gateway_result,
+            novel_recommend,
+            novel_ranking,
+            novel_followed_author_works,
+            novel_followed_authors,
             novel_series_info,
             novel_add,
             novel_search,
