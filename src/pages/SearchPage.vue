@@ -658,7 +658,105 @@ function goToSplit() {
   </div>
 </template>
 
+<style scoped>
+.search-page .container {
+  max-width: none;
+  padding: 0 var(--spacing-md);
+}
 
+.search-page {
+  padding-bottom: var(--spacing-xl);
+}
+
+.search-intro {
+  padding-top: var(--spacing-xl);
+}
+
+.search-loading {
+  padding-top: var(--spacing-xl);
+}
+
+.search-error {
+  padding-top: var(--spacing-xl);
+}
+
+.search-result-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--color-hairline);
+  flex-wrap: wrap;
+}
+
+.result-title {
+  font-size: var(--font-size-tagline);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.231px;
+}
+
+.split-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacing-xs) var(--spacing-md);
+  margin-left: auto;
+  color: var(--color-primary);
+  font-size: var(--font-size-fine-print);
+  font-weight: var(--font-weight-semibold);
+  background: transparent;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.split-btn:hover {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+@media (max-width: 480px) {
+  .search-result-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xs);
+  }
+
+  .split-btn {
+    margin-left: 0;
+    margin-top: var(--spacing-xs);
+  }
+}
+
+.scroll-sentinel {
+  height: 1px;
+}
+
+.loading-more {
+  padding: var(--spacing-lg) 0;
+}
+
+.search-error-bar {
+  text-align: center;
+  padding: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  font-size: var(--font-size-caption);
+  color: var(--color-primary);
+  background: var(--color-canvas-parchment);
+  border-radius: var(--radius-sm);
+}
+
+.no-more {
+  text-align: center;
+  padding: var(--spacing-lg) 0;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-muted);
+}
 /* ============ 统一搜索范围(批次 1):chips/表单/结果行/加载更多 ============ */
 .scope-bar {
   display: flex;
@@ -810,103 +908,4 @@ function goToSplit() {
   cursor: default;
 }
 
-.scope-bar {
-.search-page .container {
-  max-width: none;
-  padding: 0 var(--spacing-md);
-}
-
-.search-page {
-  padding-bottom: var(--spacing-xl);
-}
-
-.search-intro {
-  padding-top: var(--spacing-xl);
-}
-
-.search-loading {
-  padding-top: var(--spacing-xl);
-}
-
-.search-error {
-  padding-top: var(--spacing-xl);
-}
-
-.search-result-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
-  padding-bottom: var(--spacing-sm);
-  border-bottom: 1px solid var(--color-hairline);
-  flex-wrap: wrap;
-}
-
-.result-title {
-  font-size: var(--font-size-tagline);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  letter-spacing: -0.231px;
-}
-
-.split-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: var(--spacing-xs) var(--spacing-md);
-  margin-left: auto;
-  color: var(--color-primary);
-  font-size: var(--font-size-fine-print);
-  font-weight: var(--font-weight-semibold);
-  background: transparent;
-  border: 1px solid var(--color-primary);
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-  transition: all 0.2s;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.split-btn:hover {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-}
-
-@media (max-width: 480px) {
-  .search-result-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--spacing-xs);
-  }
-
-  .split-btn {
-    margin-left: 0;
-    margin-top: var(--spacing-xs);
-  }
-}
-
-.scroll-sentinel {
-  height: 1px;
-}
-
-.loading-more {
-  padding: var(--spacing-lg) 0;
-}
-
-.search-error-bar {
-  text-align: center;
-  padding: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
-  font-size: var(--font-size-caption);
-  color: var(--color-primary);
-  background: var(--color-canvas-parchment);
-  border-radius: var(--radius-sm);
-}
-
-.no-more {
-  text-align: center;
-  padding: var(--spacing-lg) 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-text-muted);
-}
 </style>
