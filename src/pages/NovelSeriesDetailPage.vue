@@ -2,9 +2,8 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { gatewayOpen, novelAdd, novelProgress, novelRemove, novelSeriesInfo, novelShelf } from '@/services/api'
+import { gatewayOpen, novelAdd, novelFollowedAuthors, novelFollowAuthor, novelProgress, novelRemove, novelSeriesInfo, novelShelf } from '@/services/api'
 import type { NovelSeries } from '@/types'
-import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -14,12 +13,19 @@ const router = useRouter()
 const series = ref<NovelSeries | null>(null)
 const progress = ref<[number, number] | null>(null)
 // 收藏 = 关注作者(复用关注机制),数据写接口已就绪;移除保留(novelRemove 真实数据操作)
-const { followed: followedAuthors, load: loadFollowedAuthors, follow: followAuthorApi, isFollowing: isFollowingAuthor } = useFollowedAuthors()
 const authorFollowed = computed(() =>
-  series.value?.author ? isFollowingAuthor(series.value.author) : false,
+  !!series.value?.author && novelFollowedIds.value.has(series.value.author),
 )
 const inShelf = ref(false)
 const addingShelf = ref(false)
+// 收藏 = 关注作者(小说独立关注链 novel_follow_author;批次 2 关注 tab 数据源)
+const novelFollowedIds = ref<Set<string>>(new Set())
+
+async function loadNovelFollows() {
+  try {
+    novelFollowedIds.value = new Set((await novelFollowedAuthors()).map((f) => f.authorId))
+  } catch { /* 关注列表拉取失败忽略 */ }
+}
 const loading = ref(true)
 const error = ref('')
 const introExpanded = ref(false)
@@ -74,7 +80,7 @@ async function followNovelAuthor() {
   const a = series.value?.author
   if (!a || authorFollowed.value) return
   try {
-    await followAuthorApi(a)
+    await novelFollowAuthor(a, a)
   } catch (e) {
     error.value = errorMessage(e) || '关注失败,请重试'
   }
@@ -114,7 +120,7 @@ function openHlib() {
 }
 
 onMounted(() => {
-  void loadFollowedAuthors()
+  void loadNovelFollows()
   void load()
 })
 </script>

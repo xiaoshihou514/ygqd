@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BikaRankTT, SourceId } from '@/config/sources'
-import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowedAuthor, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
+import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowedAuthor, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
@@ -39,8 +39,23 @@ export const fetchVideoDetail = (code: string) => invoke<VideoDetail>('fetch_vid
 export const novelAdd = (input: string) => invoke<NovelSeries>('novel_add', { input })
 export const novelSeriesInfo = (id: string) => invoke<NovelSeries>('novel_series_info', { id })
 export const novelSearch = (keyword: string) => invoke<NovelHit[]>('novel_search', { keyword })
-export const novelSearchPage = (keyword: string, page: number) =>
-  invoke<NovelSearchPage>('novel_search_page', { keyword, page })
+export const novelSearchPage = (
+  keyword: string,
+  page: number,
+  sort?: 'date' | 'total' | 'char' | 'like',
+) => invoke<NovelSearchPage>('novel_search_page', { keyword, page, sort })
+export const novelRecommend = (page?: number) =>
+  invoke<NovelLatestPage>('novel_recommend', { page })
+export const novelRanking = (period: 'day' | 'week' | 'month', page?: number) =>
+  invoke<NovelLatestPage>('novel_rank', { period, page })
+export const novelFollowAuthor = (authorId: string, authorName: string) =>
+  invoke<void>('novel_follow_author', { authorId, authorName })
+export const novelUnfollowAuthor = (authorId: string) =>
+  invoke<void>('novel_unfollow_author', { authorId })
+export const novelFollowedAuthors = () =>
+  invoke<AuthorFollow[]>('novel_followed_authors')
+export const novelFollowedAuthorWorks = (authorId: string) =>
+  invoke<NovelHit[]>('novel_followed_author_works', { authorId })
 export const novelLatest = (page?: number) =>
   invoke<NovelLatestPage>('novel_latest', { page })
 export const novelShelf = () => invoke<NovelSeries[]>('novel_shelf')

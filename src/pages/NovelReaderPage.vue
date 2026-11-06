@@ -2,9 +2,8 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
+import { novelFollowedAuthors, novelFollowAuthor, novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
 import type { NovelPage, NovelSeries } from '@/types'
-import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -13,11 +12,18 @@ const router = useRouter()
 
 const series = ref<NovelSeries | null>(null)
 // 收藏 = 关注作者(复用关注机制,followed_authors 表;数据写接口已就绪)
-const { followed: followedAuthors, load: loadFollowedAuthors, follow: followAuthorApi, isFollowing: isFollowingAuthor } = useFollowedAuthors()
 const authorFollowed = computed(() =>
-  series.value?.author ? isFollowingAuthor(series.value.author) : false,
+  !!series.value?.author && novelFollowedIds.value.has(series.value.author),
 )
 const inShelf = ref(false)
+// 收藏 = 关注作者(小说独立关注链 novel_follow_author;批次 2 关注 tab 数据源)
+const novelFollowedIds = ref<Set<string>>(new Set())
+
+async function loadNovelFollows() {
+  try {
+    novelFollowedIds.value = new Set((await novelFollowedAuthors()).map((f) => f.authorId))
+  } catch { /* 关注列表拉取失败忽略 */ }
+}
 const page = ref<NovelPage | null>(null)
 const chapterIndex = ref(0)
 const articlePage = ref(1)
@@ -155,9 +161,9 @@ function goChapter(index: number) {
 /** 阅读中关注作者:复用关注机制(关注后「关注」tab 可跟踪新作品) */
 async function followNovelAuthor() {
   const a = series.value?.author
-  if (!a || isFollowingAuthor(a)) return
+  if (!a || novelFollowedIds.value.has(a)) return
   try {
-    await followAuthorApi(a)
+    await novelFollowAuthor(a, a)
   } catch (e) {
     error.value = errorMessage(e) || '关注失败,请重试'
   }
@@ -183,7 +189,7 @@ function jumpToProgress() {
 
 onMounted(async () => {
   loadSettings()
-  void loadFollowedAuthors()
+  void loadNovelFollows()
   const id = String(route.params.id || '')
   try {
     // 数据源两级:书架内系列走本地;未入库(详情页/搜索直进)走

@@ -197,6 +197,12 @@ export interface NovelSearchPage {
   totalPages: number
 }
 
+/** 小说关注作者(后端 novel_followed_authors 返回;authorId 以作者名充当标识) */
+export interface AuthorFollow {
+  authorId: string
+  authorName: string
+}
+
 /** 发现流最新系列的一页(首页第 1 页不带参数,深页走 ?p=;空页后端抛错终止) */
 export interface NovelLatestPage {
   hits: NovelHit[]

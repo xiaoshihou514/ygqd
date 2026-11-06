@@ -6,6 +6,7 @@ import { novelAdd, novelSearchPage, novelLatest } from '@/services/api'
 import type { NovelHit } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { createSearchHistory } from '@/composables/useSearchHistory'
+import { novelRanking, novelRecommend } from '@/services/api'
 
 const router = useRouter()
 const hits = ref<NovelHit[]>([])
@@ -27,6 +28,52 @@ const loadingLatest = ref(false)
 const latestPage = ref(0)
 // 发现流无总页数:hits 非空即继续,空页终止
 const hasMoreLatest = ref(false)
+
+// ============ 日榜/月榜独立状态(批次 2 骨架,mock 数据) ============
+interface NovelRankState {
+  items: NovelHit[]
+  page: number
+  hasNext: boolean // 上次非空即继续(发现流口径,空页终止)
+  updatedAt: number // 数据时间(swr 提示)
+  fetchedAt: number // 上次实际抓取(10 秒预算守卫)
+  loaded: boolean
+  refreshing: boolean
+}
+const emptyRankState = (): NovelRankState => ({
+  items: [],
+  page: 1,
+  hasNext: true,
+  updatedAt: 0,
+  fetchedAt: 0,
+  loaded: false,
+  refreshing: false,
+})
+const rankStates = ref<Record<'daily' | 'monthly', NovelRankState>>({
+  daily: emptyRankState(),
+  monthly: emptyRankState(),
+})
+// 倒计时响应式 tick(每秒刷新,驱动刷新按钮的禁用倒计时)
+const nowTick = ref(Date.now())
+let rankTickTimer: ReturnType<typeof setInterval> | undefined
+
+function rankCooldownSeconds(tab: 'daily' | 'monthly'): number {
+  const left = 10000 - (nowTick.value - rankStates.value[tab].fetchedAt)
+  return Math.max(0, Math.ceil(left / 1000))
+}
+
+function recommendCooldownSeconds(): number {
+  // 推荐即最新流:与搜索/榜单共用 hlib 闸(lastHlibFetchAt)
+  const left = 10000 - (nowTick.value - lastHlibFetchAt)
+  return Math.max(0, Math.ceil(left / 1000))
+}
+
+function formatUpdatedAt(ts: number): string {
+  if (!ts) return '尚未加载'
+  const d = new Date(ts)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `数据更新于 ${hh}:${mm}`
+}
 
 // 板块 tab:推荐(最新流,批次 1)/日榜/月榜(批次 2 数据端点,先上骨架)
 type NovelTab = 'recommend' | 'daily' | 'monthly'
@@ -56,6 +103,28 @@ async function guardHlibInterval() {
   lastHlibFetchAt = Date.now()
 }
 
+/** 榜单加载(mock 数据;批次 2 真端点就绪后替换为 invoke 转发) */
+async function loadRank(tab: 'daily' | 'monthly', page: number) {
+  const st = rankStates.value[tab]
+  if (st.refreshing) return
+  st.refreshing = true
+  try {
+    await guardHlibInterval()
+    const res = await novelRanking(tab === 'daily' ? 'day' : 'month', page)
+    if (page === 1) st.items = res.hits
+    else appendHits(res.hits)
+    st.page = res.page
+    st.hasNext = res.hits.length > 0
+    st.updatedAt = Date.now()
+    st.fetchedAt = Date.now()
+    st.loaded = true
+  } catch (e) {
+    searchError.value = errorMessage(e) || '榜单加载失败'
+  } finally {
+    st.refreshing = false
+  }
+}
+
 const hasMoreNext = computed(() =>
   discoverMode.value === 'search' ? hasMoreHits.value : hasMoreLatest.value,
 )
@@ -71,7 +140,7 @@ async function loadLatestFirst() {
   loadingLatest.value = true
   try {
     await guardHlibInterval()
-    const res = await novelLatest(1)
+    const res = await novelRecommend(1)
     hits.value = res.hits
     latestPage.value = res.page
     hasMoreLatest.value = res.page < res.totalPages
@@ -123,7 +192,7 @@ async function loadMore() {
       searchPage.value = res.page
       searchTotalPages.value = res.totalPages
     } else {
-      const res = await novelLatest(latestPage.value + 1)
+      const res = await novelRecommend(latestPage.value + 1)
       appendHits(res.hits)
       latestPage.value = res.page
       hasMoreLatest.value = res.page < res.totalPages
@@ -205,6 +274,10 @@ async function addHit(hit: NovelHit) {
 onMounted(() => {
   // 打开即内容流
   void loadLatestFirst()
+  // 倒计时 tick(每秒刷新 nowTick,驱动刷新按钮禁用态)
+  rankTickTimer = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 1000)
 })
 </script>
 
