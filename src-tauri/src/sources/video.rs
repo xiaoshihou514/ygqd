@@ -296,7 +296,11 @@ impl VideoApi {
         let url = if path.starts_with("http") {
             path.to_string()
         } else {
-            format!("{BASE}{path}")
+            // 标题统一日语(问题 7 用户要求):fs1 支持 ?lang=jp 返回
+            // 日语原始标题(取证:?lang=jp 时 og:title 由繁中翻译变为
+            // 日语原文);列表与详情全站统一
+            let joiner = if path.contains('?') { '&' } else { '?' };
+            format!("{BASE}{path}{joiner}lang=jp")
         };
         self.client
             .get(url)
@@ -858,11 +862,33 @@ impl VideoApi {
                 Ok((m3u8, chinese)) => {
                     // missav 兜底:详情页 HTML 统一解析完整元数据
                     // (问题 6 修复:title/tags 不再留空)
-                    let (title, tags, studio, actors) = self
+                    let (mut title, tags, studio, actors) = self
                         .missav_get(&format!("/{code}"))
                         .await
                         .map(|html| Self::parse_missav_meta(&html))
                         .unwrap_or((None, Vec::new(), None, Vec::new()));
+                    // 标题统一日语(问题 7):missav 无日语参数(lang=ja
+                    // 无效),用 fs1 ?lang=jp 的 og:title 反查;fs1 无此
+                    // 番号时回退 missav 繁中标题
+                    if let Ok(fs1_html) = self
+                        .client
+                        .get(&format!("{BASE}/videos/{code}/?lang=jp"))
+                        .send()
+                        .await
+                    {
+                        if let Ok(html) = fs1_html.text().await {
+                            if let Some(jp) =
+                                regex::Regex::new(r#"<meta property="og:title" content="([^"]*)""#)
+                                    .unwrap()
+                                    .captures(&html)
+                            {
+                                let t = jp[1].trim();
+                                if !t.is_empty() {
+                                    title = Some(t.to_string());
+                                }
+                            }
+                        }
+                    }
                     Ok(VideoDetail {
                         code: code.to_lowercase(),
                         title: title.unwrap_or_else(|| code.to_uppercase()),
