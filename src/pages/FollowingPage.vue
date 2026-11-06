@@ -20,11 +20,19 @@ const tabs = [
   { key: 'authors', label: '作者' },
   { key: 'works', label: '作品' },
   { key: 'favorites', label: '收藏' },
+  { key: 'videos', label: '视频' },
+  { key: 'novel-authors', label: '小说作者' },
 ] as const
 type FollowingTab = (typeof tabs)[number]['key']
 
 const activeTab = ref<FollowingTab>('authors')
-const tabScroll: Record<FollowingTab, number> = { authors: 0, works: 0, favorites: 0 }
+const tabScroll: Record<FollowingTab, number> = {
+  authors: 0,
+  works: 0,
+  favorites: 0,
+  videos: 0,
+  'novel-authors': 0,
+}
 
 const favorites = ref<FavoriteEntry[]>([])
 const favLoading = ref(false)
@@ -440,6 +448,18 @@ onUnmounted(() => {
           </div>
         </template>
 
+        <template v-else-if="activeTab === 'videos'">
+          <EmptyState
+            title="视频关注即将上线"
+            message="关注厂商与女优的功能正在建设中,上线后可在这里跟踪她们的新作品"
+          />
+        </template>
+        <template v-else-if="activeTab === 'novel-authors'">
+          <EmptyState
+            title="小说作者关注即将上线"
+            message="关注小说作者的功能正在建设中,上线后可在这里跟踪他们的新作品"
+          />
+        </template>
         <template v-else-if="activeTab === 'works'">
           <EmptyState
             v-if="!followed.length"

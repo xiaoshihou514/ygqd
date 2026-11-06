@@ -2,8 +2,8 @@
 import { errorMessage } from '@/utils/errors'
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { searchComics } from '@/services/api'
-import type { ComicItem, SearchParams, SearchResult } from '@/types'
+import { novelAdd, novelSearchPage, searchComics, searchVideos } from '@/services/api'
+import type { ComicItem, NovelHit, SearchParams, SearchResult, VideoCard } from '@/types'
 import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
@@ -293,6 +293,115 @@ function clearSavedState() {
   }
 }
 
+// ============ 统一搜索:范围 chips(漫画默认=现有流程;视频/小说=并入) ============
+type SearchScope2 = 'comic' | 'video' | 'novel'
+const scope = ref<SearchScope2>('comic')
+const SCOPES: Array<{ key: SearchScope2; label: string }> = [
+  { key: 'comic', label: '漫画' },
+  { key: 'video', label: '视频' },
+  { key: 'novel', label: '小说' },
+]
+
+// —— 视频范围 ——
+const videoKeyword = ref('')
+const videoItems = ref<VideoCard[]>([])
+const videoPage = ref(1)
+const videoHasNext = ref(false)
+const videoSearching = ref(false)
+const videoError = ref('')
+
+/** 视频行标题:剥中字后缀大写(与视频板块展示一致) */
+function basicVideoTitle(code: string): string {
+  return code.replace('-chinese-subtitle', '').toUpperCase()
+}
+
+async function loadMoreVideos() {
+  if (videoSearching.value || !videoHasNext.value) return
+  videoSearching.value = true
+  videoError.value = ''
+  try {
+    const res = await searchVideos(videoKeyword.value.trim(), videoPage.value + 1)
+    const seen = new Set(videoItems.value.map((v) => v.code))
+    videoItems.value.push(...res.items.filter((v) => !seen.has(v.code)))
+    videoPage.value += 1
+    videoHasNext.value = res.pagination.hasNext
+  } catch (e) {
+    videoError.value = errorMessage(e) || '加载更多失败'
+  } finally {
+    videoSearching.value = false
+  }
+}
+
+async function handleVideoSearch() {
+  const kw = videoKeyword.value.trim()
+  if (!kw || videoSearching.value) return
+  videoSearching.value = true
+  videoError.value = ''
+  try {
+    const res = await searchVideos(kw, 1)
+    videoItems.value = res.items
+    videoPage.value = 1
+    videoHasNext.value = res.pagination.hasNext
+    if (!res.items.length) videoError.value = '没有匹配的视频'
+  } catch (e) {
+    videoError.value = errorMessage(e) || '搜索失败'
+  } finally {
+    videoSearching.value = false
+  }
+}
+
+// —— 小说范围(3 秒限速:同站点反爬闸) ——
+const novelKeyword = ref('')
+const novelHits = ref<NovelHit[]>([])
+const novelPageNo = ref(1)
+const novelTotalPages = ref(1)
+const novelLoadingMore = ref(false)
+const novelError = ref('')
+let lastNovelFetchAt = 0
+const NOVEL_MIN_INTERVAL = 3000
+
+async function handleNovelSearch() {
+  const kw = novelKeyword.value.trim()
+  if (!kw || novelLoadingMore.value) return
+  novelError.value = ''
+  try {
+    const elapsed = Date.now() - lastNovelFetchAt
+    if (elapsed < NOVEL_MIN_INTERVAL) {
+      await new Promise((resolve) => setTimeout(resolve, NOVEL_MIN_INTERVAL - elapsed))
+    }
+    lastNovelFetchAt = Date.now()
+    const res = await novelSearchPage(kw, 1)
+    novelHits.value = res.hits
+    novelPageNo.value = res.page
+    novelTotalPages.value = res.totalPages
+    if (!res.hits.length) novelError.value = '没有匹配的系列'
+  } catch (e) {
+    novelError.value = errorMessage(e) || '搜索失败'
+  }
+}
+
+async function loadMoreNovels() {
+  if (novelLoadingMore.value || novelPageNo.value >= novelTotalPages.value) return
+  novelLoadingMore.value = true
+  novelError.value = ''
+  try {
+    const elapsed = Date.now() - lastNovelFetchAt
+    if (elapsed < NOVEL_MIN_INTERVAL) {
+      await new Promise((resolve) => setTimeout(resolve, NOVEL_MIN_INTERVAL - elapsed))
+    }
+    lastNovelFetchAt = Date.now()
+    const res = await novelSearchPage(novelKeyword.value.trim(), novelPageNo.value + 1)
+    const seen = new Set(novelHits.value.map((h) => h.id))
+    novelHits.value.push(...res.hits.filter((h) => !seen.has(h.id)))
+    novelPageNo.value = res.page
+    novelTotalPages.value = res.totalPages
+  } catch (e) {
+    novelError.value = errorMessage(e) || '加载更多失败'
+  } finally {
+    novelLoadingMore.value = false
+  }
+}
+
 async function handleSearch(params: SearchParams, likesFilter: number, order: string) {
   addHistory(params.keyword)
   loading.value = true
@@ -402,7 +511,100 @@ function goToSplit() {
 <template>
   <div class="search-page">
     <div class="container">
-      <SearchForm @search="handleSearch" />
+        <div class="scope-bar" role="tablist" aria-label="搜索范围">
+        <button
+          v-for="s in SCOPES"
+          :key="s.key"
+          type="button"
+          class="scope-btn"
+          :class="{ active: scope === s.key }"
+          role="tab"
+          :aria-selected="scope === s.key"
+          @click="scope = s.key"
+        >
+          {{ s.label }}
+        </button>
+      </div>
+
+      <template v-if="scope === 'comic'">
+        <SearchForm @search="handleSearch" />
+      </template>
+
+      <template v-else-if="scope === 'video'">
+        <form class="scope-search" @submit.prevent="handleVideoSearch">
+          <div class="scope-search-wrap">
+            <input
+              v-model="videoKeyword"
+              type="search"
+              class="scope-input"
+              placeholder="搜索视频(番号/标题/厂商)…"
+              autocomplete="off"
+            >
+          </div>
+          <button type="submit" class="scope-btn-submit" :disabled="videoSearching">
+            {{ videoSearching ? '搜索中…' : '搜索' }}
+          </button>
+        </form>
+        <p v-if="videoError" class="scope-error">{{ videoError }}</p>
+        <div v-if="videoItems.length" class="scope-rows">
+          <button
+            v-for="v in videoItems"
+            :key="v.code"
+            type="button"
+            class="scope-row"
+            @click="router.push(`/videos/${v.code}`)"
+          >
+            <span class="scope-row-main">
+              <span class="scope-row-title">{{ basicVideoTitle(v.code) }}</span>
+              <span v-if="v.chinese" class="scope-row-badge">中字</span>
+            </span>
+            <span class="scope-row-sub">{{ v.title || basicVideoTitle(v.code) }}</span>
+          </button>
+        </div>
+        <div v-if="videoHasNext && videoItems.length" class="scope-more-row">
+          <button type="button" class="scope-more-btn" :disabled="videoSearching || !videoHasNext" @click="loadMoreVideos">
+            {{ videoSearching ? '加载中…' : '加载更多' }}
+          </button>
+        </div>
+      </template>
+
+      <template v-else-if="scope === 'novel'">
+        <form class="scope-search" @submit.prevent="handleNovelSearch">
+          <div class="scope-search-wrap">
+            <input
+              v-model="novelKeyword"
+              type="search"
+              class="scope-input"
+              placeholder="搜索小说(书名/作者)…"
+              autocomplete="off"
+            >
+          </div>
+          <button type="submit" class="scope-btn-submit" :disabled="novelLoadingMore">
+            {{ novelLoadingMore ? '搜索中…' : '搜索' }}
+          </button>
+        </form>
+        <p v-if="novelError" class="scope-error">{{ novelError }}</p>
+        <div v-if="novelHits.length" class="scope-rows">
+          <button
+            v-for="h in novelHits"
+            :key="h.id"
+            type="button"
+            class="scope-row"
+            @click="router.push(`/novels/series/${h.id}`)"
+          >
+            <span class="scope-row-main">
+              <span class="scope-row-title">{{ h.title }}</span>
+              <span v-for="tag in (h.tags ?? []).slice(0, 2)" :key="tag" class="scope-row-badge">{{ tag }}</span>
+            </span>
+            <span class="scope-row-sub">{{ h.author || '未知作者' }}</span>
+          </button>
+        </div>
+        <div v-if="novelPageNo < novelTotalPages && novelHits.length" class="scope-more-row">
+          <button type="button" class="scope-more-btn" :disabled="novelLoadingMore" @click="loadMoreNovels">
+            {{ novelLoadingMore ? `加载中…(站点限速约 3 秒/次)` : `加载更多(第 ${novelPageNo + 1}/${novelTotalPages} 页)` }}
+          </button>
+        </div>
+      </template>
 
       <div v-if="!hasSearched" class="search-intro">
         <EmptyState

@@ -2,18 +2,12 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { novelAdd, novelShelf, novelSearchPage, novelLatest } from '@/services/api'
+import { novelAdd, novelSearchPage, novelLatest } from '@/services/api'
 import type { NovelHit } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { createSearchHistory } from '@/composables/useSearchHistory'
 
 const router = useRouter()
-// 书架数量角标(书架降级为二级入口,数量从本地库轻量拉取)
-const shelfCount = ref(0)
-const adding = ref(false)
-const addError = ref('')
-const addHint = ref('')
-const input = ref('')
 const hits = ref<NovelHit[]>([])
 const searchKeyword = ref('')
 const searching = ref(false)
@@ -33,6 +27,15 @@ const loadingLatest = ref(false)
 const latestPage = ref(0)
 // 发现流无总页数:hits 非空即继续,空页终止
 const hasMoreLatest = ref(false)
+
+// 板块 tab:推荐(最新流,批次 1)/日榜/月榜(批次 2 数据端点,先上骨架)
+type NovelTab = 'recommend' | 'daily' | 'monthly'
+const novelTab = ref<NovelTab>('recommend')
+const NOVEL_TABS: Array<{ key: NovelTab; label: string }> = [
+  { key: 'recommend', label: '推荐' },
+  { key: 'daily', label: '日榜' },
+  { key: 'monthly', label: '月榜' },
+]
 
 // 搜索历史:独立 key(书名/作者与番号语义不同)
 const novelHistory = createSearchHistory('niacg-novel-search-history')
@@ -61,13 +64,6 @@ const moreLabel = computed(() =>
     ? `加载更多(第 ${searchPage.value + 1}/${searchTotalPages.value} 页)`
     : '加载更多',
 )
-
-/** 书架数量角标:novelShelf 走本地库,轻量查询 */
-async function refreshShelfCount() {
-  try {
-    shelfCount.value = (await novelShelf()).length
-  } catch { /* 角标失败忽略 */ }
-}
 
 async function loadLatestFirst() {
   discoverMode.value = 'latest'
@@ -199,7 +195,6 @@ async function addHit(hit: NovelHit) {
   addingHitId.value = hit.id
   try {
     await novelAdd(hit.id)
-    await refreshShelfCount()
   } catch (e) {
     searchError.value = errorMessage(e) || '添加失败'
   } finally {
@@ -207,29 +202,9 @@ async function addHit(hit: NovelHit) {
   }
 }
 
-async function handleAdd() {
-  const value = input.value.trim()
-  if (!value || adding.value) return
-  adding.value = true
-  addError.value = ''
-  addHint.value = '正在通过网关抓取系列目录…若首次使用会弹出窗口,请完成登录与安全验证'
-  try {
-    await novelAdd(value)
-    input.value = ''
-    addHint.value = '已加入书架'
-    await refreshShelfCount()
-  } catch (e) {
-    addError.value = errorMessage(e) || '添加失败'
-  } finally {
-    adding.value = false
-    setTimeout(() => { addHint.value = '' }, 3000)
-  }
-}
-
 onMounted(() => {
-  // 打开即内容流;书架数量角标后台补(本地库轻量查询)
+  // 打开即内容流
   void loadLatestFirst()
-  void refreshShelfCount()
 })
 </script>
 
@@ -238,20 +213,28 @@ onMounted(() => {
     <div class="container">
       <div class="page-heading">
         <h2 class="page-title">小说</h2>
+      </div>
+
+      <div class="segment-bar" role="tablist" aria-label="小说内容">
         <button
-          class="shelf-entry"
-          title="书架"
-          aria-label="打开书架"
-          @click="router.push('/novels/shelf')"
+          v-for="t in NOVEL_TABS"
+          :key="t.key"
+          type="button"
+          class="segment-btn"
+          :class="{ active: novelTab === t.key }"
+          role="tab"
+          :aria-selected="novelTab === t.key"
+          @click="novelTab = t.key"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-          </svg>
-          <span v-if="shelfCount" class="shelf-count">{{ shelfCount }}</span>
+          {{ t.label }}
         </button>
       </div>
 
+      <div v-if="novelTab !== 'recommend'" class="tab-placeholder">
+        {{ novelTab === 'daily' ? '日榜即将上线' : '月榜即将上线' }}
+      </div>
+
+      <template v-else>
         <form class="add-bar" @submit.prevent="handleSearch">
           <div class="search-wrap">
             <input
@@ -350,21 +333,7 @@ onMounted(() => {
         <div v-else-if="hits.length && !hasMoreNext" class="hit-end">
           已展示全部
         </div>
-
-        <form class="add-bar paste-bar" @submit.prevent="handleAdd">
-          <input
-            v-model="input"
-            type="text"
-            class="add-input"
-            placeholder="高级:粘贴 hlib 系列链接(/s/xxx)或系列 ID"
-            autocomplete="off"
-          >
-          <button type="submit" class="add-btn" :disabled="adding">
-            {{ adding ? '添加中…' : '添加' }}
-          </button>
-        </form>
-        <p v-if="addHint" class="add-hint">{{ addHint }}</p>
-        <p v-if="addError" class="add-error">{{ addError }}</p>
+      </template>
     </div>
   </div>
 </template>
@@ -504,8 +473,13 @@ onMounted(() => {
   color: var(--color-text-primary);
 }
 
-.paste-bar {
-  margin-top: var(--spacing-lg);
+.tab-placeholder {
+  padding: var(--spacing-xl) var(--spacing-md);
+  text-align: center;
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+  border: 1px dashed var(--color-hairline);
+  border-radius: var(--radius-md);
 }
 
 .page-heading {
@@ -533,8 +507,10 @@ onMounted(() => {
 }
 
 .add-input {
-  flex: 1;
-  min-width: 0;
+  /* 输入在 search-wrap(非 flex 容器)内,须显式撑满:否则按 UA 默认
+     宽度渲染,窄屏溢出与按钮重合 */
+  width: 100%;
+  box-sizing: border-box;
   padding: 8px 14px;
   border: 1px solid var(--color-border, var(--color-hairline));
   border-radius: var(--radius-pill, 999px);
@@ -678,33 +654,5 @@ onMounted(() => {
   margin: 0 0 var(--spacing-sm);
 }
 
-.shelf-entry {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-text-secondary);
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s;
-}
 
-.shelf-entry:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.shelf-entry svg {
-  width: 16px;
-  height: 16px;
-}
-
-.shelf-count {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-primary);
-}
 </style>

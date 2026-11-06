@@ -451,14 +451,22 @@ onUnmounted(() => {
 
 .content-tabs {
   display: inline-flex;
-  flex-wrap: wrap;
+  /* 横滑不换行:分类 tab 追加(哔咔登录后)不再把星标筛选挤到第二行 */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
   align-items: center;
   padding: 3px;
   border-radius: var(--radius-pill);
   background: var(--color-divider-soft);
 }
 
+.content-tabs::-webkit-scrollbar {
+  display: none;
+}
+
 .content-tab {
+  flex-shrink: 0;
   min-width: 66px;
   padding: 7px 16px;
   border-radius: var(--radius-pill);
@@ -549,6 +557,7 @@ onUnmounted(() => {
 
 .filter-group {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .filter-input {
