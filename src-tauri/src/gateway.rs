@@ -37,6 +37,11 @@ pub fn init_diag_dir(dir: std::path::PathBuf) {
 /// (release 无法 run-as/logcat,应用内读取是唯一通道)。
 /// 只用 setup 缓存的目录,任何线程(含 Android 主线程回调)调用都安全;
 /// 未登记时静默丢弃。
+/// diag.log 目录访问(DIAG_DIR 缓存;未登记返回 None)
+pub fn diag_dir() -> Option<&'static std::path::PathBuf> {
+    DIAG_DIR.get()
+}
+
 pub fn diag(_app: &AppHandle, msg: &str) {
     use std::io::Write;
     let Some(dir) = DIAG_DIR.get() else {
@@ -244,21 +249,32 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
             diag(app, "[通道观测] gwresult 经导航通道到达");
             match parse_nav_reply(query) {
                 Some(reply) => {
-                    // 临时取证:hlib 页面(样本特征 title「H图书馆」)落盘供
-                    // 离线 DOM 结构分析(不渲染查看);验收后移除。目录用
-                    // DIAG_DIR 缓存(任何线程安全)
-                    if let Some(dir) = DIAG_DIR.get() {
-                        if reply.body.contains("图书馆") || reply.body.contains("hlib.cc/s/") {
-                            let ts = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis();
-                            let _ = std::fs::write(
-                                dir.join(format!("hlib_sample_{ts}.html")),
-                                &reply.body,
-                            );
+                    // 临时取证:hlib 页面落盘供离线 DOM 结构分析
+                    // (不渲染查看);按 4.1 规范走 spawn(UI 线程不做大块
+                    // IO),回传先照常投递,日志顺序不乱;验收后移除
+                    // 门控:仅 debug 构建落盘(release 无样本 IO);
+                    // 数量上限:保留最近 8 个,超限删最旧
+                    #[cfg(debug_assertions)]
+                    let body_for_recon = reply.body.clone();
+                    #[cfg(debug_assertions)]
+                    if body_for_recon.contains("图书馆") || body_for_recon.contains("hlib.cc/s/")
+                    {
+                        if let Some(dir) = DIAG_DIR.get() {
+                            let dir = dir.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let ts = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis();
+                                let _ = std::fs::write(
+                                    dir.join(format!("hlib_sample_{ts}.html")),
+                                    &body_for_recon,
+                                );
+                            });
                         }
                     }
+                    #[cfg(not(debug_assertions))]
+                    let body_for_recon = reply.body.clone();
                     app.state::<GatewayManager>().resolve_reply(reply.clone());
                     // 收回交给 gateway_fetch_inner 的成功路径(非挑战非闸才收):
                     // 此处无差别收回会在挑战态把网关藏起,用户无法交互验证
