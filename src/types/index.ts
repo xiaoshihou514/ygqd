@@ -227,6 +227,17 @@ export interface NovelLatestPage {
   totalPages: number
 }
 
+/** 全局历史条目(item_history 表;视频/小说写入,漫画走存量 view_history) */
+export interface ItemHistoryEntry {
+  source: string
+  kind: string
+  itemId: string
+  title: string
+  viewedAt: number
+  /** 进度 JSON 字符串(小说:{"chapter":N,"page":N};视频:{"position":秒数}) */
+  progress?: string
+}
+
 export interface NovelPage {
   title: string
   author: string

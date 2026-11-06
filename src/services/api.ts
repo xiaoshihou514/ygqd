@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BikaRankTT, SourceId } from '@/config/sources'
-import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowTargetEntry, FollowTargetItem, FollowedAuthor, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
+import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowTargetEntry, FollowTargetItem, FollowedAuthor, ItemHistoryEntry, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
@@ -56,6 +56,15 @@ export const novelFollowedAuthors = () =>
   invoke<AuthorFollow[]>('novel_followed_authors')
 export const novelFollowedAuthorWorks = (authorId: string) =>
   invoke<NovelHit[]>('novel_followed_author_works', { authorId })
+export const recordItemHistory = (
+  source: string,
+  kind: string,
+  itemId: string,
+  title: string,
+  progress?: string,
+) => invoke<void>('record_item_history', { source, kind, itemId, title, progress })
+export const fetchItemHistory = (source?: string, kind?: string, limit?: number) =>
+  invoke<ItemHistoryEntry[]>('fetch_item_history', { source, kind, limit })
 export const videoFollow = (source: string, kind: string, targetId: string, displayName: string) =>
   invoke<void>('video_follow', { source, kind, targetId, displayName })
 export const videoUnfollow = (source: string, kind: string, targetId: string) =>

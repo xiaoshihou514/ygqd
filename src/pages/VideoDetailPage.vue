@@ -12,7 +12,7 @@ import '@videojs/html/media/hlsjs-video'
 import '@videojs/html/i18n'
 import type { HlsJsAdapter } from '@videojs/hlsjs-video'
 
-import { fetchVideoDetail, recordVideoWatched } from '@/services/api'
+import { fetchVideoDetail, recordVideoWatched, recordItemHistory } from '@/services/api'
 import type { VideoDetail } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -36,11 +36,30 @@ async function load() {
     const code = String(route.params.code || '').toLowerCase()
     detail.value = await fetchVideoDetail(code)
     void recordVideoWatched(code)
+    // 全局历史时间线:播放开始记录基础条目(位置在暂停/离开时补记)
+    void recordItemHistory(detail.value.provider || 'fs1', 'video', detail.value.code, detail.value.title || detail.value.code)
   } catch (e) {
     error.value = errorMessage(e) || '加载失败'
   } finally {
     loading.value = false
   }
+}
+
+/** 全局历史:暂停/离开时补记播放位置(秒) */
+async function recordProgressSnapshot() {
+  const d = detail.value
+  if (!d) return
+  const pos = (mediaEl.value as unknown as { currentTime?: number } | null)?.currentTime
+  if (typeof pos !== 'number' || pos <= 0) return
+  try {
+    await recordItemHistory(d.provider || 'fs1', 'video', d.code, d.title || d.code, JSON.stringify({ position: Math.floor(pos) }))
+  } catch {
+    /* 历史记录失败不影响播放 */
+  }
+}
+
+function onPlayerPause() {
+  void recordProgressSnapshot()
 }
 
 /** hls.js 错误附带的原始数据,403 时含 response.code */
@@ -139,6 +158,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   if (IS_ANDROID && isFullscreen.value) screen.orientation.unlock()
   if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
+  // 全局历史:离开页面补记播放位置
+  void recordProgressSnapshot()
 })
 </script>
 
@@ -174,6 +195,7 @@ onBeforeUnmount(() => {
                 preload="auto"
                 playsinline
                 @error="onMediaError"
+                @pause="onPlayerPause"
               ></hlsjs-video>
             </video-skin>
           </video-player>
