@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
+import type { AuthorFollow, NovelHit } from '@/types'
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
@@ -36,6 +38,65 @@ const tabScroll: Record<FollowingTab, number> = {
 
 const favorites = ref<FavoriteEntry[]>([])
 const favLoading = ref(false)
+
+// —— 小说作者关注(批次 2:novel_followed_authors 列表 + 作者作品流) ——
+const novelAuthors = ref<AuthorFollow[]>([])
+const novelAuthorsLoading = ref(false)
+const selectedNovelAuthor = ref<AuthorFollow | null>(null)
+const hitList = ref<NovelHit[]>([])
+const worksLoading = ref(false)
+const worksError = ref('')
+
+async function loadNovelAuthors(showWorks = false) {
+  if (novelAuthorsLoading.value) return
+  novelAuthorsLoading.value = true
+  try {
+    novelAuthors.value = await novelFollowedAuthors()
+    if (showWorks && novelAuthors.value.length > 0) {
+      await selectNovelAuthor(novelAuthors.value[0]!)
+    } else {
+      selectedNovelAuthor.value = null
+      hitList.value = []
+    }
+  } catch (e) {
+    console.error('[following]', errorMessage(e))
+  } finally {
+    novelAuthorsLoading.value = false
+  }
+}
+
+/** 作者作品流:hlib 作者页抓取(站点敏感,加载中提示等待) */
+async function selectNovelAuthor(author: AuthorFollow) {
+  if (worksLoading.value) return
+  selectedNovelAuthor.value = author
+  hitList.value = []
+  worksError.value = ''
+  worksLoading.value = true
+  try {
+    hitList.value = await novelFollowedAuthorWorks(author.authorId)
+    if (!hitList.value.length) worksError.value = '该作者暂无收录作品'
+  } catch (e) {
+    worksError.value = errorMessage(e) || '作品加载失败,请稍后重试'
+  } finally {
+    worksLoading.value = false
+  }
+}
+
+function unfollowNovelAuthor(author: AuthorFollow) {
+  selectedNovelAuthor.value = null
+  hitList.value = []
+  void (async () => {
+    try {
+      await apiNovelUnfollow(author.authorId)
+      novelAuthors.value = novelAuthors.value.filter((a) => a.authorId !== author.authorId)
+      if (selectedNovelAuthor.value?.authorId === author.authorId) {
+        selectedNovelAuthor.value = null
+      }
+    } catch (e) {
+      console.error('[following]', errorMessage(e))
+    }
+  })()
+}
 /** 后台同步哔咔服务器收藏进行中(不阻塞本地列表展示) */
 const favSyncing = ref(false)
 
@@ -263,6 +324,9 @@ async function loadNextPage() {
 }
 
 async function switchTab(tab: FollowingTab) {
+  if (tab === 'novel-authors' && !novelAuthors.value.length && !novelAuthorsLoading.value) {
+    void loadNovelAuthors(true)
+  }
   if (tab === activeTab.value) return
   tabScroll[activeTab.value] = window.scrollY
   activeTab.value = tab
@@ -455,10 +519,46 @@ onUnmounted(() => {
           />
         </template>
         <template v-else-if="activeTab === 'novel-authors'">
+          <LoadingSpinner v-if="novelAuthorsLoading" message="加载关注的小说作者..." />
           <EmptyState
-            title="小说作者关注即将上线"
-            message="关注小说作者的功能正在建设中,上线后可在这里跟踪他们的新作品"
+            v-else-if="!novelAuthors.length"
+            title="还没有关注的小说作者"
+            message="在小说详情页点「+ 关注作者」,即可在这里跟踪他们的作品"
           />
+          <template v-else>
+            <div class="novel-author-chips">
+              <button
+                v-for="a in novelAuthors"
+                :key="a.authorId"
+                type="button"
+                class="novel-author-chip"
+                :class="{ active: selectedNovelAuthor?.authorId === a.authorId }"
+                @click="selectNovelAuthor(a)"
+              >
+                {{ a.authorName }}
+                <span
+                  class="novel-author-remove"
+                  title="取消关注"
+                  aria-label="取消关注"
+                  @click.stop="unfollowNovelAuthor(a)"
+                >×</span>
+              </button>
+            </div>
+            <LoadingSpinner v-if="worksLoading" message="加载作品..." />
+            <p v-else-if="worksError" class="works-error">{{ worksError }}</p>
+            <div v-else-if="hitList.length" class="novel-works">
+              <button
+                v-for="h in hitList"
+                :key="h.id"
+                type="button"
+                class="novel-work-row"
+                @click="router.push(`/novels/series/${h.id}`)"
+              >
+                <span class="novel-work-title">{{ h.title }}</span>
+                <span v-if="h.author" class="novel-work-author">{{ h.author }}</span>
+              </button>
+            </div>
+          </template>
         </template>
         <template v-else-if="activeTab === 'works'">
           <EmptyState
@@ -767,5 +867,87 @@ onUnmounted(() => {
     order: 3;
     width: 100%;
   }
+}
+
+.novel-author-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.novel-author-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-card-bg);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.novel-author-chip:hover,
+.novel-author-chip.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-focus);
+}
+
+.novel-author-remove {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 4px;
+}
+
+.novel-author-remove:hover {
+  color: var(--color-error);
+}
+
+.novel-works {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.novel-work-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-md);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+}
+
+.novel-work-row:hover {
+  border-color: var(--color-primary);
+}
+
+.novel-work-title {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.novel-work-author {
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.works-error {
+  font-size: var(--font-size-caption);
+  color: var(--color-error);
 }
 </style>
