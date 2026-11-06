@@ -659,6 +659,11 @@ function goToSplit() {
 </template>
 
 <style scoped>
+.search-page .container {
+  max-width: none;
+  padding: 0 var(--spacing-md);
+}
+
 .search-page {
   padding-bottom: var(--spacing-xl);
 }

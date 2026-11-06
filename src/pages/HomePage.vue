@@ -335,11 +335,11 @@ onUnmounted(() => {
 
       <div v-else-if="segment === 'novel'" class="novel-entry">
         <EmptyState
-          title="小说书架"
-          message="hlib.cc 小说阅读:粘贴系列链接加入书架,首次使用需在弹出的窗口中登录"
+          title="小说"
+          message="最新小说流与站内搜索,点「打开小说」开始浏览"
         >
           <button class="retry-btn" @click="router.push('/novels')">
-            打开书架
+            打开小说
           </button>
         </EmptyState>
       </div>
