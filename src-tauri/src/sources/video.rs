@@ -61,7 +61,7 @@ fn unpack_packed(block: &str) -> Option<String> {
         .split('|')
         .map(str::to_string)
         .collect();
-    if radix < 2 || radix > 62 {
+    if !(2..=62).contains(&radix) {
         return None;
     }
     let mut out = payload;
@@ -547,7 +547,7 @@ impl VideoApi {
 
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
-        for (_index, (pos, code)) in anchors.iter().enumerate() {
+        for (pos, code) in anchors.iter() {
             if !seen.insert(code.clone()) {
                 continue;
             }

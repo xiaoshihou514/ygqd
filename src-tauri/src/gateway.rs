@@ -37,11 +37,6 @@ pub fn init_diag_dir(dir: std::path::PathBuf) {
 /// (release 无法 run-as/logcat,应用内读取是唯一通道)。
 /// 只用 setup 缓存的目录,任何线程(含 Android 主线程回调)调用都安全;
 /// 未登记时静默丢弃。
-/// diag.log 目录访问(DIAG_DIR 缓存;未登记返回 None)
-pub fn diag_dir() -> Option<&'static std::path::PathBuf> {
-    DIAG_DIR.get()
-}
-
 pub fn diag(_app: &AppHandle, msg: &str) {
     use std::io::Write;
     let Some(dir) = DIAG_DIR.get() else {
@@ -506,9 +501,9 @@ fn dispatch_fetch(
     );
     let rx = manager.register(id.clone());
     let js_url = serde_json::to_string(url).map_err(|e| e.to_string())?;
-    // 双形态:JSON 字符串字面量(带引号,invoke 参数用)与裸值(导航 URL query 用)
-    // ——URL 里若用带引号形态,reply.id 与 pending 注册的裸 id 不匹配,回传全空转
-    let js_id = serde_json::to_string(&id).map_err(|e| e.to_string())?;
+    // 导航 URL query 用裸 id;带引号的 JSON 字面量形态已随 Android IPC
+    // 分支移除(URL 里若用带引号形态,reply.id 与 pending 注册的裸 id
+    // 不匹配,回传全空转)
     let url_id = &id;
 
     let js = format!(

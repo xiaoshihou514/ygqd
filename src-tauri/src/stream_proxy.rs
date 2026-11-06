@@ -93,23 +93,11 @@ pub fn hls_url(real: &str) -> String {
     )
 }
 
-/// 图片代理地址封装
-pub fn img_url(real: &str) -> String {
-    format!(
-        "http://127.0.0.1:{}/img/{}",
-        port(),
-        B64.encode(real.as_bytes())
-    )
-}
-
 fn referer_for(url: &str) -> &'static str {
     if url.contains("surrit.com") {
         "https://missav.ai/"
-    } else if url.contains("mushroomtrack.com") || url.contains("fs1.app") {
-        "https://fs1.app/"
-    } else if url.contains("fourhoi.com") {
-        "https://fs1.app/"
     } else {
+        // mushroomtrack/fs1/fourhoi 及其余一律 fs1(referer 校验同源)
         "https://fs1.app/"
     }
 }
@@ -211,16 +199,14 @@ fn handle_hls(path_b64: &str, range: Option<&str>) -> (u16, String, Vec<u8>, boo
                 || head
                 || (bytes.len() >= 7 && &bytes[..7] == b"#EXTM3U");
             if head2 {
-                if head2 {
-                    if let Ok(text) = String::from_utf8(bytes.clone()) {
-                        let rewritten = rewrite_playlist(&text, &real);
-                        return (
-                            200,
-                            "application/vnd.apple.mpegurl".into(),
-                            rewritten.into_bytes(),
-                            false,
-                        );
-                    }
+                if let Ok(text) = String::from_utf8(bytes.clone()) {
+                    let rewritten = rewrite_playlist(&text, &real);
+                    return (
+                        200,
+                        "application/vnd.apple.mpegurl".into(),
+                        rewritten.into_bytes(),
+                        false,
+                    );
                 }
             }
             // 分片入缓存
@@ -469,7 +455,7 @@ fn handle_client(mut stream: TcpStream) {
         let label = query
             .split('&')
             .find_map(|kv| kv.strip_prefix("label="))
-            .map(|v| urldecode(v))
+            .map(urldecode)
             .unwrap_or_default();
         if let Some(app) = APP.get() {
             crate::gateway::diag(app, "[通道观测] gwfinish 经降级 fetch 通道到达");
