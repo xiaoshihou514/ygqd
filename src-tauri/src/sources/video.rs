@@ -830,6 +830,9 @@ impl VideoApi {
             m3u8: m3u8.ok_or_else(|| "未在详情页找到 m3u8".to_string())?,
             provider: "fs1".into(),
             chinese: false,
+            // fs1 详情页无厂商/女优元数据,detail() 入口从 missav 补齐
+            studio: None,
+            actors: Vec::new(),
         })
     }
 
@@ -837,21 +840,68 @@ impl VideoApi {
     /// 两端均优先尝试中文字幕版本。
     pub async fn detail(&self, code: &str) -> Result<VideoDetail, String> {
         match self.detail_fs1(code).await {
-            Ok(detail) => Ok(detail),
+            Ok(mut detail) => {
+                // fs1 详情页无厂商/女优元数据(取证:极简结构),从 missav
+                // 详情页补齐(同番号在 missav 的元数据区完整)
+                if let Ok(html) = self.missav_get(&format!("/{code}")).await {
+                    let (studio, actors) = Self::parse_missav_meta(&html);
+                    detail.studio = studio;
+                    detail.actors = actors;
+                }
+                Ok(detail)
+            }
             Err(fs1_error) => match self.missav_m3u8(code).await {
-                Ok((m3u8, chinese)) => Ok(VideoDetail {
-                    code: code.to_lowercase(),
-                    title: code.to_uppercase(),
-                    tags: vec![],
-                    m3u8,
-                    provider: "missav".into(),
-                    chinese,
-                }),
+                Ok((m3u8, chinese)) => {
+                    // missav 兜底:详情页 HTML 同时取元数据
+                    let meta = self
+                        .missav_get(&format!("/{code}"))
+                        .await
+                        .map(|html| Self::parse_missav_meta(&html))
+                        .unwrap_or((None, Vec::new()));
+                    Ok(VideoDetail {
+                        code: code.to_lowercase(),
+                        title: code.to_uppercase(),
+                        tags: vec![],
+                        m3u8,
+                        provider: "missav".into(),
+                        chinese,
+                        studio: meta.0,
+                        actors: meta.1,
+                    })
+                }
                 Err(missav_error) => Err(format!(
                     "fs1 播放地址不可用({fs1_error}); missav 兜底失败({missav_error})"
                 )),
             },
         }
+    }
+
+    /// missav 详情页元数据解析:发行厂商(makers 链接)与女优(actresses
+    /// 链接,dm 前缀路由,target_id 存解码名)。取证:厂商 1 个/女优 1-N 个
+    fn parse_missav_meta(html: &str) -> (Option<String>, Vec<String>) {
+        let re_maker =
+            regex::Regex::new(r#"<a[^>]*href="[^"]*/makers/([^"]+)"[^>]*>([\s\S]{0,80}?)</a>"#)
+                .unwrap();
+        let re_actress =
+            regex::Regex::new(r#"<a[^>]*href="[^"]*/actresses/([^"/]+)"[^>]*>([\s\S]{0,80}?)</a>"#)
+                .unwrap();
+        let mut studio = None;
+        for cap in re_maker.captures_iter(html) {
+            let name = strip_tags(&cap[2]);
+            if !name.is_empty() && name != "發行商" {
+                studio = Some(name);
+                break;
+            }
+        }
+        let mut actors = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for cap in re_actress.captures_iter(html) {
+            let name = strip_tags(&cap[2]);
+            if !name.is_empty() && !name.contains("排行") && seen.insert(name.clone()) {
+                actors.push(name);
+            }
+        }
+        (studio, actors)
     }
 }
 
@@ -867,6 +917,12 @@ pub struct VideoDetail {
     pub provider: String,
     /// 是否中文字幕版本
     pub chinese: bool,
+    /// 发行厂商(missav 详情页 makers 链接;fs1 详情页无此元数据为 None)
+    #[serde(default)]
+    pub studio: Option<String>,
+    /// 女优列表(missav 详情页 actresses 链接;站点不标男优)
+    #[serde(default)]
+    pub actors: Vec<String>,
 }
 
 #[cfg(test)]
