@@ -161,6 +161,10 @@ export interface VideoDetail {
   provider?: string
   /** 中文字幕版本 */
   chinese?: boolean
+  /** 发行厂商(missav 详情页解析;fs1 无此元数据为空) */
+  studio?: string
+  /** 女优列表(missav 详情页 actresses 链接;fs1 为空) */
+  actors?: string[]
 }
 
 export interface NovelChapter {

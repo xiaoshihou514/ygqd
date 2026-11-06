@@ -12,7 +12,9 @@ import '@videojs/html/media/hlsjs-video'
 import '@videojs/html/i18n'
 import type { HlsJsAdapter } from '@videojs/hlsjs-video'
 
-import { fetchVideoDetail, recordVideoWatched, recordItemHistory } from '@/services/api'
+import { fetchVideoDetail, recordVideoWatched, recordItemHistory, videoFollowWorks, videoFollowList, videoFollow, videoUnfollow } from '@/services/api'
+import type { FollowTargetEntry } from '@/types'
+import type { VideoCard } from '@/types'
 import type { VideoDetail } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -58,8 +60,50 @@ async function recordProgressSnapshot() {
   }
 }
 
+/** 番号展示:剥中字后缀大写 */
+function basicVideoCode(code: string): string {
+  return code.replace('-chinese-subtitle', '').toUpperCase()
+}
+
 function onPlayerPause() {
   void recordProgressSnapshot()
+}
+
+// —— 厂商/女优元数据与相似影片(批次 3 follow_target 通道复用) ——
+// 组合映射:studio → (missav, maker);actors → (missav, actress);
+// targetId 语义与 follow_target 一致(关注与浏览共用通道)
+const relatedWorks = ref<VideoCard[]>([])
+const relatedLoading = ref(false)
+const relatedError = ref('')
+
+async function loadRelatedWorks() {
+  const d = detail.value
+  if (!d) return
+  relatedLoading.value = true
+  relatedError.value = ''
+  try {
+    // 优先厂商,无厂商用首女优(与 follow_target 语义一致)
+    if (d.studio) {
+      const res = await videoFollowWorks('missav', 'maker', d.studio)
+      relatedWorks.value = res.items.filter((v) => v.code !== d.code)
+    } else if (d.actors?.length) {
+      const res = await videoFollowWorks('missav', 'actress', d.actors[0]!)
+      relatedWorks.value = res.items.filter((v) => v.code !== d.code)
+    }
+  } catch (e) {
+    relatedError.value = errorMessage(e) || '相关作品加载失败'
+  } finally {
+    relatedLoading.value = false
+  }
+}
+
+/** 元数据点击:关注厂商/女优(关注列表可见,浏览通道共用) */
+async function followVideoTarget(kind: 'maker' | 'actress', targetId: string, displayName: string) {
+  try {
+    await videoFollow('missav', kind, targetId, displayName)
+  } catch (e) {
+    relatedError.value = errorMessage(e) || '关注失败,请重试'
+  }
 }
 
 /** hls.js 错误附带的原始数据,403 时含 response.code */
@@ -213,11 +257,45 @@ onBeforeUnmount(() => {
         }}</span>
         <span v-if="detail.chinese" class="provider-badge chinese">中文字幕</span>
       </div>
+      <div v-if="detail.studio" class="meta-row">
+        <span class="meta-label">发行商</span>
+        <button type="button" class="meta-link" @click="followVideoTarget('maker', detail.studio, detail.studio)">
+          {{ detail.studio }}
+        </button>
+      </div>
+      <div v-if="detail.actors?.length" class="meta-row">
+        <span class="meta-label">女优</span>
+        <span class="meta-actors">
+          <button
+            v-for="a in detail.actors"
+            :key="a"
+            type="button"
+            class="meta-link"
+            @click="followVideoTarget('actress', a, a)"
+          >
+            {{ a }}
+          </button>
+        </span>
+      </div>
       <h1 class="video-title">{{ detail.title || detail.code.toUpperCase() }}</h1>
       <div class="video-tags">
         <span v-for="tag in detail.tags.slice(0, 30)" :key="tag" class="video-tag">
           {{ tag }}
         </span>
+      </div>
+
+      <div v-if="relatedWorks.length" class="related-block">
+        <span class="related-heading">相关作品</span>
+        <button
+          v-for="v in relatedWorks"
+          :key="v.code"
+          type="button"
+          class="related-row"
+          @click="router.push(`/videos/${v.code}`)"
+        >
+          <span class="related-row-title">{{ v.title || basicVideoCode(v.code) }}</span>
+          <span v-if="v.chinese" class="related-row-cs">中字</span>
+        </button>
       </div>
     </div>
   </div>
@@ -388,5 +466,84 @@ video-skin:not(:defined) {
   background: var(--color-divider-soft);
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+.meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.meta-label {
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.meta-link {
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  padding: 0;
+}
+
+.meta-link:hover {
+  text-decoration: underline;
+}
+
+.meta-actors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.related-block {
+  margin-top: var(--spacing-lg);
+  border-top: 1px solid var(--color-hairline);
+  padding-top: var(--spacing-md);
+}
+
+.related-heading {
+  display: block;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.related-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  width: 100%;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  text-align: left;
+}
+
+.related-row:hover .related-row-title {
+  color: var(--color-primary);
+}
+
+.related-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.related-row-cs {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #e8590c;
+  color: #fff;
+  font-size: 10px;
 }
 </style>
