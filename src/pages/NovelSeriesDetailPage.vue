@@ -105,14 +105,14 @@ onMounted(() => {
 <template>
   <div class="series-detail-page">
     <div class="detail-header">
-      <button class="back-btn" @click="router.push('/novels')">‹ 书架</button>
+      <button class="back-btn" @click="router.push('/novels')">‹ 小说</button>
       <button class="hlib-btn" @click="openHlib">打开 hlib</button>
     </div>
 
     <LoadingSpinner v-if="loading" message="加载系列..." />
     <EmptyState v-else-if="error" title="加载失败" :message="error">
       <button class="retry-btn" @click="load()">重试</button>
-      <button class="retry-btn ghost" @click="router.push('/novels')">返回书架</button>
+      <button class="retry-btn ghost" @click="router.push('/novels')">返回小说</button>
     </EmptyState>
 
     <template v-else-if="series">
@@ -138,15 +138,10 @@ onMounted(() => {
           >
             {{ hasProgress ? `续读 第 ${progress![0]} 章` : '开始阅读' }}
           </button>
-          <button
-            v-else
-            class="read-btn primary"
-            :disabled="addingShelf"
-            @click="addShelf"
-          >
-            {{ addingShelf ? '抓取系列目录…' : '+ 加书架' }}
-          </button>
-          <button v-if="inShelf" class="read-btn ghost" @click="handleRemove">移出书架</button>
+          <!-- 未入库系列:直接阅读(R2 数据源两级支持,阅读进度自动保留);
+               收藏(关注作者)批次 2 上线后在此恢复按钮 -->
+          <button class="read-btn primary" @click="startReading">开始阅读</button>
+          <button v-if="inShelf" class="read-btn ghost" @click="handleRemove">移除</button>
         </div>
       </div>
 

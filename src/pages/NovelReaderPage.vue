@@ -156,7 +156,7 @@ async function addShelf() {
     await novelAdd(String(route.params.id || ''))
     inShelf.value = true
   } catch (e) {
-    error.value = errorMessage(e) || '加书架失败,请重试'
+    error.value = errorMessage(e) || '操作失败,请重试'
   } finally {
     addingShelf.value = false
   }
@@ -196,7 +196,7 @@ onMounted(async () => {
       inShelf.value = false
     }
     if (!series.value) {
-      error.value = '书架中找不到该系列,请重新添加'
+      error.value = '该系列不存在,可能已被移除'
       loading.value = false
       return
     }
@@ -223,20 +223,13 @@ onMounted(async () => {
 <template>
   <div class="reader-page" :class="`theme-${settings.theme}`">
     <div class="reader-header">
-      <button class="hdr-btn" @click="router.push('/novels')">‹ 书架</button>
+      <button class="hdr-btn" @click="router.push('/novels')">‹ 小说</button>
       <div class="hdr-center">
         <span class="hdr-title">{{ currentChapter ? `#${currentChapter.order} ${currentChapter.title || currentChapter.id}` : (series?.title ?? '') }}</span>
         <span v-if="page" class="hdr-page">第 {{ articlePage }}/{{ page.totalPages }} 页</span>
       </div>
       <div class="hdr-actions">
-        <button
-          v-if="!inShelf"
-          class="hdr-btn shelf-add"
-          :disabled="addingShelf"
-          @click="addShelf"
-        >
-          {{ addingShelf ? '收藏中…' : '+ 书架' }}
-        </button>
+        <!-- 收藏按钮过渡期隐藏:批次 2 关注作者上线后恢复为「关注作者」 -->
         <button class="hdr-btn" @click="toggleSettings">Aa</button>
         <button class="hdr-btn" @click="toggleChapters">目录</button>
       </div>
@@ -305,7 +298,7 @@ onMounted(async () => {
     <LoadingSpinner v-if="loading" message="打开小说..." />
     <EmptyState v-else-if="error" title="阅读失败" :message="error">
       <button class="retry-btn" @click="loadPage()">重试</button>
-      <button class="retry-btn ghost" @click="router.push('/novels')">返回书架</button>
+      <button class="retry-btn ghost" @click="router.push('/novels')">返回小说</button>
     </EmptyState>
 
     <div v-else class="reader-body" :class="{ dim: pageLoading }">

@@ -310,9 +310,7 @@ onMounted(() => {
                 </span>
               </span>
             </div>
-            <button class="hit-add" :disabled="addingHitId === hit.id" @click="addHit(hit)">
-              {{ addingHitId === hit.id ? '添加中…' : '+ 书架' }}
-            </button>
+            <!-- 收藏按钮过渡期隐藏:批次 2 关注作者上线后恢复 -->
           </div>
         </div>
 
