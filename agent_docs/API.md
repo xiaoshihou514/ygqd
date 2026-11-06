@@ -84,6 +84,8 @@
 | `video_follow_list` | `source, kind` | `FollowTargetEntry[]`（关注列表，按关注时间倒序） |
 | `video_follow_targets` | `source, kind` | `FollowTargetItem[]`（可关注目标列表：fs1 女优/missav 厂商/missav 女优排行） |
 | `video_follow_works` | `source, kind, targetId, page?` | `VideoListResult`（关注对象的作品流，复用视频列表解析） |
+| `record_item_history` | `source, kind, itemId, title, progress?` | `void`（记录全局历史；视频/小说写入 item_history，漫画走 record_history 存量） |
+| `fetch_item_history` | `source?, kind?, limit?` | `ItemHistoryEntry[]`（全局历史查询；source/kind 可选过滤，None=全板块时间线；ItemHistoryEntry 含 progress JSON） |
 | `novel_search_page` | `keyword`, `page?` | `NovelSearchPage`（分页搜索：hits + page + totalPages；page 不传视为第 1 页。真端点 /s/search?query=，需登录） |
 | `novel_latest` | `page?` | `NovelLatestPage`（发现流最新系列分页：hits + page + totalPages；page 不传视为第 1 页，深页走全站 ?p= 机制） |
 | `novel_read` | `chapterId`, `page` | `NovelPage`（读取章节某页正文；未登录/未验证时返回引导错误） |
