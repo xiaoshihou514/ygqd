@@ -357,6 +357,15 @@ const novelPageNo = ref(1)
 const novelTotalPages = ref(1)
 const novelLoadingMore = ref(false)
 const novelError = ref('')
+// 高级搜索:排序四维(非法值后端忽略,透传即可)
+type NovelSort = 'date' | 'total' | 'char' | 'like'
+const novelSort = ref<NovelSort>('date')
+const NOVEL_SORTS: Array<{ key: NovelSort; label: string }> = [
+  { key: 'date', label: '最新' },
+  { key: 'total', label: '总字数' },
+  { key: 'char', label: '字数' },
+  { key: 'like', label: '最多点赞' },
+]
 let lastNovelFetchAt = 0
 const NOVEL_MIN_INTERVAL = 3000
 
@@ -370,13 +379,21 @@ async function handleNovelSearch() {
       await new Promise((resolve) => setTimeout(resolve, NOVEL_MIN_INTERVAL - elapsed))
     }
     lastNovelFetchAt = Date.now()
-    const res = await novelSearchPage(kw, 1)
+    const res = await novelSearchPage(kw, 1, novelSort.value)
     novelHits.value = res.hits
     novelPageNo.value = res.page
     novelTotalPages.value = res.totalPages
     if (!res.hits.length) novelError.value = '没有匹配的系列'
   } catch (e) {
     novelError.value = errorMessage(e) || '搜索失败'
+  }
+}
+
+function setNovelSort(key: NovelSort) {
+  novelSort.value = key
+  // 已有搜索词时改排序即重搜(排序变化影响结果序)
+  if (novelKeyword.value.trim() && novelHits.value.length) {
+    void handleNovelSearch()
   }
 }
 
@@ -390,7 +407,7 @@ async function loadMoreNovels() {
       await new Promise((resolve) => setTimeout(resolve, NOVEL_MIN_INTERVAL - elapsed))
     }
     lastNovelFetchAt = Date.now()
-    const res = await novelSearchPage(novelKeyword.value.trim(), novelPageNo.value + 1)
+    const res = await novelSearchPage(novelKeyword.value.trim(), novelPageNo.value + 1, novelSort.value)
     const seen = new Set(novelHits.value.map((h) => h.id))
     novelHits.value.push(...res.hits.filter((h) => !seen.has(h.id)))
     novelPageNo.value = res.page
@@ -583,6 +600,21 @@ function goToSplit() {
             {{ novelLoadingMore ? '搜索中…' : '搜索' }}
           </button>
         </form>
+        <div class="sort-row" role="group" aria-label="排序方式">
+          <span class="sort-label">排序</span>
+          <div class="sort-chips">
+            <button
+              v-for="s in NOVEL_SORTS"
+              :key="s.key"
+              type="button"
+              class="sort-chip"
+              :class="{ active: novelSort === s.key }"
+              @click="setNovelSort(s.key)"
+            >
+              {{ s.label }}
+            </button>
+          </div>
+        </div>
         <p v-if="novelError" class="scope-error">{{ novelError }}</p>
         <div v-if="novelHits.length" class="scope-rows">
           <button
@@ -906,6 +938,47 @@ function goToSplit() {
 .scope-more-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--spacing-sm);
+}
+
+.sort-label {
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}
+
+.sort-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sort-chip {
+  padding: 4px 14px;
+  border: 1px solid var(--color-border, var(--color-hairline));
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-fine-print);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sort-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.sort-chip.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
 }
 
 </style>
