@@ -279,7 +279,7 @@ onBeforeUnmount(() => {
       </div>
       <h1 class="video-title">{{ detail.title || detail.code.toUpperCase() }}</h1>
       <div class="video-tags">
-        <span v-for="tag in detail.tags.slice(0, 30)" :key="tag" class="video-tag">
+        <span v-for="tag in (detail.tags ?? []).slice(0, 30)" :key="tag" class="video-tag">
           {{ tag }}
         </span>
       </div>
