@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 // Video.js 10(@videojs/html)自定义元素:导入即注册,无需命令式初始化。
@@ -12,10 +12,9 @@ import '@videojs/html/media/hlsjs-video'
 import '@videojs/html/i18n'
 import type { HlsJsAdapter } from '@videojs/hlsjs-video'
 
-import { fetchVideoDetail, recordVideoWatched, recordItemHistory, videoFollowWorks, videoFollowList, videoFollow, videoUnfollow } from '@/services/api'
-import type { FollowTargetEntry } from '@/types'
-import type { VideoCard } from '@/types'
-import type { VideoDetail } from '@/types'
+import { fetchVideoDetail, recordVideoWatched, recordItemHistory, videoFollowWorks, videoFollow } from '@/services/api'
+import type { VideoCard, VideoDetail, VideoMetaLink } from '@/types'
+import VideoCardGrid from '@/components/VideoCardGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -34,10 +33,18 @@ async function load() {
   detail.value = null
   loading.value = true
   error.value = ''
+  relatedTarget.value = null
+  relatedWorks.value = []
+  relatedError.value = ''
+  followNotice.value = ''
   try {
     const code = String(route.params.code || '').toLowerCase()
     detail.value = await fetchVideoDetail(code)
     void recordVideoWatched(code)
+    // 相似影片:默认按厂商(无厂商取系列,再取首个女优)
+    const d = detail.value
+    const first = d.makers?.[0] ?? d.series?.[0] ?? d.actresses?.[0]
+    if (first) void selectMeta(first)
     // 全局历史时间线:播放开始记录基础条目(位置在暂停/离开时补记)
     void recordItemHistory(detail.value.provider || 'fs1', 'video', detail.value.code, detail.value.title || detail.value.code)
   } catch (e) {
@@ -60,47 +67,94 @@ async function recordProgressSnapshot() {
   }
 }
 
-/** 番号展示:剥中字后缀大写 */
-function basicVideoCode(code: string): string {
-  return code.replace('-chinese-subtitle', '').toUpperCase()
-}
-
 function onPlayerPause() {
   void recordProgressSnapshot()
 }
 
-// —— 厂商/女优元数据与相似影片(批次 3 follow_target 通道复用) ——
-// 组合映射:studio → (missav, maker);actors → (missav, actress);
-// targetId 语义与 follow_target 一致(关注与浏览共用通道)
+// —— 元数据(厂商/女优/男优/系列/导演/标签)与相似影片 ——
+// 点任一条目即在下方列出该条目的作品(missav 列表页,复用 video_follow_works 通道);
+// 厂商/女优可一键关注(关注列表可见)
+const META_ROWS: Array<{ key: keyof VideoDetail; label: string }> = [
+  { key: 'makers', label: '发行商' },
+  { key: 'actresses', label: '女优' },
+  { key: 'maleActors', label: '男优' },
+  { key: 'series', label: '系列' },
+  { key: 'directors', label: '导演' },
+  { key: 'labels', label: '厂牌' },
+]
+const metaRows = computed(() => {
+  const d = detail.value
+  if (!d) return []
+  return META_ROWS.map((r) => ({ label: r.label, links: (d[r.key] as VideoMetaLink[] | undefined) ?? [] }))
+    .filter((r) => r.links.length > 0)
+})
+
+const relatedTarget = ref<VideoMetaLink | null>(null)
 const relatedWorks = ref<VideoCard[]>([])
+const relatedPage = ref(1)
+const relatedHasNext = ref(false)
 const relatedLoading = ref(false)
 const relatedError = ref('')
+const followNotice = ref('')
+let relatedGen = 0
 
-async function loadRelatedWorks() {
+function sameBase(a: string, b: string): boolean {
+  const base = (c: string) => c.replace('-chinese-subtitle', '')
+  return base(a) === base(b)
+}
+
+async function loadRelated(page: number) {
+  const target = relatedTarget.value
   const d = detail.value
-  if (!d) return
+  if (!target || !d) return
+  const gen = ++relatedGen
   relatedLoading.value = true
   relatedError.value = ''
   try {
-    // 优先厂商,无厂商用首女优(与 follow_target 语义一致)
-    if (d.studio) {
-      const res = await videoFollowWorks('missav', 'maker', d.studio)
-      relatedWorks.value = res.items.filter((v) => v.code !== d.code)
-    } else if (d.actors?.length) {
-      const res = await videoFollowWorks('missav', 'actress', d.actors[0]!)
-      relatedWorks.value = res.items.filter((v) => v.code !== d.code)
+    const res = await videoFollowWorks('missav', target.kind, target.id, page)
+    if (gen !== relatedGen) return
+    const fresh = res.items.filter((v) => !sameBase(v.code, d.code))
+    if (page === 1) {
+      relatedWorks.value = fresh
+    } else {
+      const seen = new Set(relatedWorks.value.map((v) => v.code))
+      relatedWorks.value.push(...fresh.filter((v) => !seen.has(v.code)))
     }
+    relatedPage.value = page
+    relatedHasNext.value = res.pagination.hasNext
   } catch (e) {
-    relatedError.value = errorMessage(e) || '相关作品加载失败'
+    if (gen !== relatedGen) return
+    relatedError.value = errorMessage(e) || '相似影片加载失败'
   } finally {
-    relatedLoading.value = false
+    if (gen === relatedGen) relatedLoading.value = false
   }
 }
 
-/** 元数据点击:关注厂商/女优(关注列表可见,浏览通道共用) */
-async function followVideoTarget(kind: 'maker' | 'actress', targetId: string, displayName: string) {
+function selectMeta(link: VideoMetaLink) {
+  relatedTarget.value = link
+  relatedWorks.value = []
+  relatedHasNext.value = false
+  followNotice.value = ''
+  void loadRelated(1)
+}
+
+function isSelected(link: VideoMetaLink): boolean {
+  const t = relatedTarget.value
+  return !!t && t.kind === link.kind && t.id === link.id
+}
+
+const canFollow = computed(() => {
+  const k = relatedTarget.value?.kind
+  return k === 'maker' || k === 'actress'
+})
+
+/** 关注当前选中的厂商/女优(关注列表可见) */
+async function followSelected() {
+  const t = relatedTarget.value
+  if (!t || !canFollow.value) return
   try {
-    await videoFollow('missav', kind, targetId, displayName)
+    await videoFollow('missav', t.kind, t.id, t.name)
+    followNotice.value = `已关注「${t.name}」`
   } catch (e) {
     relatedError.value = errorMessage(e) || '关注失败,请重试'
   }
@@ -198,6 +252,19 @@ onMounted(() => {
   void load()
 })
 
+// 从相似影片进入另一部(同一路由组件复用):番号变化即重载
+watch(
+  () => route.params.code,
+  (code, prev) => {
+    if (code && code !== prev) {
+      void recordProgressSnapshot()
+      recoverCount = 0
+      void load()
+      window.scrollTo(0, 0)
+    }
+  },
+)
+
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   if (IS_ANDROID && isFullscreen.value) screen.orientation.unlock()
@@ -257,26 +324,6 @@ onBeforeUnmount(() => {
         }}</span>
         <span v-if="detail.chinese" class="provider-badge chinese">中文字幕</span>
       </div>
-      <div v-if="detail.studio" class="meta-row">
-        <span class="meta-label">发行商</span>
-        <button type="button" class="meta-link" @click="followVideoTarget('maker', detail.studio, detail.studio)">
-          {{ detail.studio }}
-        </button>
-      </div>
-      <div v-if="detail.actors?.length" class="meta-row">
-        <span class="meta-label">女优</span>
-        <span class="meta-actors">
-          <button
-            v-for="a in detail.actors"
-            :key="a"
-            type="button"
-            class="meta-link"
-            @click="followVideoTarget('actress', a, a)"
-          >
-            {{ a }}
-          </button>
-        </span>
-      </div>
       <h1 class="video-title">{{ detail.title || detail.code.toUpperCase() }}</h1>
       <div class="video-tags">
         <span v-for="tag in (detail.tags ?? []).slice(0, 30)" :key="tag" class="video-tag">
@@ -284,18 +331,39 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
-      <div v-if="relatedWorks.length" class="related-block">
-        <span class="related-heading">相关作品</span>
-        <button
-          v-for="v in relatedWorks"
-          :key="v.code"
-          type="button"
-          class="related-row"
-          @click="router.push(`/videos/${v.code}`)"
-        >
-          <span class="related-row-title">{{ v.title || basicVideoCode(v.code) }}</span>
-          <span v-if="v.chinese" class="related-row-cs">中字</span>
-        </button>
+      <div v-if="detail.releaseDate" class="meta-row">
+        <span class="meta-label">发行日期</span>
+        <span class="meta-text">{{ detail.releaseDate }}</span>
+      </div>
+      <div v-for="row in metaRows" :key="row.label" class="meta-row">
+        <span class="meta-label">{{ row.label }}</span>
+        <span class="meta-actors">
+          <button
+            v-for="link in row.links"
+            :key="link.kind + link.id"
+            type="button"
+            class="meta-link"
+            :class="{ selected: isSelected(link) }"
+            @click="selectMeta(link)"
+          >
+            {{ link.name }}
+          </button>
+        </span>
+      </div>
+
+      <div v-if="relatedTarget" class="related-block">
+        <div class="related-head">
+          <span class="related-heading">「{{ relatedTarget.name }}」的作品</span>
+          <button v-if="canFollow" type="button" class="related-follow" @click="followSelected">+ 关注</button>
+          <span v-if="followNotice" class="related-notice">{{ followNotice }}</span>
+        </div>
+        <VideoCardGrid v-if="relatedWorks.length" :items="relatedWorks" />
+        <p v-else-if="!relatedLoading && !relatedError" class="related-empty">暂无其它作品</p>
+        <p v-if="relatedError" class="related-empty">{{ relatedError }}</p>
+        <div v-if="relatedLoading" class="related-loading"><LoadingSpinner message="加载相似影片..." /></div>
+        <div v-else-if="relatedHasNext" class="related-more-row">
+          <button type="button" class="related-more" @click="loadRelated(relatedPage + 1)">加载更多</button>
+        </div>
       </div>
     </div>
   </div>
@@ -481,17 +549,29 @@ video-skin:not(:defined) {
   flex-shrink: 0;
 }
 
+.meta-text {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-primary);
+}
+
 .meta-link {
-  border: none;
+  border: 1px solid var(--color-hairline);
   background: transparent;
   color: var(--color-primary);
   font-size: var(--font-size-caption);
   cursor: pointer;
-  padding: 0;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
 }
 
 .meta-link:hover {
-  text-decoration: underline;
+  border-color: var(--color-primary);
+}
+
+.meta-link.selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .meta-actors {
@@ -506,44 +586,57 @@ video-skin:not(:defined) {
   padding-top: var(--spacing-md);
 }
 
-.related-heading {
-  display: block;
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-text-primary);
+.related-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
   margin-bottom: var(--spacing-sm);
 }
 
-.related-row {
+.related-heading {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.related-follow {
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-primary);
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-fine-print);
+  cursor: pointer;
+}
+
+.related-notice {
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+}
+
+.related-empty {
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
+  padding: var(--spacing-sm) 0;
+}
+
+.related-loading {
+  padding: var(--spacing-md) 0;
+}
+
+.related-more-row {
   display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  width: 100%;
-  padding: 8px 0;
-  border: none;
+  justify-content: center;
+  padding: var(--spacing-md) 0;
+}
+
+.related-more {
+  padding: 6px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-hairline);
   background: transparent;
   color: var(--color-text-primary);
   font-size: var(--font-size-caption);
   cursor: pointer;
-  text-align: left;
-}
-
-.related-row:hover .related-row-title {
-  color: var(--color-primary);
-}
-
-.related-row-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.related-row-cs {
-  flex-shrink: 0;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: #e8590c;
-  color: #fff;
-  font-size: 10px;
 }
 </style>

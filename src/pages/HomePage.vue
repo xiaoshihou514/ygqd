@@ -376,6 +376,15 @@ onUnmounted(() => {
             </button>
             <span class="tabs-page-count">共 {{ filteredItems.length }} 部</span>
           </div>
+          <div class="filter-group">
+            <input
+              v-model.number="minLikes"
+              type="number"
+              class="filter-input"
+              placeholder="最低星标数"
+              min="0"
+            />
+          </div>
         </div>
 
         <div v-if="activeTab.source === 'mix' && mixNotice" class="mix-notice">
@@ -432,16 +441,20 @@ onUnmounted(() => {
   margin-left: var(--spacing-sm);
 }
 
+/* 分类 tab(含「共X部」)与星标筛选始终同一行:tab 区可收缩并横滑,
+   筛选框固定宽度不收缩——tab 再多也不会把筛选框挤到下一行 */
 .page-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--spacing-sm);
   margin-bottom: var(--spacing-lg);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .content-tabs {
-  display: inline-flex;
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
   /* 横滑不换行:分类 tab 追加(哔咔登录后)不再把星标筛选挤到第二行 */
   flex-wrap: nowrap;
   overflow-x: auto;
@@ -559,15 +572,11 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* 极窄屏降级:filter-group 完整换行到第二行(不裁切) */
+/* 窄屏只缩小筛选框,不换行 */
 @media (max-width: 560px) {
-  .page-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .filter-group {
-    margin-left: 0;
+  .filter-input {
+    width: 104px;
+    padding: 0 var(--spacing-sm);
   }
 }
 

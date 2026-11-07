@@ -163,8 +163,25 @@ export interface VideoDetail {
   chinese?: boolean
   /** 发行厂商(missav 详情页解析;fs1 无此元数据为空) */
   studio?: string
-  /** 女优列表(missav 详情页 actresses 链接;fs1 为空) */
+  /** 女优名列表(兼容字段,与 actresses 同源) */
   actors?: string[]
+  /** 以下来自 missav 元数据区(fs1 线路按同番号从 missav 补齐) */
+  makers?: VideoMetaLink[]
+  actresses?: VideoMetaLink[]
+  /** 男优 */
+  maleActors?: VideoMetaLink[]
+  series?: VideoMetaLink[]
+  directors?: VideoMetaLink[]
+  labels?: VideoMetaLink[]
+  releaseDate?: string | null
+}
+
+/** 影片元数据条目:kind + id 对应 missav 列表页,用于相似影片与关注 */
+export interface VideoMetaLink {
+  /** maker / actress / actor / series / director / label / genre */
+  kind: string
+  id: string
+  name: string
 }
 
 export interface NovelChapter {

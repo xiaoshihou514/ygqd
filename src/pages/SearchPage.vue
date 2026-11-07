@@ -15,6 +15,7 @@ import SearchForm from '@/components/SearchForm.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import VideoCardGrid from '@/components/VideoCardGrid.vue'
 
 defineOptions({ name: 'SearchPage' })
 
@@ -302,25 +303,31 @@ const SCOPES: Array<{ key: SearchScope2; label: string }> = [
   { key: 'novel', label: '小说' },
 ]
 
+// 三个范围共用一个关键词:在任一范围搜过的词,切到其它范围自动用同一个词搜
+const sharedKeyword = ref((route.query.keyword as string | undefined) ?? '')
+const videoSearchedKw = ref('')
+const novelSearchedKw = ref('')
+
+watch(scope, (s) => {
+  const kw = sharedKeyword.value.trim()
+  if (!kw) return
+  if (s === 'video' && videoSearchedKw.value !== kw) void handleVideoSearch()
+  if (s === 'novel' && novelSearchedKw.value !== kw) void handleNovelSearch()
+})
+
 // —— 视频范围 ——
-const videoKeyword = ref('')
 const videoItems = ref<VideoCard[]>([])
 const videoPage = ref(1)
 const videoHasNext = ref(false)
 const videoSearching = ref(false)
 const videoError = ref('')
 
-/** 视频行标题:剥中字后缀大写(与视频板块展示一致) */
-function basicVideoTitle(code: string): string {
-  return code.replace('-chinese-subtitle', '').toUpperCase()
-}
-
 async function loadMoreVideos() {
   if (videoSearching.value || !videoHasNext.value) return
   videoSearching.value = true
   videoError.value = ''
   try {
-    const res = await searchVideos(videoKeyword.value.trim(), videoPage.value + 1)
+    const res = await searchVideos(videoSearchedKw.value, videoPage.value + 1)
     const seen = new Set(videoItems.value.map((v) => v.code))
     videoItems.value.push(...res.items.filter((v) => !seen.has(v.code)))
     videoPage.value += 1
@@ -333,10 +340,13 @@ async function loadMoreVideos() {
 }
 
 async function handleVideoSearch() {
-  const kw = videoKeyword.value.trim()
+  const kw = sharedKeyword.value.trim()
   if (!kw || videoSearching.value) return
   videoSearching.value = true
   videoError.value = ''
+  videoSearchedKw.value = kw
+  videoItems.value = []
+  addHistory(kw)
   try {
     const res = await searchVideos(kw, 1)
     videoItems.value = res.items
@@ -351,7 +361,7 @@ async function handleVideoSearch() {
 }
 
 // —— 小说范围(3 秒限速:同站点反爬闸) ——
-const novelKeyword = ref('')
+const novelSearching = ref(false)
 const novelHits = ref<NovelHit[]>([])
 const novelPageNo = ref(1)
 const novelTotalPages = ref(1)
@@ -370,9 +380,13 @@ let lastNovelFetchAt = 0
 const NOVEL_MIN_INTERVAL = 3000
 
 async function handleNovelSearch() {
-  const kw = novelKeyword.value.trim()
-  if (!kw || novelLoadingMore.value) return
+  const kw = sharedKeyword.value.trim()
+  if (!kw || novelSearching.value || novelLoadingMore.value) return
   novelError.value = ''
+  novelSearching.value = true
+  novelSearchedKw.value = kw
+  novelHits.value = []
+  addHistory(kw)
   try {
     const elapsed = Date.now() - lastNovelFetchAt
     if (elapsed < NOVEL_MIN_INTERVAL) {
@@ -386,13 +400,16 @@ async function handleNovelSearch() {
     if (!res.hits.length) novelError.value = '没有匹配的系列'
   } catch (e) {
     novelError.value = errorMessage(e) || '搜索失败'
+  } finally {
+    novelSearching.value = false
   }
 }
 
 function setNovelSort(key: NovelSort) {
   novelSort.value = key
   // 已有搜索词时改排序即重搜(排序变化影响结果序)
-  if (novelKeyword.value.trim() && novelHits.value.length) {
+  if (novelSearchedKw.value && novelHits.value.length) {
+    sharedKeyword.value = novelSearchedKw.value
     void handleNovelSearch()
   }
 }
@@ -407,7 +424,7 @@ async function loadMoreNovels() {
       await new Promise((resolve) => setTimeout(resolve, NOVEL_MIN_INTERVAL - elapsed))
     }
     lastNovelFetchAt = Date.now()
-    const res = await novelSearchPage(novelKeyword.value.trim(), novelPageNo.value + 1, novelSort.value)
+    const res = await novelSearchPage(novelSearchedKw.value, novelPageNo.value + 1, novelSort.value)
     const seen = new Set(novelHits.value.map((h) => h.id))
     novelHits.value.push(...res.hits.filter((h) => !seen.has(h.id)))
     novelPageNo.value = res.page
@@ -421,6 +438,7 @@ async function loadMoreNovels() {
 
 async function handleSearch(params: SearchParams, likesFilter: number, order: string) {
   addHistory(params.keyword)
+  sharedKeyword.value = params.keyword
   loading.value = true
   error.value = ''
   hasSearched.value = true
@@ -551,7 +569,7 @@ function goToSplit() {
         <form class="scope-search" @submit.prevent="handleVideoSearch">
           <div class="scope-search-wrap">
             <input
-              v-model="videoKeyword"
+              v-model="sharedKeyword"
               type="search"
               class="scope-input"
               placeholder="搜索视频(番号/标题/厂商)…"
@@ -563,21 +581,10 @@ function goToSplit() {
           </button>
         </form>
         <p v-if="videoError" class="scope-error">{{ videoError }}</p>
-        <div v-if="videoItems.length" class="scope-rows">
-          <button
-            v-for="v in videoItems"
-            :key="v.code"
-            type="button"
-            class="scope-row"
-            @click="router.push(`/videos/${v.code}`)"
-          >
-            <span class="scope-row-main">
-              <span class="scope-row-title">{{ basicVideoTitle(v.code) }}</span>
-              <span v-if="v.chinese" class="scope-row-badge">中字</span>
-            </span>
-            <span class="scope-row-sub">{{ v.title || basicVideoTitle(v.code) }}</span>
-          </button>
+        <div v-if="videoSearching && !videoItems.length" class="scope-loading">
+          <LoadingSpinner message="正在搜索视频..." />
         </div>
+        <VideoCardGrid v-if="videoItems.length" :items="videoItems" class="scope-video-grid" />
         <div v-if="videoHasNext && videoItems.length" class="scope-more-row">
           <button type="button" class="scope-more-btn" :disabled="videoSearching || !videoHasNext" @click="loadMoreVideos">
             {{ videoSearching ? '加载中…' : '加载更多' }}
@@ -589,15 +596,15 @@ function goToSplit() {
         <form class="scope-search" @submit.prevent="handleNovelSearch">
           <div class="scope-search-wrap">
             <input
-              v-model="novelKeyword"
+              v-model="sharedKeyword"
               type="search"
               class="scope-input"
               placeholder="搜索小说(书名/作者)…"
               autocomplete="off"
             >
           </div>
-          <button type="submit" class="scope-btn-submit" :disabled="novelLoadingMore">
-            {{ novelLoadingMore ? '搜索中…' : '搜索' }}
+          <button type="submit" class="scope-btn-submit" :disabled="novelSearching || novelLoadingMore">
+            {{ novelSearching ? '搜索中…' : '搜索' }}
           </button>
         </form>
         <div class="sort-row" role="group" aria-label="排序方式">
@@ -616,6 +623,9 @@ function goToSplit() {
           </div>
         </div>
         <p v-if="novelError" class="scope-error">{{ novelError }}</p>
+        <div v-if="novelSearching" class="scope-loading">
+          <LoadingSpinner message="正在搜索小说(经小说源连接,首次可能需要十几秒)..." />
+        </div>
         <div v-if="novelHits.length" class="scope-rows">
           <button
             v-for="h in novelHits"
@@ -638,6 +648,7 @@ function goToSplit() {
         </div>
       </template>
 
+      <template v-if="scope === 'comic'">
       <div v-if="!hasSearched" class="search-intro">
         <EmptyState
           title="搜索漫画资源"
@@ -686,6 +697,7 @@ function goToSplit() {
           />
         </div>
       </template>
+      </template>
     </div>
   </div>
 </template>
@@ -698,6 +710,14 @@ function goToSplit() {
 
 .search-page {
   padding-bottom: var(--spacing-xl);
+}
+
+.scope-loading {
+  padding: var(--spacing-lg) 0;
+}
+
+.scope-video-grid {
+  margin-top: var(--spacing-md);
 }
 
 .search-intro {

@@ -340,7 +340,12 @@ async fn video_follow_works(
     let page = page.unwrap_or(1).max(1);
     match (source.as_str(), kind.as_str()) {
         ("fs1", "actress") => state.video.fs1_model_works(&target_id, page).await,
-        ("missav", kind @ ("maker" | "actress")) => {
+        // 关注(maker/actress)与详情页元数据条目(男优/系列/导演/标签/类型)
+        // 共用同一作品流通道,路由映射见 missav_list_url
+        (
+            "missav",
+            kind @ ("maker" | "actress" | "actor" | "series" | "director" | "label" | "genre"),
+        ) => {
             state
                 .video
                 .missav_follow_works(kind, &target_id, page)
@@ -388,15 +393,13 @@ async fn novel_ranking(
     {
         return Ok(hit);
     }
-    // 排行条目与列表页同构,复用 extract_series;period 的端点参数
-    // 形态待登录后取证,首版抓基础榜单(单页)
-    let _ = &period;
-    let hits = sources::novel::rank_series(&app).await?;
-    let page_data = sources::novel::NovelLatestPage {
-        hits,
-        page: page.unwrap_or(1),
-        total_pages: 1,
-    };
+    // 周期切换控件在榜单页上自适应发现(见 rank_series)
+    let page_data = sources::novel::rank_series(
+        &app,
+        sources::novel::RankPeriod::parse(&period),
+        page.unwrap_or(1),
+    )
+    .await?;
     state.put(key, &page_data);
     Ok(page_data)
 }

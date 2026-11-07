@@ -47,7 +47,7 @@ export const novelSearchPage = (
 export const novelRecommend = (page?: number) =>
   invoke<NovelLatestPage>('novel_recommend', { page })
 export const novelRanking = (period: 'day' | 'week' | 'month', page?: number) =>
-  invoke<NovelLatestPage>('novel_rank', { period, page })
+  invoke<NovelLatestPage>('novel_ranking', { period, page })
 export const novelFollowAuthor = (authorId: string, authorName: string) =>
   invoke<void>('novel_follow_author', { authorId, authorName })
 export const novelUnfollowAuthor = (authorId: string) =>

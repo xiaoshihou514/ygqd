@@ -1,100 +1,51 @@
 <script setup lang="ts">
+// 小说发现页:推荐(首页最新流)/日榜/月榜。站内搜索统一在底部「搜索」页(小说范围),
+// 本页不再保留单独的搜索框
 import { errorMessage } from '@/utils/errors'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { novelAdd, novelSearchPage, novelLatest } from '@/services/api'
+import { novelRanking, novelRecommend } from '@/services/api'
 import type { NovelHit } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
-import { createSearchHistory } from '@/composables/useSearchHistory'
-import { novelRanking, novelRecommend } from '@/services/api'
 
 const router = useRouter()
-const hits = ref<NovelHit[]>([])
-const searchKeyword = ref('')
-const searching = ref(false)
-const searchError = ref('')
-const addingHitId = ref('')
-// 搜索分页:站点每页 30 条(热门词数百页);反爬闸按频率触发,
-// 相邻抓取保底 3 秒间隔(不足由加载更多内部等待补齐)
-const searchPage = ref(1)
-const searchTotalPages = ref(1)
-const loadingMoreHits = ref(false)
-const activeKeyword = ref('')
-const hasMoreHits = computed(() => searchPage.value < searchTotalPages.value)
 
-// 结果区来源:最近一次是「最新」流还是「搜索」流,加载更多据此分发
-const discoverMode = ref<'latest' | 'search'>('latest')
-const loadingLatest = ref(false)
-const latestPage = ref(0)
-// 发现流无总页数:hits 非空即继续,空页终止
-const hasMoreLatest = ref(false)
-
-// ============ 日榜/月榜独立状态(批次 2 骨架,mock 数据) ============
-interface NovelRankState {
-  items: NovelHit[]
-  page: number
-  hasNext: boolean // 上次非空即继续(发现流口径,空页终止)
-  updatedAt: number // 数据时间(swr 提示)
-  fetchedAt: number // 上次实际抓取(10 秒预算守卫)
-  loaded: boolean
-  refreshing: boolean
-}
-const emptyRankState = (): NovelRankState => ({
-  items: [],
-  page: 1,
-  hasNext: true,
-  updatedAt: 0,
-  fetchedAt: 0,
-  loaded: false,
-  refreshing: false,
-})
-const rankStates = ref<Record<'daily' | 'monthly', NovelRankState>>({
-  daily: emptyRankState(),
-  monthly: emptyRankState(),
-})
-// 倒计时响应式 tick(每秒刷新,驱动刷新按钮的禁用倒计时)
-const nowTick = ref(Date.now())
-let rankTickTimer: ReturnType<typeof setInterval> | undefined
-
-function rankCooldownSeconds(tab: 'daily' | 'monthly'): number {
-  const left = 10000 - (nowTick.value - rankStates.value[tab].fetchedAt)
-  return Math.max(0, Math.ceil(left / 1000))
-}
-
-function recommendCooldownSeconds(): number {
-  // 推荐即最新流:与搜索/榜单共用 hlib 闸(lastHlibFetchAt)
-  const left = 10000 - (nowTick.value - lastHlibFetchAt)
-  return Math.max(0, Math.ceil(left / 1000))
-}
-
-function formatUpdatedAt(ts: number): string {
-  if (!ts) return '尚未加载'
-  const d = new Date(ts)
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  return `数据更新于 ${hh}:${mm}`
-}
-
-// 板块 tab:推荐(最新流,批次 1)/日榜/月榜(批次 2 数据端点,先上骨架)
 type NovelTab = 'recommend' | 'daily' | 'monthly'
-const novelTab = ref<NovelTab>('recommend')
 const NOVEL_TABS: Array<{ key: NovelTab; label: string }> = [
   { key: 'recommend', label: '推荐' },
   { key: 'daily', label: '日榜' },
   { key: 'monthly', label: '月榜' },
 ]
+const novelTab = ref<NovelTab>('recommend')
 
-// 搜索历史:独立 key(书名/作者与番号语义不同)
-const novelHistory = createSearchHistory('niacg-novel-search-history')
-const showNovelHistory = ref(false)
-const selectedNovelHistoryIndex = ref(-1)
-const searchInput = ref<HTMLInputElement | null>(null)
-const matchedNovelHistory = computed(() => novelHistory.suggestions(searchKeyword.value))
+/** 每个 tab 独立的列表状态(切 tab 不丢已加载内容) */
+interface TabState {
+  items: NovelHit[]
+  page: number
+  totalPages: number
+  loaded: boolean
+  loading: boolean
+  error: string
+}
+const emptyState = (): TabState => ({
+  items: [],
+  page: 0,
+  totalPages: 1,
+  loaded: false,
+  loading: false,
+  error: '',
+})
+const states = ref<Record<NovelTab, TabState>>({
+  recommend: emptyState(),
+  daily: emptyState(),
+  monthly: emptyState(),
+})
+const current = computed(() => states.value[novelTab.value])
+const hasMore = computed(() => current.value.page < current.value.totalPages)
 
-// hlib 统一节流:搜索与发现流共用同一站点反爬闸,相邻抓取保底 3 秒
+// hlib 统一节流:各 tab 共用同一站点反爬闸,相邻抓取保底 3 秒
 let lastHlibFetchAt = 0
 const HLIB_MIN_INTERVAL = 3000
-
 async function guardHlibInterval() {
   const elapsed = Date.now() - lastHlibFetchAt
   if (elapsed < HLIB_MIN_INTERVAL) {
@@ -103,181 +54,61 @@ async function guardHlibInterval() {
   lastHlibFetchAt = Date.now()
 }
 
-/** 榜单加载(mock 数据;批次 2 真端点就绪后替换为 invoke 转发) */
-async function loadRank(tab: 'daily' | 'monthly', page: number) {
-  const st = rankStates.value[tab]
-  if (st.refreshing) return
-  st.refreshing = true
+function fetchPage(tab: NovelTab, page: number) {
+  if (tab === 'recommend') return novelRecommend(page)
+  return novelRanking(tab === 'daily' ? 'day' : 'month', page)
+}
+
+async function loadTab(tab: NovelTab, page: number) {
+  const st = states.value[tab]
+  if (st.loading) return
+  st.loading = true
+  st.error = ''
   try {
     await guardHlibInterval()
-    const res = await novelRanking(tab === 'daily' ? 'day' : 'month', page)
-    if (page === 1) st.items = res.hits
-    else appendHits(res.hits)
+    const res = await fetchPage(tab, page)
+    if (page <= 1) {
+      st.items = res.hits
+    } else {
+      const seen = new Set(st.items.map((h) => h.id))
+      st.items.push(...res.hits.filter((h) => !seen.has(h.id)))
+    }
     st.page = res.page
-    st.hasNext = res.hits.length > 0
-    st.updatedAt = Date.now()
-    st.fetchedAt = Date.now()
+    st.totalPages = res.totalPages
     st.loaded = true
   } catch (e) {
-    searchError.value = errorMessage(e) || '榜单加载失败'
-  } finally {
-    st.refreshing = false
-  }
-}
-
-const hasMoreNext = computed(() =>
-  discoverMode.value === 'search' ? hasMoreHits.value : hasMoreLatest.value,
-)
-const moreLabel = computed(() =>
-  discoverMode.value === 'search'
-    ? `加载更多(第 ${searchPage.value + 1}/${searchTotalPages.value} 页)`
-    : '加载更多',
-)
-
-async function loadLatestFirst() {
-  discoverMode.value = 'latest'
-  searchError.value = ''
-  loadingLatest.value = true
-  try {
-    await guardHlibInterval()
-    const res = await novelRecommend(1)
-    hits.value = res.hits
-    latestPage.value = res.page
-    hasMoreLatest.value = res.page < res.totalPages
-  } catch (e) {
-    searchError.value = errorMessage(e) || '加载失败'
-  } finally {
-    loadingLatest.value = false
-  }
-}
-
-function appendHits(list: NovelHit[]) {
-  const seen = new Set(hits.value.map((h) => h.id))
-  hits.value.push(...list.filter((h) => !seen.has(h.id)))
-}
-
-async function handleSearch() {
-  const kw = searchKeyword.value.trim()
-  if (!kw || searching.value) return
-  searching.value = true
-  searchError.value = ''
-  try {
-    await guardHlibInterval()
-    const res = await novelSearchPage(kw, 1)
-    hits.value = res.hits
-    searchPage.value = res.page
-    searchTotalPages.value = res.totalPages
-    activeKeyword.value = kw
-    discoverMode.value = 'search'
-    novelHistory.add(kw)
-    if (!hits.value.length) searchError.value = '没有匹配的系列'
-  } catch (e) {
-    searchError.value = errorMessage(e) || '搜索失败'
-  } finally {
-    searching.value = false
-  }
-}
-
-/** 加载更多:按结果来源分发(搜索分页/最新流分页),统一 hlib 节流 */
-async function loadMore() {
-  if (loadingMoreHits.value || !hasMoreNext.value) return
-  if (discoverMode.value === 'search' && !activeKeyword.value) return
-  loadingMoreHits.value = true
-  searchError.value = ''
-  try {
-    await guardHlibInterval()
-    if (discoverMode.value === 'search') {
-      const res = await novelSearchPage(activeKeyword.value, searchPage.value + 1)
-      appendHits(res.hits)
-      searchPage.value = res.page
-      searchTotalPages.value = res.totalPages
-    } else {
-      const res = await novelRecommend(latestPage.value + 1)
-      appendHits(res.hits)
-      latestPage.value = res.page
-      hasMoreLatest.value = res.page < res.totalPages
-    }
-  } catch (e) {
     const msg = errorMessage(e)
-    // 空页后端抛「未解析到系列链接」:视为到达末尾,静默收终态不报错
-    if (msg.includes('未解析到系列链接')) {
-      hasMoreLatest.value = false
+    // 深页空页后端抛「未解析到系列链接」:视为到达末尾
+    if (page > 1 && msg.includes('未解析到系列链接')) {
+      st.totalPages = st.page
     } else {
-      searchError.value = msg || '加载更多失败'
+      st.error = msg || '加载失败'
     }
   } finally {
-    loadingMoreHits.value = false
+    st.loading = false
   }
 }
 
-// 搜索历史交互(镜像 SearchForm/VideoBrowser 交互)
-function selectNovelHistory(kw: string) {
-  searchKeyword.value = kw
-  showNovelHistory.value = false
-  selectedNovelHistoryIndex.value = -1
-  void handleSearch()
+function refresh() {
+  void loadTab(novelTab.value, 1)
 }
 
-function removeNovelHistory(kw: string) {
-  novelHistory.remove(kw)
+function loadMore() {
+  if (!hasMore.value) return
+  void loadTab(novelTab.value, current.value.page + 1)
 }
 
-function clearNovelHistory() {
-  novelHistory.clear()
-  showNovelHistory.value = false
-  selectedNovelHistoryIndex.value = -1
+function openSeries(hit: NovelHit) {
+  void router.push(`/novels/series/${hit.id}`)
 }
 
-function onSearchFocus() {
-  if (novelHistory.history.value.length > 0) showNovelHistory.value = true
-}
-
-function onSearchBlur() {
-  setTimeout(() => {
-    showNovelHistory.value = false
-    selectedNovelHistoryIndex.value = -1
-  }, 150)
-}
-
-function onSearchKeydown(e: KeyboardEvent) {
-  const list = matchedNovelHistory.value
-  if (list.length === 0) return
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    showNovelHistory.value = true
-    selectedNovelHistoryIndex.value = Math.min(selectedNovelHistoryIndex.value + 1, list.length - 1)
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    selectedNovelHistoryIndex.value = Math.max(selectedNovelHistoryIndex.value - 1, -1)
-  } else if (e.key === 'Enter' && selectedNovelHistoryIndex.value >= 0) {
-    e.preventDefault()
-    selectNovelHistory(list[selectedNovelHistoryIndex.value]!)
-  } else if (e.key === 'Escape') {
-    showNovelHistory.value = false
-    selectedNovelHistoryIndex.value = -1
-  }
-}
-
-/** 从发现/搜索结果一键入库 */
-async function addHit(hit: NovelHit) {
-  if (addingHitId.value) return
-  addingHitId.value = hit.id
-  try {
-    await novelAdd(hit.id)
-  } catch (e) {
-    searchError.value = errorMessage(e) || '添加失败'
-  } finally {
-    addingHitId.value = ''
-  }
-}
+// 首次切到某个 tab 才加载(榜单需登录,不在进入页面时就打扰)
+watch(novelTab, (tab) => {
+  if (!states.value[tab].loaded && !states.value[tab].loading) void loadTab(tab, 1)
+})
 
 onMounted(() => {
-  // 打开即内容流
-  void loadLatestFirst()
-  // 倒计时 tick(每秒刷新 nowTick,驱动刷新按钮禁用态)
-  rankTickTimer = setInterval(() => {
-    nowTick.value = Date.now()
-  }, 1000)
+  void loadTab('recommend', 1)
 })
 </script>
 
@@ -301,110 +132,59 @@ onMounted(() => {
         >
           {{ t.label }}
         </button>
+        <button
+          type="button"
+          class="add-btn ghost refresh-btn"
+          :disabled="current.loading"
+          @click="refresh"
+        >
+          {{ current.loading ? '加载中…' : '刷新' }}
+        </button>
       </div>
 
-      <div v-if="novelTab !== 'recommend'" class="tab-placeholder">
-        {{ novelTab === 'daily' ? '日榜即将上线' : '月榜即将上线' }}
+      <p v-if="current.error" class="add-error">{{ current.error }}</p>
+
+      <div v-if="current.loading && !current.items.length" class="tab-loading">
+        <LoadingSpinner message="正在加载(经小说源连接,首次可能需要十几秒)..." />
       </div>
 
-      <template v-else>
-        <form class="add-bar" @submit.prevent="handleSearch">
-          <div class="search-wrap">
-            <input
-              ref="searchInput"
-              v-model="searchKeyword"
-              type="search"
-              class="add-input"
-              placeholder="站内搜索小说(书名/作者)"
-              autocomplete="off"
-              @focus="onSearchFocus"
-              @blur="onSearchBlur"
-              @keydown="onSearchKeydown"
+      <div v-if="current.items.length" class="hit-list">
+        <button
+          v-for="(hit, idx) in current.items"
+          :key="hit.id"
+          type="button"
+          class="hit-row"
+          @click="openSeries(hit)"
+        >
+          <span v-if="novelTab !== 'recommend'" class="hit-rank">{{ idx + 1 }}</span>
+          <div class="hit-main">
+            <span class="hit-title">{{ hit.title }}</span>
+            <span
+              v-if="hit.author || (hit.tags && hit.tags.length > 0)"
+              class="hit-meta"
             >
-            <ul
-              v-if="showNovelHistory && matchedNovelHistory.length > 0"
-              class="history-dropdown"
-            >
-              <li
-                v-for="(s, i) in matchedNovelHistory"
-                :key="s"
-                class="history-item"
-                :class="{ highlighted: i === selectedNovelHistoryIndex }"
-                @mousedown.prevent="selectNovelHistory(s)"
-              >
-                <svg class="history-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-                <span class="history-text">{{ s }}</span>
-                <button
-                  type="button"
-                  class="history-remove"
-                  title="删除历史"
-                  aria-label="删除历史"
-                  @mousedown.stop.prevent="removeNovelHistory(s)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </li>
-              <li class="history-clear-row">
-                <button type="button" class="history-clear" @mousedown.stop.prevent="clearNovelHistory()">
-                  清空搜索历史
-                </button>
-              </li>
-            </ul>
-          </div>
-          <button type="submit" class="add-btn" :disabled="searching">
-            {{ searching ? '搜索中…' : '搜索' }}
-          </button>
-          <button type="button" class="add-btn ghost" :disabled="loadingLatest" @click="loadLatestFirst">
-            {{ loadingLatest ? '加载中…' : '最新' }}
-          </button>
-        </form>
-        <p v-if="searchError" class="add-error">{{ searchError }}</p>
-
-        <div v-if="hits.length" class="hit-list">
-          <div v-for="hit in hits" :key="hit.id" class="hit-row">
-            <div class="hit-main">
-              <span class="hit-title">{{ hit.title }}</span>
+              <template v-if="hit.author">{{ hit.author }}</template>
               <span
-                v-if="hit.author || (hit.tags && hit.tags.length > 0)"
-                class="hit-meta"
+                v-for="tag in (hit.tags ?? []).slice(0, 3)"
+                :key="tag"
+                class="hit-tag"
               >
-                <template v-if="hit.author">{{ hit.author }}</template>
-                <span
-                  v-for="tag in (hit.tags ?? []).slice(0, 3)"
-                  :key="tag"
-                  class="hit-tag"
-                >
-                  {{ tag }}
-                </span>
+                {{ tag }}
               </span>
-            </div>
-            <!-- 收藏按钮过渡期隐藏:批次 2 关注作者上线后恢复 -->
+            </span>
           </div>
-        </div>
+        </button>
+      </div>
+      <p v-else-if="current.loaded && !current.loading && !current.error" class="hit-end">暂无内容</p>
 
-        <div v-if="hits.length && hasMoreNext" class="hit-more">
-          <button
-            class="hit-more-btn"
-            :disabled="loadingMoreHits"
-            :title="discoverMode === 'search' ? `继续搜索:${activeKeyword}` : '继续加载最新'"
-            @click="loadMore"
-          >
-            {{
-              loadingMoreHits
-                ? '加载中…(站点限速约 3 秒/次)'
-                : moreLabel
-            }}
-          </button>
-        </div>
-        <div v-else-if="hits.length && !hasMoreNext" class="hit-end">
-          已展示全部
-        </div>
-      </template>
+      <div v-if="current.items.length && hasMore" class="hit-more">
+        <button class="hit-more-btn" :disabled="current.loading" @click="loadMore">
+          {{ current.loading ? '加载中…(站点限速约 3 秒/次)' : `加载更多(第 ${current.page + 1}/${current.totalPages} 页)` }}
+        </button>
+      </div>
+      <div v-else-if="current.items.length && !hasMore" class="hit-end">
+        已展示全部
+      </div>
     </div>
   </div>
 </template>
@@ -446,113 +226,6 @@ onMounted(() => {
   color: #fff;
 }
 
-.search-wrap {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-}
-
-.history-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  margin: 0;
-  padding: 4px 0;
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  z-index: 100;
-  overflow: hidden;
-  list-style: none;
-}
-
-.history-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px var(--spacing-md);
-  font-size: var(--font-size-body);
-  color: var(--color-text-primary);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.history-item:hover,
-.history-item.highlighted {
-  background: var(--color-primary-focus);
-}
-
-.history-icon {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  opacity: 0.5;
-}
-
-.history-text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.history-remove {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
-}
-
-.history-item:hover .history-remove {
-  opacity: 0.7;
-}
-
-.history-remove:hover {
-  opacity: 1;
-  background: rgba(0, 0, 0, 0.08);
-}
-
-.history-clear-row {
-  border-top: 1px solid var(--color-hairline);
-  margin-top: 4px;
-  padding: 6px var(--spacing-md);
-}
-
-.history-clear {
-  width: 100%;
-  padding: 4px 0;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-fine-print);
-  cursor: pointer;
-  text-align: center;
-  transition: color 0.15s;
-}
-
-.history-clear:hover {
-  color: var(--color-text-primary);
-}
-
-.tab-placeholder {
-  padding: var(--spacing-xl) var(--spacing-md);
-  text-align: center;
-  font-size: var(--font-size-caption);
-  color: var(--color-text-secondary);
-  border: 1px dashed var(--color-hairline);
-  border-radius: var(--radius-md);
-}
-
 .page-heading {
   display: flex;
   align-items: center;
@@ -569,25 +242,6 @@ onMounted(() => {
   color: var(--color-primary);
   font-size: var(--font-size-caption);
   cursor: pointer;
-}
-
-.add-bar {
-  display: flex;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-sm);
-}
-
-.add-input {
-  /* 输入在 search-wrap(非 flex 容器)内,须显式撑满:否则按 UA 默认
-     宽度渲染,窄屏溢出与按钮重合 */
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 14px;
-  border: 1px solid var(--color-border, var(--color-hairline));
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-caption);
 }
 
 .add-btn {
@@ -615,18 +269,37 @@ onMounted(() => {
   flex-direction: column;
   gap: 6px;
   margin-bottom: var(--spacing-lg);
-  max-height: 42vh;
-  overflow-y: auto;
+}
+
+.tab-loading {
+  padding: var(--spacing-lg) 0;
+}
+
+.refresh-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+}
+
+.hit-rank {
+  flex-shrink: 0;
+  min-width: 22px;
+  text-align: center;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--color-primary);
 }
 
 .hit-row {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
+  width: 100%;
   padding: 8px 12px;
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-md);
   background: var(--color-card-bg);
+  text-align: left;
+  cursor: pointer;
 }
 
 .hit-main {
@@ -696,27 +369,6 @@ onMounted(() => {
   padding: var(--spacing-sm) 0;
   font-size: var(--font-size-fine-print, 12px);
   color: var(--color-text-secondary);
-}
-
-.hit-add {
-  border: 1px solid var(--color-primary);
-  border-radius: var(--radius-pill, 999px);
-  background: transparent;
-  color: var(--color-primary);
-  font-size: 12px;
-  padding: 4px 12px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.hit-add:disabled {
-  opacity: 0.5;
-}
-
-.add-hint {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
-  margin: 0 0 var(--spacing-sm);
 }
 
 .add-error {

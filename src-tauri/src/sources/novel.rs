@@ -554,22 +554,209 @@ pub async fn author_page_works(app: &AppHandle, author_id: &str) -> Result<Vec<N
     Ok(out)
 }
 
+/// 榜单周期
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RankPeriod {
+    Day,
+    Week,
+    Month,
+}
+
+impl RankPeriod {
+    pub fn parse(v: &str) -> Self {
+        match v {
+            "week" | "weekly" => Self::Week,
+            "month" | "monthly" => Self::Month,
+            _ => Self::Day,
+        }
+    }
+
+    /// 站点切换控件文案的判定:控件多为「日榜/周榜/月榜」「今日/本周/本月」「24小时/7天/30天」
+    fn matches_label(self, text: &str) -> bool {
+        let t = text.trim();
+        if t.is_empty() || t.chars().count() > 8 {
+            return false;
+        }
+        match self {
+            Self::Day => {
+                t.contains('日') || t.contains("24") || t.contains("今天") || t.contains("1天")
+            }
+            Self::Week => {
+                t.contains('周') || t.contains('週') || t.contains("7天") || t.contains("七天")
+            }
+            Self::Month => t.contains('月') || t.contains("30天") || t.contains("三十天"),
+        }
+    }
+}
+
+/// 榜单页上「切到某周期」的控件指向:直接链接,或 rp('键','值') 形态的参数
+#[derive(Clone, Debug, PartialEq)]
+enum RankSwitch {
+    Href(String),
+    Param(String, String),
+}
+
+fn re_rp() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(r#"rp\(\s*['"]([A-Za-z_]\w*)['"]\s*,\s*['"]?([^'")\s]+)['"]?\s*\)"#)
+            .expect("static regex")
+    })
+}
+
+/// 从榜单页发现周期切换控件(站点列表页统一用 rp(键,值) 改查询参数;
+/// 也兼容普通链接与 <select onchange="rp('键', this.value)"> 下拉)。
+/// 榜单参数形态未在登录态取证,故按控件文案自适应识别,不写死参数名。
+fn discover_rank_switch(html: &str, period: RankPeriod) -> Option<RankSwitch> {
+    let doc = Html::parse_document(html);
+    for el in doc.select(&sel("a, button, li, span, label")) {
+        let text = normalize_text(&el.text().collect::<String>());
+        if !period.matches_label(&text) {
+            continue;
+        }
+        let v = el.value();
+        if let Some(onclick) = v.attr("onclick") {
+            if let Some(c) = re_rp().captures(onclick) {
+                if &c[1] != "p" {
+                    return Some(RankSwitch::Param(c[1].to_string(), c[2].to_string()));
+                }
+            }
+        }
+        if let Some(href) = v.attr("href") {
+            if let Some(c) = re_rp().captures(href) {
+                if &c[1] != "p" {
+                    return Some(RankSwitch::Param(c[1].to_string(), c[2].to_string()));
+                }
+            } else if href.contains("/rank") && !href.contains("p=") {
+                return Some(RankSwitch::Href(href.to_string()));
+            }
+        }
+    }
+    let re_select_key = regex::Regex::new(r#"rp\(\s*['"]([A-Za-z_]\w*)['"]\s*,\s*this\.value"#)
+        .expect("static regex");
+    for select in doc.select(&sel("select[onchange]")) {
+        let onchange = select.value().attr("onchange").unwrap_or("");
+        let Some(key) = re_select_key.captures(onchange).map(|c| c[1].to_string()) else {
+            continue;
+        };
+        if key == "p" {
+            continue;
+        }
+        for opt in select.select(&sel("option")) {
+            let text = normalize_text(&opt.text().collect::<String>());
+            if period.matches_label(&text) {
+                if let Some(val) = opt.value().attr("value") {
+                    return Some(RankSwitch::Param(key, val.to_string()));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 只认页码下拉(rp('p', …))的最大值:榜单页可能还有周期下拉(值如 1/7/30),
+/// 通用 total_pages 会把它误当页数
+fn rank_total_pages(doc: &Html) -> i64 {
+    let mut max = 1i64;
+    for opt in doc.select(&sel("select[onchange*=\"'p'\"] option")) {
+        if let Ok(v) = opt.value().attr("value").unwrap_or("").parse::<i64>() {
+            max = max.max(v);
+        }
+    }
+    max
+}
+
+/// 在地址上设置查询参数(已有同名参数则替换)
+fn with_query(base: &str, key: &str, value: &str) -> String {
+    let Ok(mut url) = url::Url::parse(base) else {
+        return base.to_string();
+    };
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| k != key)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    url.query_pairs_mut()
+        .clear()
+        .extend_pairs(pairs)
+        .append_pair(key, value);
+    url.to_string()
+}
+
+/// 周期 → 已发现的榜单基础地址(进程内记忆,避免每次先抓默认页再切换)
+static RANK_BASES: std::sync::Mutex<Vec<(RankPeriod, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn rank_page_url(base: &str, page: i64) -> String {
+    if page <= 1 {
+        base.to_string()
+    } else {
+        with_query(base, "p", &page.to_string())
+    }
+}
+
 /// 系列排行榜(/rank/s,需登录;未登录返回登录页由调用方引导)。
-/// 排行条目与搜索/列表页同构(/s/ 系列 + 标题),复用 extract_series。
-pub async fn rank_series(app: &AppHandle) -> Result<Vec<NovelHit>, String> {
-    let html = fetch_html(app, RANK_URL).await?;
+/// 先抓默认榜单页,从页面的切换控件找到所求周期的地址再抓;找不到控件时
+/// 日榜按默认页返回,周/月榜如实报错(不猜参数名去撞站点反爬闸)。
+pub async fn rank_series(
+    app: &AppHandle,
+    period: RankPeriod,
+    page: i64,
+) -> Result<NovelLatestPage, String> {
+    let page = page.max(1);
+    let remembered = RANK_BASES
+        .lock()
+        .ok()
+        .and_then(|v| v.iter().find(|(p, _)| *p == period).map(|(_, u)| u.clone()));
+    let (_base, html) = match remembered {
+        Some(base) => {
+            let html = fetch_rank_html(app, &rank_page_url(&base, page)).await?;
+            (base, html)
+        }
+        None => {
+            let default_html = fetch_rank_html(app, RANK_URL).await?;
+            let base = match discover_rank_switch(&default_html, period) {
+                Some(RankSwitch::Href(href)) => url::Url::parse(RANK_URL)
+                    .and_then(|b| b.join(&href))
+                    .map(|u| u.to_string())
+                    .unwrap_or_else(|_| RANK_URL.to_string()),
+                Some(RankSwitch::Param(k, v)) => with_query(RANK_URL, &k, &v),
+                None if period == RankPeriod::Day => RANK_URL.to_string(),
+                None => {
+                    return Err(match period {
+                        RankPeriod::Month => "站点榜单页未找到月榜切换,暂时无法获取月榜".into(),
+                        _ => "站点榜单页未找到周榜切换,暂时无法获取周榜".into(),
+                    })
+                }
+            };
+            if let Ok(mut v) = RANK_BASES.lock() {
+                v.push((period, base.clone()));
+            }
+            let html = if base == RANK_URL && page <= 1 {
+                default_html
+            } else {
+                fetch_rank_html(app, &rank_page_url(&base, page)).await?
+            };
+            (base, html)
+        }
+    };
+    let hits = extract_series(&html);
+    let total_pages = rank_total_pages(&Html::parse_document(&html)).max(page);
+    if hits.is_empty() && page <= 1 {
+        return Err("排行榜未解析到系列链接".into());
+    }
+    Ok(NovelLatestPage {
+        hits,
+        page,
+        total_pages,
+    })
+}
+
+async fn fetch_rank_html(app: &AppHandle, url: &str) -> Result<String, String> {
+    let html = fetch_html(app, url).await?;
     if is_challenge(&html) {
         return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
     }
-    if is_login_page(&html) {
-        show_hlib_gateway(app);
-        return Err("hlib 榜单需要登录:已在弹出窗口中打开 hlib,请登录后重试".into());
-    }
-    let hits = extract_series(&html);
-    if hits.is_empty() {
-        return Err("排行榜未解析到系列链接".into());
-    }
-    Ok(hits)
+    Ok(html)
 }
 
 /// 发现:首页提取最新系列(不依赖具体列表结构)
@@ -600,6 +787,48 @@ pub async fn latest_series(app: &AppHandle, page: i64) -> Result<NovelLatestPage
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovers_rank_period_switches() {
+        // rp(键,值) 按钮形态(站点列表页同款脚本)
+        let html = r#"<div><button onclick="rp('t','d')">日榜</button>
+            <button onclick="rp('t', 'w')">周榜</button>
+            <button onclick="rp('t','m')">月榜</button>
+            <select onchange="rp('p', this.value)"><option value="1">1</option><option value="5">5</option></select></div>"#;
+        assert_eq!(
+            discover_rank_switch(html, RankPeriod::Month),
+            Some(RankSwitch::Param("t".into(), "m".into()))
+        );
+        assert_eq!(
+            discover_rank_switch(html, RankPeriod::Day),
+            Some(RankSwitch::Param("t".into(), "d".into()))
+        );
+        // 下拉形态
+        let html = r#"<select onchange="rp('range', this.value)"><option value="1">今日</option>
+            <option value="30">30天</option></select>"#;
+        assert_eq!(
+            discover_rank_switch(html, RankPeriod::Month),
+            Some(RankSwitch::Param("range".into(), "30".into()))
+        );
+        // 普通链接形态
+        let html = r#"<a href="/rank/s?type=month">本月</a><a href="/rank/s?p=2">2</a>"#;
+        assert_eq!(
+            discover_rank_switch(html, RankPeriod::Month),
+            Some(RankSwitch::Href("/rank/s?type=month".into()))
+        );
+        // 无控件
+        assert_eq!(discover_rank_switch("<p>无</p>", RankPeriod::Month), None);
+        // 页码只认 rp('p') 下拉,周期下拉的 30 不算页数
+        let doc = Html::parse_document(
+            r#"<select onchange="rp('range', this.value)"><option value="30">30天</option></select>
+               <select onchange="rp('p', this.value)"><option value="3">3</option></select>"#,
+        );
+        assert_eq!(rank_total_pages(&doc), 3);
+        assert_eq!(
+            with_query("https://hlib.cc/rank/s?t=m", "p", "2"),
+            "https://hlib.cc/rank/s?t=m&p=2"
+        );
+    }
 
     #[test]
     fn extracts_entries_with_author_and_tags() {

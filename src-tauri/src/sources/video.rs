@@ -11,6 +11,89 @@ use scraper::{Html, Selector};
 use std::{sync::OnceLock, time::Duration};
 
 const BASE: &str = "https://fs1.app";
+const MISSAV_BASE: &str = "https://missav.ai";
+
+/// 影片元数据中的一个可跳转条目(厂商/女优/男优/系列/导演/标签/类型)。
+/// kind + id 即 missav 列表页 /{路由}/{id},用于「相似影片」与关注
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaLink {
+    /// maker / actress / actor / series / director / label / genre
+    pub kind: String,
+    /// 路由末段(已 percent 解码)
+    pub id: String,
+    pub name: String,
+}
+
+/// missav 详情页元数据区解析结果
+#[derive(Clone, Debug, Default)]
+struct MissavMeta {
+    /// og:title(繁中翻译标题)
+    og_title: Option<String>,
+    /// 元数据区「標題」(日语原题)
+    title_jp: Option<String>,
+    release_date: Option<String>,
+    links: Vec<MetaLink>,
+}
+
+impl MissavMeta {
+    fn of(&self, kind: &str) -> Vec<MetaLink> {
+        self.links
+            .iter()
+            .filter(|l| l.kind == kind)
+            .cloned()
+            .collect()
+    }
+}
+
+/// 元数据区标签名(繁/简)→ 条目 kind
+fn meta_kind_for_label(label: &str) -> Option<&'static str> {
+    Some(match label {
+        "女優" | "女优" => "actress",
+        "男優" | "男优" => "actor",
+        "類型" | "类型" => "genre",
+        "系列" => "series",
+        "發行商" | "发行商" => "maker",
+        "導演" | "导演" => "director",
+        "標籤" | "标签" => "label",
+        _ => return None,
+    })
+}
+
+/// missav 条目列表页地址:/ja/{路由}/{id}(id 按路径段编码),第 2 页起 ?page=N。
+/// kind 兼容关注表里的单数形态(maker/actress)与元数据条目的 kind
+fn missav_list_url(kind: &str, target_id: &str, page: i32) -> Result<String, String> {
+    let route = missav_route_for_kind(kind).ok_or_else(|| format!("不支持的条目类型 {kind}"))?;
+    let id = percent_decode_simple(target_id);
+    if id.is_empty() {
+        return Err("条目 id 为空".into());
+    }
+    let mut url = url::Url::parse(MISSAV_BASE).map_err(|e| e.to_string())?;
+    // ja 语言前缀:列表卡片标题为日语原题(与 fs1 ?lang=jp、详情页「標題」一致)
+    url.path_segments_mut()
+        .map_err(|_| "无效地址".to_string())?
+        .push("ja")
+        .push(route)
+        .push(&id);
+    if page > 1 {
+        url.set_query(Some(&format!("page={page}")));
+    }
+    Ok(url.to_string())
+}
+
+/// 条目 kind → missav 列表路由
+fn missav_route_for_kind(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "maker" | "makers" => "makers",
+        "actress" | "actresses" => "actresses",
+        "actor" | "actors" => "actors",
+        "series" => "series",
+        "director" | "directors" => "directors",
+        "label" | "labels" => "labels",
+        "genre" | "genres" => "genres",
+        _ => return None,
+    })
+}
 
 fn absolute_url(value: &str) -> String {
     if value.starts_with("https://") || value.starts_with("http://") {
@@ -317,7 +400,14 @@ impl VideoApi {
     /// missav 直连 GET:HTTP 重定向由客户端跟随,HTML meta-refresh
     /// (dm 前缀轮换产生的跳转页)在此手动跟进,返回最终 HTML
     async fn missav_get(&self, url: &str) -> Result<String, String> {
-        let mut current = url.to_string();
+        // 站内相对路径("/makers"、"/{code}")补全为绝对地址:wreq 不接受
+        // 相对 URL,此前这类调用全部在发请求前就失败(厂商/女优/相关作品、
+        // fs1 线路的元数据补全因此从未生效)
+        let mut current = if url.starts_with('/') {
+            format!("{MISSAV_BASE}{url}")
+        } else {
+            url.to_string()
+        };
         for _hop in 0..3 {
             let resp = self
                 .missav
@@ -350,7 +440,7 @@ impl VideoApi {
         let encoded = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
         let html = self
             .missav_get(&format!(
-                "https://missav.ai/dm539/search/{encoded}?page={page}"
+                "https://missav.ai/dm539/ja/search/{encoded}?page={page}"
             ))
             .await?;
         let mut cards = Self::parse_missav_search(&html);
@@ -364,15 +454,16 @@ impl VideoApi {
 
     /// missav 兜底播放地址:详情页的 packer 混淆脚本解码出 m3u8。
     /// 优先中文字幕变体,不存在回退原番号。
-    async fn missav_m3u8(&self, code: &str) -> Result<(String, bool), String> {
-        let lower = code.to_lowercase();
+    async fn missav_m3u8(&self, code: &str) -> Result<(String, bool, String), String> {
+        let lower = base_code(&code.to_lowercase()).to_string();
         for (path, chinese) in [(format!("{lower}-chinese-subtitle"), true), (lower, false)] {
             let url = format!("https://missav.ai/videos/{path}");
             let Ok(html) = self.missav_get(&url).await else {
                 continue;
             };
             if let Some(m3u8) = extract_packed_m3u8(&html) {
-                return Ok((m3u8, chinese));
+                // 同页 HTML 一并返回:元数据区解析复用,不再二次抓取
+                return Ok((m3u8, chinese, html));
             }
         }
         Err("missav 详情页未找到播放地址".into())
@@ -540,18 +631,15 @@ impl VideoApi {
         target_id: &str,
         page: i32,
     ) -> Result<VideoListResult, String> {
-        let path = if page <= 1 {
-            format!("/{kind}/{target_id}")
-        } else {
-            format!("/{kind}/{target_id}/{page}")
-        };
-        let html = self.missav_get(&path).await?;
+        let url = missav_list_url(kind, target_id, page)?;
+        let html = self.missav_get(&url).await?;
         let items = Self::parse_missav_search(&html);
         Ok(VideoListResult {
             pagination: PaginationInfo {
                 current: page - 1,
                 total: 0,
-                has_next: items.len() >= 24,
+                // missav 列表页每页 12 卡(实测),满页即可能有下一页
+                has_next: items.len() >= 12,
                 has_prev: page > 1,
             },
             items,
@@ -804,8 +892,10 @@ impl VideoApi {
             .next()
             .map(|h| h.text().collect::<String>().trim().to_string())
             .unwrap_or_default();
+        // 只取影片自身的标签区(h5.tags);页面下方的全站标签云同为 a.tag,
+        // 全选会混进上百个无关标签
         let tags: Vec<String> = doc
-            .select(&sel("a.tag"))
+            .select(&sel("h5.tags a"))
             .map(|a| a.text().collect::<String>().trim().to_string())
             .filter(|t| !t.is_empty())
             .collect();
@@ -834,9 +924,16 @@ impl VideoApi {
             m3u8: m3u8.ok_or_else(|| "未在详情页找到 m3u8".to_string())?,
             provider: "fs1".into(),
             chinese: false,
-            // fs1 详情页无厂商/女优元数据,detail() 入口从 missav 补齐
+            // fs1 详情页无厂商/女优等元数据,detail() 入口从 missav 补齐
             studio: None,
             actors: Vec::new(),
+            makers: Vec::new(),
+            actresses: Vec::new(),
+            male_actors: Vec::new(),
+            series: Vec::new(),
+            directors: Vec::new(),
+            labels: Vec::new(),
+            release_date: None,
         })
     }
 
@@ -845,60 +942,48 @@ impl VideoApi {
     pub async fn detail(&self, code: &str) -> Result<VideoDetail, String> {
         match self.detail_fs1(code).await {
             Ok(mut detail) => {
-                // fs1 详情页无厂商/女优元数据(取证:极简结构),从 missav
-                // 详情页补齐(同番号在 missav 的元数据区完整)
-                if let Ok(html) = self.missav_get(&format!("/{code}")).await {
-                    let (_title, tags, studio, actors) = Self::parse_missav_meta(&html);
-                    detail.studio = studio;
-                    detail.actors = actors;
-                    // fs1 详情页 tags 为空时用 missav 的 genres 补充
-                    if detail.tags.is_empty() {
-                        detail.tags = tags;
-                    }
+                // fs1 详情页无厂商/女优/系列等元数据(取证:极简结构),
+                // 从 missav 同番号详情页补齐;标题保持 fs1 的日语标题
+                if let Ok(html) = self
+                    .missav_get(&format!("/{}", base_code(&detail.code)))
+                    .await
+                {
+                    let meta = Self::parse_missav_meta(&html);
+                    Self::apply_missav_meta(&mut detail, &meta);
                 }
                 Ok(detail)
             }
             Err(fs1_error) => match self.missav_m3u8(code).await {
-                Ok((m3u8, chinese)) => {
-                    // missav 兜底:详情页 HTML 统一解析完整元数据
-                    // (问题 6 修复:title/tags 不再留空)
-                    let (mut title, tags, studio, actors) = self
-                        .missav_get(&format!("/{code}"))
-                        .await
-                        .map(|html| Self::parse_missav_meta(&html))
-                        .unwrap_or((None, Vec::new(), None, Vec::new()));
-                    // 标题统一日语(问题 7):missav 无日语参数(lang=ja
-                    // 无效),用 fs1 ?lang=jp 的 og:title 反查;fs1 无此
-                    // 番号时回退 missav 繁中标题
-                    if let Ok(fs1_html) = self
-                        .client
-                        .get(&format!("{BASE}/videos/{code}/?lang=jp"))
-                        .send()
-                        .await
-                    {
-                        if let Ok(html) = fs1_html.text().await {
-                            if let Some(jp) =
-                                regex::Regex::new(r#"<meta property="og:title" content="([^"]*)""#)
-                                    .unwrap()
-                                    .captures(&html)
-                            {
-                                let t = jp[1].trim();
-                                if !t.is_empty() {
-                                    title = Some(t.to_string());
-                                }
-                            }
-                        }
+                Ok((m3u8, chinese, html)) => {
+                    let meta = Self::parse_missav_meta(&html);
+                    // 标题统一日语:元数据区「標題」即日语原题;缺失时
+                    // 用 fs1 ?lang=jp 反查,再退回 missav 繁中 og:title
+                    let mut title = meta.title_jp.clone();
+                    if title.is_none() {
+                        title = self.fs1_jp_title(code).await;
                     }
-                    Ok(VideoDetail {
+                    let title = title
+                        .or_else(|| meta.og_title.clone())
+                        .unwrap_or_else(|| base_code(code).to_uppercase());
+                    let mut detail = VideoDetail {
                         code: code.to_lowercase(),
-                        title: title.unwrap_or_else(|| code.to_uppercase()),
-                        tags,
+                        title,
+                        tags: Vec::new(),
                         m3u8,
                         provider: "missav".into(),
                         chinese,
-                        studio,
-                        actors,
-                    })
+                        studio: None,
+                        actors: Vec::new(),
+                        makers: Vec::new(),
+                        actresses: Vec::new(),
+                        male_actors: Vec::new(),
+                        series: Vec::new(),
+                        directors: Vec::new(),
+                        labels: Vec::new(),
+                        release_date: None,
+                    };
+                    Self::apply_missav_meta(&mut detail, &meta);
+                    Ok(detail)
                 }
                 Err(missav_error) => Err(format!(
                     "fs1 播放地址不可用({fs1_error}); missav 兜底失败({missav_error})"
@@ -907,49 +992,117 @@ impl VideoApi {
         }
     }
 
-    /// missav 详情页元数据解析(问题 6 修复:完整元数据)。
-    /// title 取 og:title(完整影片标题);tags 取 genres 链接(取证:
-    /// 9 个如 VR/OL/熟女/人妻);studio 取 makers 链接;actors 取
-    /// actresses 链接(dm 前缀路由)。返回 (title, tags, studio, actors)
-    fn parse_missav_meta(html: &str) -> (Option<String>, Vec<String>, Option<String>, Vec<String>) {
-        let title = regex::Regex::new(r#"<meta property="og:title" content="([^"]*)""#)
-            .unwrap()
+    /// fs1 ?lang=jp 详情页的 og:title(日语原题);无此番号返回 None
+    async fn fs1_jp_title(&self, code: &str) -> Option<String> {
+        let url = format!("{BASE}/videos/{}/?lang=jp", base_code(&code.to_lowercase()));
+        let html = self.client.get(&url).send().await.ok()?.text().await.ok()?;
+        Regex::new(r#"<meta property="og:title" content="([^"]*)""#)
+            .expect("static regex")
+            .captures(&html)
+            .map(|c| c[1].trim().to_string())
+            .filter(|t| !t.is_empty())
+    }
+
+    /// missav 详情页元数据区解析。区块形如
+    /// `<div class="text-secondary"><span>女優:</span><a href=".../dm41/actresses/{id}">名</a>…</div>`,
+    /// 逐个标签块取链接(只在块内取,不会误收页面别处的推荐/排行链接)。
+    /// 「標題」块是日语原题(og:title 为繁中翻译)。
+    fn parse_missav_meta(html: &str) -> MissavMeta {
+        static RE_LABEL: OnceLock<Regex> = OnceLock::new();
+        static RE_LINK: OnceLock<Regex> = OnceLock::new();
+        static RE_SPAN: OnceLock<Regex> = OnceLock::new();
+        let re_label = RE_LABEL.get_or_init(|| {
+            Regex::new(r"<span>\s*([^<:：]{1,8})\s*[:：]\s*</span>").expect("static regex")
+        });
+        let re_link = RE_LINK.get_or_init(|| {
+            Regex::new(r#"<a[^>]*href="([^"]+)"[^>]*>([\s\S]{0,200}?)</a>"#).expect("static regex")
+        });
+        let re_span = RE_SPAN.get_or_init(|| {
+            Regex::new(r"<span[^>]*>([\s\S]{0,400}?)</span>").expect("static regex")
+        });
+        let og_title = Regex::new(r#"<meta property="og:title" content="([^"]*)""#)
+            .expect("static regex")
             .captures(html)
-            .map(|c| c[1].trim().to_string());
-        let re_genres =
-            regex::Regex::new(r#"<a[^>]*href="[^"]*/genres/([^"]+)"[^>]*>([\s\S]{0,60}?)</a>"#)
-                .unwrap();
-        let re_maker =
-            regex::Regex::new(r#"<a[^>]*href="[^"]*/makers/([^"]+)"[^>]*>([\s\S]{0,80}?)</a>"#)
-                .unwrap();
-        let re_actress =
-            regex::Regex::new(r#"<a[^>]*href="[^"]*/actresses/([^"/]+)"[^>]*>([\s\S]{0,80}?)</a>"#)
-                .unwrap();
-        let mut tags = Vec::new();
-        let mut seen_tags = std::collections::HashSet::new();
-        for cap in re_genres.captures_iter(html) {
-            let name = strip_tags(&cap[2]);
-            if !name.is_empty() && seen_tags.insert(name.clone()) {
-                tags.push(name);
-            }
-        }
-        let mut studio = None;
-        for cap in re_maker.captures_iter(html) {
-            let name = strip_tags(&cap[2]);
-            if !name.is_empty() && name != "發行商" {
-                studio = Some(name);
-                break;
-            }
-        }
-        let mut actors = Vec::new();
+            .map(|c| c[1].trim().to_string())
+            .filter(|t| !t.is_empty());
+        let mut meta = MissavMeta {
+            og_title,
+            ..Default::default()
+        };
         let mut seen = std::collections::HashSet::new();
-        for cap in re_actress.captures_iter(html) {
-            let name = strip_tags(&cap[2]);
-            if !name.is_empty() && !name.contains("排行") && seen.insert(name.clone()) {
-                actors.push(name);
+        for cap in re_label.captures_iter(html) {
+            let label = cap[1].trim();
+            let start = cap.get(0).map(|m| m.end()).unwrap_or(0);
+            let rest = &html[start..];
+            let block = &rest[..rest.find("</div>").unwrap_or(rest.len()).min(4000)];
+            match label {
+                "標題" | "标题" => {
+                    if let Some(t) = re_span.captures(block) {
+                        let t = strip_tags(&t[1]);
+                        if !t.is_empty() {
+                            meta.title_jp = Some(t);
+                        }
+                    }
+                    continue;
+                }
+                "發行日期" | "发行日期" => {
+                    let t = strip_tags(block);
+                    if !t.is_empty() {
+                        meta.release_date = Some(t);
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            let Some(kind) = meta_kind_for_label(label) else {
+                continue;
+            };
+            let Some(route) = missav_route_for_kind(kind) else {
+                continue;
+            };
+            for link in re_link.captures_iter(block) {
+                let href = &link[1];
+                // 路由末段为 id:…/dm41/actresses/{id}、…/series/{id}
+                let marker = format!("/{route}/");
+                let Some(pos) = href.find(&marker) else {
+                    continue;
+                };
+                let id_raw = href[pos + marker.len()..]
+                    .split(['?', '#', '/'])
+                    .next()
+                    .unwrap_or("");
+                let id = percent_decode_simple(id_raw);
+                let name = strip_tags(&link[2]);
+                if id.is_empty() || name.is_empty() || !seen.insert((kind, id.clone())) {
+                    continue;
+                }
+                meta.links.push(MetaLink {
+                    kind: kind.to_string(),
+                    id,
+                    name,
+                });
             }
         }
-        (title, tags, studio, actors)
+        meta
+    }
+
+    /// 把 missav 元数据灌进详情(厂商/女优/男优/系列/导演/标签 + 兼容字段)
+    fn apply_missav_meta(detail: &mut VideoDetail, meta: &MissavMeta) {
+        detail.makers = meta.of("maker");
+        detail.actresses = meta.of("actress");
+        detail.male_actors = meta.of("actor");
+        detail.series = meta.of("series");
+        detail.directors = meta.of("director");
+        detail.labels = meta.of("label");
+        if detail.release_date.is_none() {
+            detail.release_date = meta.release_date.clone();
+        }
+        // 兼容字段:studio = 首个厂商名,actors = 女优名
+        detail.studio = detail.makers.first().map(|m| m.name.clone());
+        detail.actors = detail.actresses.iter().map(|a| a.name.clone()).collect();
+        if detail.tags.is_empty() {
+            detail.tags = meta.of("genre").into_iter().map(|g| g.name).collect();
+        }
     }
 }
 
@@ -968,14 +1121,106 @@ pub struct VideoDetail {
     /// 发行厂商(missav 详情页 makers 链接;fs1 详情页无此元数据为 None)
     #[serde(default)]
     pub studio: Option<String>,
-    /// 女优列表(missav 详情页 actresses 链接;站点不标男优)
+    /// 女优名列表(兼容字段,与 actresses 同源)
     #[serde(default)]
     pub actors: Vec<String>,
+    /// 以下来自 missav 元数据区(fs1 线路按同番号从 missav 补齐)
+    #[serde(default)]
+    pub makers: Vec<MetaLink>,
+    #[serde(default)]
+    pub actresses: Vec<MetaLink>,
+    /// 男优
+    #[serde(default)]
+    pub male_actors: Vec<MetaLink>,
+    #[serde(default)]
+    pub series: Vec<MetaLink>,
+    #[serde(default)]
+    pub directors: Vec<MetaLink>,
+    #[serde(default)]
+    pub labels: Vec<MetaLink>,
+    #[serde(default)]
+    pub release_date: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_missav_meta_blocks() {
+        // 元数据区结构取证(2026-11 样本,人名/片名以占位文本代替)
+        let html = r#"<meta property="og:title" content="繁中译名 占位">
+          <div class="text-secondary"><span>標題:</span> <span class="font-medium">日本語タイトル 占位</span></div>
+          <div class="text-secondary"><span>發行日期:</span> <time>2021-02-19</time></div>
+          <div class="text-secondary"><span>女優:</span>
+            <a href="https://missav.ai/dm180/actresses/%E7%94%B2" class="text-nord13 font-medium">女优甲</a>,
+            <a href="https://missav.ai/dm41/actresses/%E4%B9%99" class="text-nord13 font-medium">女优乙</a></div>
+          <div class="text-secondary"><span>男優:</span> <a href="https://missav.ai/dm2/actors/%E4%B8%99">男优丙</a></div>
+          <div class="text-secondary"><span>類型:</span> <a href="https://missav.ai/chinese-subtitle">中文字幕</a>,
+            <a href="https://missav.ai/dm218/genres/%E4%B8%81">类型丁</a></div>
+          <div class="text-secondary"><span>系列:</span> <a href="https://missav.ai/ja/series/abc-def">系列戊</a></div>
+          <div class="text-secondary"><span>發行商:</span> <a href="https://missav.ai/dm191/makers/s1">S1</a></div>
+          <div class="text-secondary"><span>導演:</span> <a href="https://missav.ai/dm6/directors/%E5%B7%B1">导演己</a></div>
+          <div class="text-secondary"><span>標籤:</span> <a href="https://missav.ai/dm39/labels/%E5%BA%9A">标签庚</a></div>
+          <aside><a href="https://missav.ai/dm9/actresses/%E5%A4%96">推荐区女优</a></aside>"#;
+        let meta = VideoApi::parse_missav_meta(html);
+        assert_eq!(meta.title_jp.as_deref(), Some("日本語タイトル 占位"));
+        assert_eq!(meta.og_title.as_deref(), Some("繁中译名 占位"));
+        assert_eq!(meta.release_date.as_deref(), Some("2021-02-19"));
+        let names = |k: &str| meta.of(k).into_iter().map(|l| l.name).collect::<Vec<_>>();
+        assert_eq!(names("actress"), ["女优甲", "女优乙"], "块外推荐区不得混入");
+        assert_eq!(meta.of("actress")[0].id, "甲", "id 应 percent 解码");
+        assert_eq!(names("actor"), ["男优丙"]);
+        assert_eq!(
+            names("genre"),
+            ["类型丁"],
+            "非路由链接(中文字幕)不算类型条目"
+        );
+        assert_eq!(meta.of("series")[0].id, "abc-def");
+        assert_eq!(names("maker"), ["S1"]);
+        assert_eq!(names("director"), ["导演己"]);
+        assert_eq!(names("label"), ["标签庚"]);
+
+        let mut detail = VideoDetail {
+            code: "abc-001".into(),
+            title: String::new(),
+            tags: Vec::new(),
+            m3u8: String::new(),
+            provider: "fs1".into(),
+            chinese: false,
+            studio: None,
+            actors: Vec::new(),
+            makers: Vec::new(),
+            actresses: Vec::new(),
+            male_actors: Vec::new(),
+            series: Vec::new(),
+            directors: Vec::new(),
+            labels: Vec::new(),
+            release_date: None,
+        };
+        VideoApi::apply_missav_meta(&mut detail, &meta);
+        assert_eq!(detail.studio.as_deref(), Some("S1"));
+        assert_eq!(detail.actors, ["女优甲", "女优乙"]);
+        assert_eq!(detail.tags, ["类型丁"]);
+        assert_eq!(detail.series.len(), 1);
+    }
+
+    #[test]
+    fn builds_missav_list_urls() {
+        assert_eq!(
+            missav_list_url("maker", "s1", 1).unwrap(),
+            "https://missav.ai/ja/makers/s1"
+        );
+        assert_eq!(
+            missav_list_url("actress", "%E7%94%B2", 2).unwrap(),
+            "https://missav.ai/ja/actresses/%E7%94%B2?page=2"
+        );
+        assert_eq!(
+            missav_list_url("series", "abc-def", 1).unwrap(),
+            "https://missav.ai/ja/series/abc-def"
+        );
+        assert!(missav_list_url("unknown", "x", 1).is_err());
+    }
 
     #[test]
     fn parses_uncensored_leak_and_short_prefix_codes() {
@@ -1303,7 +1548,7 @@ mod missav_tests {
 
                 // 2) 详情兜底:packer 解码出 m3u8(优先中字变体)
                 let code = cards[0].code.clone();
-                let (m3u8, chinese) = api.missav_m3u8(&code).await.expect("missav m3u8");
+                let (m3u8, chinese, _html) = api.missav_m3u8(&code).await.expect("missav m3u8");
                 println!("missav m3u8[{code}]: chinese={chinese} {m3u8}");
                 assert!(m3u8.starts_with("https://"), "m3u8 应为绝对地址");
                 assert!(url::Url::parse(&m3u8).unwrap().path().ends_with(".m3u8"));
