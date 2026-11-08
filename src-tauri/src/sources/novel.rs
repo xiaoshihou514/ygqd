@@ -274,6 +274,52 @@ static LAST_ARTICLE_FETCH: std::sync::Mutex<Option<(String, i64, std::time::Inst
 const ARTICLE_THROTTLE_SAME_CHAPTER: u64 = 3;
 const ARTICLE_THROTTLE_CROSS_CHAPTER: u64 = 10;
 
+/// 正文分段提取(B3):遍历 #content 的 <p> 段间用 \n 连接;无 <p>
+/// 的页面把 <br> 当换行(逐字符扫描,标签内容跳过)。
+fn extract_article_text(content: &scraper::ElementRef) -> String {
+    let paragraphs: Vec<String> = content
+        .select(&sel("p"))
+        .map(|p| normalize_text(&p.text().collect::<String>()))
+        .filter(|t| !t.is_empty())
+        .collect();
+    if !paragraphs.is_empty() {
+        return paragraphs.join("\n");
+    }
+    // 兜底:无 <p> 结构,逐字符扫描,<br> 系列输出换行,其余标签剥除
+    let inner = content.inner_html();
+    let lower = inner.to_lowercase();
+    let orig: Vec<char> = inner.chars().collect();
+    let low: Vec<char> = lower.chars().collect();
+    let mut out = String::with_capacity(inner.len());
+    let mut i = 0;
+    let mut in_tag = false;
+    while i < orig.len() {
+        if in_tag {
+            if orig[i] == '>' {
+                in_tag = false;
+            }
+            i += 1;
+            continue;
+        }
+        if orig[i] == '<' {
+            // 探测 <br 系列标签(后随 > 空白或 /)
+            let rest: String = low[i..(i + 5).min(low.len())].iter().collect();
+            if rest.starts_with("<br") {
+                let after = low.get(i + 3).copied().unwrap_or('>');
+                if matches!(after, '>' | ' ' | '/' | '\t' | '\n' | '\r') {
+                    out.push('\n');
+                }
+            }
+            in_tag = true;
+            i += 1;
+            continue;
+        }
+        out.push(orig[i]);
+        i += 1;
+    }
+    normalize_text(&out)
+}
+
 pub async fn fetch_article_page(app: &AppHandle, id: &str, page: i64) -> Result<NovelPage, String> {
     // 统一节流:与上次抓取比,同章 ≥3 秒、跨章 ≥10 秒,不足则异步等待补齐
     // 计算需等待的秒数(短暂持锁,不跨 await——MutexGuard 非 Send)
@@ -312,7 +358,9 @@ pub async fn fetch_article_page(app: &AppHandle, id: &str, page: i64) -> Result<
         .select(&sel("#content"))
         .next()
         .ok_or("未找到正文(#content),可能未登录或文章未解锁")?;
-    let text = normalize_text(&content.text().collect::<String>());
+    // B3 修复:站点正文是多个 <p> 且段间无换行符,.text() 拼接得到
+    // 单段(前端按 \n 切段失效、作者行提取失效)——遍历 p 段间用 \n
+    let text = extract_article_text(&content);
     if text.is_empty() {
         return Err("正文为空".into());
     }
@@ -905,6 +953,41 @@ mod tests {
         assert!(!is_login_page(
             "<html><head><title>系列 - H图书馆</title></head><body><a>登录</a></body></html>"
         ));
+    }
+
+    #[test]
+    fn article_text_splits_paragraphs_and_recovers_author() {
+        // 真实样本结构(第一章样本):#content 下多个 <p>,段间无换行符;
+        // .text() 拼接得到单段导致阅读器分段与作者行提取双双失效
+        let html = r#"<div id="content">
+            <p>作者：示例作者名</p>
+            <p>第一段占位文本,描述故事的开端。</p>
+            <p>第二段占位文本,推进情节发展。</p>
+        </div>"#;
+        let doc = Html::parse_document(html);
+        let content = doc.select(&sel("#content")).next().unwrap();
+        let text = extract_article_text(&content);
+        // 段间有换行(分段生效)
+        assert!(text.contains('\n'), "段间应有换行符");
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.len() >= 3, "应至少 3 段,实际 {}", lines.len());
+        // 作者行提取恢复生效(分段后 lines() 能拿到首行)
+        let author = text
+            .lines()
+            .find_map(|l| l.strip_prefix("作者：").or_else(|| l.strip_prefix("作者:")))
+            .map(|s| s.trim().to_string());
+        assert_eq!(author.as_deref(), Some("示例作者名"));
+    }
+
+    #[test]
+    fn article_text_br_fallback() {
+        // 无 <p> 结构的页面:<br> 当换行兜底
+        let html = r#"<div id="content">第一行占位<br>第二行占位<br/>第三行占位</div>"#;
+        let doc = Html::parse_document(html);
+        let content = doc.select(&sel("#content")).next().unwrap();
+        let text = extract_article_text(&content);
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.len() >= 3, "br 应转为换行,实际 {}", lines.len());
     }
 
     #[test]

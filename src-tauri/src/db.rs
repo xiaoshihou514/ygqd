@@ -344,6 +344,7 @@ pub fn novel_set_progress(
     series_id: &str,
     chapter_order: i64,
     page: i64,
+    title_hint: Option<&str>,
 ) -> Result<(), String> {
     db.execute(
         "INSERT INTO novel_progress VALUES(?1,?2,?3,?4) ON CONFLICT(series_id) DO UPDATE SET chapter_order=?2,page=?3,updated_at=?4",
@@ -353,7 +354,13 @@ pub fn novel_set_progress(
     // 双写全局时间线(批次 4):progress 表保精确续读,item_history 保
     // 时间线;item_id 用系列,progress JSON 记章节与页码
     let progress_json = format!("{{\"chapter\":{},\"page\":{}}}", chapter_order, page);
-    let title = novel_series_title(db, series_id).unwrap_or_else(|| format!("系列 {series_id}"));
+    // 标题:B2 修复——前端传入(前端持有 series.title)优先,查表兜底,
+    // 避免「系列 12345678」占位标题进时间线
+    let title = title_hint
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .or_else(|| novel_series_title(db, series_id))
+        .unwrap_or_else(|| format!("系列 {series_id}"));
     item_history_record(
         db,
         "hlib",

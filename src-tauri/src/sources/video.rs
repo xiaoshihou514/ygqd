@@ -280,12 +280,13 @@ fn percent_decode_simple(s: &str) -> String {
 fn base_code(code: &str) -> &str {
     let mut base = code;
     loop {
+        // N1 修正:站点真实后缀是 -leak(样本统计 62:0,无 -leaked 形态)
         let stripped = base
             .strip_suffix("-chinese-subtitle")
             .or_else(|| base.strip_suffix("-english-subtitle"))
-            .or_else(|| base.strip_suffix("-uncensored-leaked"))
+            .or_else(|| base.strip_suffix("-uncensored-leak"))
             .or_else(|| base.strip_suffix("-uncensored"))
-            .or_else(|| base.strip_suffix("-leaked"));
+            .or_else(|| base.strip_suffix("-leak"));
         match stripped {
             Some(s) if !s.is_empty() => base = s,
             _ => break,
@@ -1205,7 +1206,8 @@ mod tests {
         assert_eq!(base_code("mida-829-chinese-subtitle"), "mida-829");
         assert_eq!(base_code("mida-829-uncensored"), "mida-829");
         assert_eq!(base_code("mida-829-english-subtitle"), "mida-829");
-        assert_eq!(base_code("mida-829-uncensored-leaked"), "mida-829");
+        assert_eq!(base_code("mida-829-uncensored-leak"), "mida-829");
+        assert_eq!(base_code("mida-829-leak"), "mida-829");
     }
 
     #[test]
@@ -1382,16 +1384,15 @@ mod tests {
 
     #[test]
     fn base_code_dedup_semantics_unchanged() {
-        // base_code 只剥 -chinese-subtitle(不剥 leak 后缀)——回归保护
+        // N1 修正后语义:剥全部变体后缀(含 -leak,样本统计 62:0 为站点
+        // 真实形态)——同番号的无码/流出/中字变体在去重时归并为一组
         assert_eq!(base_code("fthtd-242"), "fthtd-242");
-        assert_eq!(
-            base_code("fthtd-242-uncensored-leak"),
-            "fthtd-242-uncensored-leak"
-        );
+        assert_eq!(base_code("fthtd-242-uncensored-leak"), "fthtd-242");
         assert_eq!(base_code("ssis-960-chinese-subtitle"), "ssis-960");
         assert_eq!(
             base_code("oftr-017-uncensored-leak-chinese-subtitle"),
-            "oftr-017-uncensored-leak"
+            "oftr-017",
+            "叠加形态(无码流出+中字)循环剥离应归并到基础番号"
         );
     }
 

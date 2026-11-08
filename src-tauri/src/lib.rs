@@ -579,10 +579,11 @@ fn novel_set_progress(
     series_id: String,
     chapter_order: i64,
     page: i64,
+    title: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_set_progress(&conn, &series_id, chapter_order, page)
+    db::novel_set_progress(&conn, &series_id, chapter_order, page, title.as_deref())
 }
 
 /// 完成网关操作(用户点了网关内「完成返回」栏):隐藏网关回主界面
