@@ -156,6 +156,19 @@ function setupObserver() {
   teardownObserver()
   sentinel = document.querySelector('.scroll-sentinel')
   if (!sentinel) return
+
+  // ⑬ 三范围统一哨兵:视频范围哨兵驱动 loadMoreVideos,漫画范围驱动 loadMore
+  if (scope.value === 'video') {
+    if (!videoHasNext.value) return
+    observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        void loadMoreVideos()
+      }
+    }, { rootMargin: '400px' })
+    observer.observe(sentinel)
+    return
+  }
+
   if (!hasMoreLocal.value && !hasNextPage.value) return
 
   observer = new IntersectionObserver((entries) => {
@@ -311,7 +324,10 @@ const novelSearchedKw = ref('')
 watch(scope, (s) => {
   const kw = sharedKeyword.value.trim()
   if (!kw) return
-  if (s === 'video' && videoSearchedKw.value !== kw) void handleVideoSearch()
+  if (s === 'video' && videoSearchedKw.value !== kw) {
+    void handleVideoSearch().then(() => nextTick(() => setupObserver()))
+    return
+  }
   if (s === 'novel' && novelSearchedKw.value !== kw) void handleNovelSearch()
 })
 
@@ -322,6 +338,7 @@ const videoHasNext = ref(false)
 const videoSearching = ref(false)
 const videoError = ref('')
 
+// ⑬ 视频搜索无限滚动:哨兵滚动加载(视频源无反爬闸,无节流)
 async function loadMoreVideos() {
   if (videoSearching.value || !videoHasNext.value) return
   videoSearching.value = true
@@ -585,10 +602,9 @@ function goToSplit() {
           <LoadingSpinner message="正在搜索视频..." />
         </div>
         <VideoCardGrid v-if="videoItems.length" :items="videoItems" class="scope-video-grid" />
-        <div v-if="videoHasNext && videoItems.length" class="scope-more-row">
-          <button type="button" class="scope-more-btn" :disabled="videoSearching || !videoHasNext" @click="loadMoreVideos">
-            {{ videoSearching ? '加载中…' : '加载更多' }}
-          </button>
+        <div v-if="videoHasNext && videoItems.length" class="scroll-sentinel" />
+        <div v-if="videoSearching && videoItems.length" class="scope-loading">
+          <LoadingSpinner message="正在加载更多..." />
         </div>
       </template>
 

@@ -130,12 +130,9 @@ async function loadRelated(page: number) {
   }
 }
 
+// 任务 2:点女优/厂商等元数据条目 → 独立视频列表页(非详情页内嵌)
 function selectMeta(link: VideoMetaLink) {
-  relatedTarget.value = link
-  relatedWorks.value = []
-  relatedHasNext.value = false
-  followNotice.value = ''
-  void loadRelated(1)
+  void router.push(`/videos/target/missav/${link.kind}/${encodeURIComponent(link.id)}`)
 }
 
 function isSelected(link: VideoMetaLink): boolean {

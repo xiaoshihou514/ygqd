@@ -43,6 +43,11 @@ const router = createRouter({
       component: () => import('@/pages/VideoDetailPage.vue'),
     },
     {
+      path: '/videos/target/:source/:kind/:targetId',
+      name: 'video-target-works',
+      component: () => import('@/pages/TargetWorksPage.vue'),
+    },
+    {
       path: '/novels',
       name: 'novels',
       component: () => import('@/pages/NovelPage.vue'),

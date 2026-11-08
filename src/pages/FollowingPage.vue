@@ -690,7 +690,7 @@ onUnmounted(() => {
                 :key="f.targetId"
                 type="button"
                 class="follow-row"
-                @click="selectVideoTarget(f)"
+                @click="router.push(`/videos/target/${videoSource}/${videoKind}/${f.targetId}`)"
               >
                 <span class="follow-name">{{ f.displayName }}</span>
                 <span class="follow-kind">{{ kindLabel(f.kind) }}</span>

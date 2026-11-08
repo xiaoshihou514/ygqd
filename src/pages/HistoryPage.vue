@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchItemHistory } from '@/services/api'
 import { useViewHistory } from '@/composables/useViewHistory'
+import ProxyImage from '@/components/ProxyImage.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -33,6 +34,8 @@ interface TimelineEntry {
   itemId: string
   title: string
   viewedAt: number
+  /** 封面(仅漫画存量有;视频/小说历史无封面数据,展示 kind 图标占位) */
+  thumbnail?: string
   /** 小说阅读进度(progress JSON 解析) */
   chapter?: number
   /** 视频/小说的进度 JSON 原文(视频含播放位置秒数) */
@@ -49,6 +52,7 @@ const timeline = computed<TimelineEntry[]>(() => {
     itemId: h.comicId,
     title: h.title,
     viewedAt: h.viewedAt,
+    thumbnail: h.thumbnail,
     categoryId: h.categoryId,
   }))
   const novelEntries: TimelineEntry[] = itemHistory.value
@@ -175,6 +179,23 @@ function entryPosition(e: TimelineEntry): number | undefined {
             class="timeline-row"
             @click="openTimelineEntry(e)"
           >
+            <span v-if="e.thumbnail && e.kind === 'comic'" class="timeline-thumb">
+              <ProxyImage :src="e.thumbnail" :source="e.source as import('@/config/sources').SourceId" class="timeline-thumb-img" loading="lazy" />
+            </span>
+            <span v-else class="timeline-thumb placeholder" :class="`ph-${e.kind}`">
+              <svg v-if="e.kind === 'video'" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              <svg v-else-if="e.kind === 'novel'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </span>
             <span class="timeline-kind-badge" :class="`kind-${e.kind}`">{{ kindLabel(e.kind) }}</span>
             <span class="timeline-title">{{ e.title }}</span>
             <span v-if="e.kind === 'novel' && e.chapter" class="timeline-progress">
@@ -336,6 +357,38 @@ function entryPosition(e: TimelineEntry): number | undefined {
 
 .timeline-row:hover {
   border-color: var(--color-primary);
+}
+
+.timeline-thumb {
+  flex-shrink: 0;
+  width: 44px;
+  height: 33px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--color-divider-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timeline-thumb.placeholder {
+  color: var(--color-text-muted);
+}
+
+.timeline-thumb.placeholder.ph-video {
+  color: #6741d9;
+  opacity: 0.6;
+}
+
+.timeline-thumb.placeholder.ph-novel {
+  color: #8a6d2f;
+  opacity: 0.6;
+}
+
+.timeline-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .timeline-kind-badge {
