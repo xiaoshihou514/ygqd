@@ -259,6 +259,12 @@ export interface ItemHistoryEntry {
   progress?: string
 }
 
+/** 小说关键词黑名单条目(novel_blacklist_list;标题子串匹配,按创建倒序) */
+export interface NovelBlacklistEntry {
+  keyword: string
+  createdAt: number
+}
+
 export interface NovelPage {
   title: string
   author: string

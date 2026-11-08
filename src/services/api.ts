@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BikaRankTT, SourceId } from '@/config/sources'
-import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowTargetEntry, FollowTargetItem, FollowedAuthor, ItemHistoryEntry, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
+import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowTargetEntry, FollowTargetItem, FollowedAuthor, ItemHistoryEntry, NovelBlacklistEntry, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
@@ -56,6 +56,12 @@ export const novelFollowedAuthors = () =>
   invoke<AuthorFollow[]>('novel_followed_authors')
 export const novelFollowedAuthorWorks = (authorId: string) =>
   invoke<NovelHit[]>('novel_followed_author_works', { authorId })
+export const novelBlacklistList = () =>
+  invoke<NovelBlacklistEntry[]>('novel_blacklist_list')
+export const novelBlacklistAdd = (keyword: string) =>
+  invoke<void>('novel_blacklist_add', { keyword })
+export const novelBlacklistRemove = (keyword: string) =>
+  invoke<void>('novel_blacklist_remove', { keyword })
 export const recordItemHistory = (
   source: string,
   kind: string,
