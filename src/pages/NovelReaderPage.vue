@@ -81,6 +81,15 @@ const THEME_OPTIONS: Array<{ key: ReaderTheme; label: string }> = [
   { key: 'dark', label: '暗黑' },
   { key: 'green', label: '护眼绿' },
 ]
+// 任务 8:正文分段(按换行切段,段间距+首行缩进——用户「没分段」根因是纯文本连续渲染)
+const paragraphs = computed(() =>
+  (page.value?.text ?? '')
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean),
+)
+
+
 const textStyle = computed(() => ({
   fontSize: FONT_SIZE_PX[settings.value.fontSize],
   lineHeight: LINE_HEIGHTS[settings.value.lineHeight],
@@ -89,7 +98,12 @@ const textStyle = computed(() => ({
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
-    if (!raw) return
+    if (!raw) {
+      // 任务 8:无本地阅读设置时,默认主题跟随全局暗色(system 暗色也算)
+      const globalDark = document.documentElement.classList.contains('dark')
+      settings.value.theme = globalDark ? 'dark' : 'paper'
+      return
+    }
     const parsed = JSON.parse(raw) as Partial<{
       fontSize: ReaderFontSize
       lineHeight: ReaderLineHeight
@@ -318,7 +332,9 @@ onMounted(async () => {
     </EmptyState>
 
     <div v-else class="reader-body" :class="{ dim: pageLoading }">
-      <div class="reader-text" :style="textStyle">{{ page?.text }}</div>
+      <div class="reader-text" :style="textStyle">
+        <p v-for="(para, pi) in paragraphs" :key="pi" class="reader-para">{{ para }}</p>
+      </div>
     </div>
 
     <div class="reader-footer">
@@ -513,10 +529,14 @@ onMounted(async () => {
 }
 
 .reader-text {
-  white-space: pre-line;
   font-size: 17px;
   line-height: 1.9;
   color: var(--rd-fg, var(--color-text-primary));
+}
+
+.reader-para {
+  margin: 0 0 0.9em;
+  text-indent: 2em;
 }
 
 .reader-footer {

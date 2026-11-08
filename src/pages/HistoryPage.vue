@@ -90,6 +90,21 @@ const novelEntries = computed(() =>
     }),
 )
 
+/** 漫画分组网格数据(模板内联 map 的 computed 化,修复表达式断裂) */
+const comicGridItems = computed(() =>
+  history.value.map((h) => ({
+    source: h.source,
+    id: h.comicId,
+    title: h.title,
+    thumbnail: h.thumbnail,
+    category: '',
+    categoryId: h.categoryId,
+    tags: [] as string[],
+    likes: '',
+    link: '',
+  })),
+)
+
 // —— 收藏分组(⑯ 关注页重组:收藏并入历史) ——
 const favorites = ref<FavoriteEntry[]>([])
 const favLoading = ref(false)
@@ -247,20 +262,7 @@ function entryPosition(e: TimelineEntry): number | undefined {
           message="查看漫画详情时会自动记录"
         />
 
-        <ComicGrid
-          v-else
-          :items="history.map((h) => ({
-            source: h.source,
-            id: h.comicId,
-            title: h.title,
-            thumbnail: h.thumbnail,
-            category: '',
-            categoryId: h.categoryId,
-            tags: [],
-            likes: '',
-            link: '',
-          }))"
-        />
+        <ComicGrid v-else :items="comicGridItems" />
       </template>
 
       <!-- 视频:全局历史条目 -->

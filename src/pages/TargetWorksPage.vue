@@ -26,6 +26,29 @@ const worksError = ref('')
 const followedEntry = ref<FollowTargetEntry | null>(null)
 const followBusy = ref(false)
 
+/** base_code 优先级去重:中字 > 有码 > 无码 > 英字(需求 12 同款逻辑) */
+function baseCode(code: string): string {
+  return code
+    .replace('-uncensored-leak-chinese-subtitle', '')
+    .replace('-uncensored-leak', '')
+    .replace('-chinese-subtitle', '')
+}
+
+function dedupeByBase(items: VideoCard[]): VideoCard[] {
+  const priority = (c: string): number => {
+    if (c.includes('-chinese-subtitle')) return 3
+    if (!c.includes('-uncensored-leak')) return 2
+    return 1
+  }
+  const best = new Map<string, VideoCard>()
+  for (const item of items) {
+    const base = baseCode(item.code)
+    const cur = best.get(base)
+    if (!cur || priority(item.code) > priority(cur.code)) best.set(base, item)
+  }
+  return [...best.values()]
+}
+
 async function loadWorks(reset = true) {
   if (worksLoading.value || !targetId.value) return
   if (reset) worksPage.value = 1
@@ -33,10 +56,14 @@ async function loadWorks(reset = true) {
   worksError.value = ''
   try {
     const res = await videoFollowWorks(source.value, kind.value, targetId.value, worksPage.value)
-    if (reset) works.value = res.items
-    else {
-      const seen = new Set(works.value.map((v) => v.code))
-      works.value.push(...res.items.filter((v) => !seen.has(v.code)))
+    if (reset) {
+      works.value = dedupeByBase(res.items)
+    } else {
+      const seen = new Set(works.value.map((v) => baseCode(v.code)))
+      const merged = dedupeByBase([...works.value, ...res.items]).filter(
+        (v) => !seen.has(baseCode(v.code)) || works.value.some((w) => w.code === v.code),
+      )
+      works.value = merged
     }
     worksPage.value += 1
     worksHasNext.value = res.pagination.hasNext

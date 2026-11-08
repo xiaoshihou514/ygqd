@@ -42,9 +42,6 @@ async function load() {
     detail.value = await fetchVideoDetail(code)
     void recordVideoWatched(code)
     // 相似影片:默认按厂商(无厂商取系列,再取首个女优)
-    const d = detail.value
-    const first = d.makers?.[0] ?? d.series?.[0] ?? d.actresses?.[0]
-    if (first) void selectMeta(first)
     // 全局历史时间线:播放开始记录基础条目(位置在暂停/离开时补记)
     void recordItemHistory(detail.value.provider || 'fs1', 'video', detail.value.code, detail.value.title || detail.value.code)
   } catch (e) {
@@ -445,6 +442,14 @@ onBeforeUnmount(() => {
 /* 任务 6:快进/快退指示动画往中心移(skin 默认贴左右边缘) */
 .player-skin ::v-deep(.media-seek-indicator[data-direction]) {
   justify-self: center !important;
+}
+
+/* 任务 3:删除音量键(skin 音量按钮与指示器整体隐藏) */
+.player-skin ::v-deep([data-action='volume']) {
+  display: none !important;
+}
+.player-skin ::v-deep(.media-volume-indicator) {
+  display: none !important;
 }
 
 .back-btn {
