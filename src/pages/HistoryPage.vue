@@ -6,6 +6,7 @@ import { fetchItemHistory, fetchFavorites, removeFavorite } from '@/services/api
 import type { FavoriteEntry } from '@/types'
 import { useViewHistory } from '@/composables/useViewHistory'
 import ProxyImage from '@/components/ProxyImage.vue'
+import VideoCardGrid from '@/components/VideoCardGrid.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -71,7 +72,7 @@ const timeline = computed<TimelineEntry[]>(() => {
     })
   const videoEntries: TimelineEntry[] = itemHistory.value
     .filter((e) => e.kind === 'video')
-    .map((e) => ({ kind: 'video' as const, source: e.source, itemId: e.itemId, title: e.title, viewedAt: e.viewedAt }))
+    .map((e) => ({ kind: 'video' as const, source: e.source, itemId: e.itemId, title: e.title, viewedAt: e.viewedAt, thumbnail: videoThumb(e.itemId) }))
   return [...comicEntries, ...novelEntries, ...videoEntries].sort((a, b) => b.viewedAt - a.viewedAt)
 })
 
@@ -89,6 +90,11 @@ const novelEntries = computed(() =>
       return { ...e, page }
     }),
 )
+
+/** 视频封面构造(与后端 parse_cards 同源公式,fetch_video_image 代理加载) */
+function videoThumb(code: string): string {
+  return `https://fourhoi.com/${code}/cover-t.jpg`
+}
 
 /** 漫画分组网格数据(模板内联 map 的 computed 化,修复表达式断裂) */
 const comicGridItems = computed(() =>
@@ -134,7 +140,7 @@ async function unfavorite(fav: FavoriteEntry) {
 async function loadItemHistory() {
   itemLoading.value = true
   try {
-    itemHistory.value = await fetchItemHistory()
+    itemHistory.value = await fetchItemHistory(undefined, undefined, 100)
   } catch (e) {
     console.error('[history]', errorMessage(e))
   } finally {
@@ -222,7 +228,10 @@ function entryPosition(e: TimelineEntry): number | undefined {
             class="timeline-row"
             @click="openTimelineEntry(e)"
           >
-            <span v-if="e.thumbnail && e.kind === 'comic'" class="timeline-thumb">
+            <span v-if="e.thumbnail && e.kind === 'video'" class="timeline-thumb">
+              <ProxyImage :src="e.thumbnail" source="video" class="timeline-thumb-img" loading="lazy" />
+            </span>
+            <span v-else-if="e.thumbnail && e.kind === 'comic'" class="timeline-thumb">
               <ProxyImage :src="e.thumbnail" :source="e.source as import('@/config/sources').SourceId" class="timeline-thumb-img" loading="lazy" />
             </span>
             <span v-else class="timeline-thumb placeholder" :class="`ph-${e.kind}`">
@@ -265,7 +274,7 @@ function entryPosition(e: TimelineEntry): number | undefined {
         <ComicGrid v-else :items="comicGridItems" />
       </template>
 
-      <!-- 视频:全局历史条目 -->
+      <!-- 视频:封面网格(与视频板块 VideoCardGrid 统一,backend 布局建议) -->
       <template v-else-if="scope === 'video'">
         <LoadingSpinner v-if="itemLoading" message="加载视频记录..." />
         <EmptyState
@@ -273,20 +282,17 @@ function entryPosition(e: TimelineEntry): number | undefined {
           title="还没有视频观看记录"
           message="播放视频时会自动记录"
         />
-        <div v-else class="timeline">
-          <button
-            v-for="(e, i) in videoEntries"
-            :key="`${e.itemId}-${i}`"
-            type="button"
-            class="timeline-row"
-            @click="openTimelineEntry(e)"
-          >
-            <span class="timeline-kind-badge" :class="`kind-${e.kind}`">{{ kindLabel(e.kind) }}</span>
-            <span class="timeline-title">{{ e.title }}</span>
-            <span v-if="entryPosition(e)" class="timeline-progress">{{ formatPosition(entryPosition(e)!) }}</span>
-            <span class="timeline-time">{{ formatTime(e.viewedAt) }}</span>
-          </button>
-        </div>
+        <VideoCardGrid
+          v-else
+          :items="videoEntries.map((e) => ({
+            code: e.itemId,
+            title: e.title,
+            thumbnail: e.thumbnail ?? '',
+            tags: [],
+            views: '',
+            likes: '',
+          }))"
+        />
       </template>
 
       <!-- 收藏:哔咔/本站收藏列表(⑯ 关注页重组迁入) -->

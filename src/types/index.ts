@@ -257,6 +257,8 @@ export interface ItemHistoryEntry {
   viewedAt: number
   /** 进度 JSON 字符串(小说:{"chapter":N,"page":N};视频:{"position":秒数}) */
   progress?: string
+  /** 封面(视频为 fourhoi 构造 URL;漫画存量自带;小说无) */
+  thumbnail?: string
 }
 
 /** 小说关键词黑名单条目(novel_blacklist_list;标题子串匹配,按创建倒序) */
