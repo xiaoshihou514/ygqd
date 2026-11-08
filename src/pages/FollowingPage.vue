@@ -20,9 +20,7 @@ const router = useRouter()
 const { followed, loading: loadingFollows, load, unfollow } = useFollowedAuthors()
 
 const tabs = [
-  { key: 'authors', label: '作者' },
-  { key: 'works', label: '作品' },
-  { key: 'favorites', label: '收藏' },
+  { key: 'authors', label: '漫画作者' },
   { key: 'videos', label: '视频' },
   { key: 'novel-authors', label: '小说作者' },
 ] as const
@@ -31,14 +29,10 @@ type FollowingTab = (typeof tabs)[number]['key']
 const activeTab = ref<FollowingTab>('authors')
 const tabScroll: Record<FollowingTab, number> = {
   authors: 0,
-  works: 0,
-  favorites: 0,
   videos: 0,
   'novel-authors': 0,
 }
 
-const favorites = ref<FavoriteEntry[]>([])
-const favLoading = ref(false)
 
 // —— 小说作者关注(批次 2:novel_followed_authors 列表 + 作者作品流) ——
 const novelAuthors = ref<AuthorFollow[]>([])
@@ -271,7 +265,6 @@ const hasMoreWorks = computed(() =>
 
 onMounted(async () => {
   await load()
-  void loadFavorites()
   if (followed.value.length > 0) {
     await loadAllAuthors()
     await nextTick()
@@ -280,43 +273,8 @@ onMounted(async () => {
 })
 
 /** 收藏列表:本地表立即展示,哔咔登录时后台把服务器收藏合并进来 */
-async function loadFavorites(force = false) {
-  if (favLoading.value) return
-  favLoading.value = true
-  try {
-    favorites.value = await fetchFavorites()
-    if (force) {
-      favSyncing.value = true
-      try {
-        await syncBikaFavorites()
-        favorites.value = await fetchFavorites()
-      } catch {
-        // 服务器同步失败不影响本地列表
-      } finally {
-        favSyncing.value = false
-      }
-    }
-  } catch {
-    // 列表加载失败时保持空,视图会展示空态
-  } finally {
-    favLoading.value = false
-  }
-}
 
-async function unfavorite(fav: FavoriteEntry) {
-  try {
-    await removeFavorite(fav.source, fav.comicId)
-    favorites.value = favorites.value.filter(
-      (v) => !(v.source === fav.source && v.comicId === fav.comicId),
-    )
-  } catch (e) {
-    syncError.value = errorMessage(e) || '取消收藏失败'
-  }
-}
 
-function goToComic(fav: FavoriteEntry) {
-  router.push(comicPath({ source: fav.source, categoryId: fav.categoryId, id: fav.comicId }))
-}
 
 async function fetchAuthorPage(
   follow: FollowedAuthor,
@@ -451,11 +409,6 @@ async function switchTab(tab: FollowingTab) {
   if (tab === activeTab.value) return
   tabScroll[activeTab.value] = window.scrollY
   activeTab.value = tab
-  if (tab === 'favorites') {
-    // 收藏视图无分页 observer,断开避免误触发 works 加载
-    observer?.disconnect()
-    void loadFavorites(true)
-  }
   await nextTick()
   window.scrollTo(0, tabScroll[tab])
   setupObserver()
@@ -463,11 +416,7 @@ async function switchTab(tab: FollowingTab) {
 
 /** 顶部刷新:按当前视图分流 */
 function handleRefresh() {
-  if (activeTab.value === 'favorites') {
-    void loadFavorites(true)
-  } else {
-    void loadAllAuthors(true)
-  }
+  void loadAllAuthors(true)
 }
 
 function setupObserver() {
@@ -542,10 +491,10 @@ onUnmounted(() => {
         <div class="heading-actions">
           <button
             class="action-btn"
-            :disabled="syncing || loadingFollows || favLoading || favSyncing"
+            :disabled="syncing || loadingFollows"
             @click="handleRefresh"
           >
-            {{ favSyncing ? '同步收藏中' : '刷新' }}
+            刷新
           </button>
           <button class="action-btn" :disabled="exporting" @click="handleExport">
             {{ exporting ? '导出中' : '导出' }}
@@ -569,7 +518,6 @@ onUnmounted(() => {
           >
             {{ tab.label }}
           </button>
-          <span v-if="activeTab === 'works'" class="works-count">共 {{ allWorks.length }} 部</span>
         </div>
 
         <p v-if="syncing && syncProgress" class="sync-progress">{{ syncProgress }}</p>
@@ -766,70 +714,7 @@ onUnmounted(() => {
             </div>
           </template>
         </template>
-        <template v-else-if="activeTab === 'works'">
-          <EmptyState
-            v-if="!followed.length"
-            title="还没有关注任何作者"
-            message="先关注作者,即可在这里看到他们的作品"
-          />
-          <template v-else>
-            <ComicGrid v-if="allWorks.length" :items="allWorks" />
-            <LoadingSpinner v-else-if="syncing" message="正在加载作品..." />
-            <EmptyState v-else title="暂无作品" message="未能获取到关注作者的作品" />
 
-            <div v-if="loadingMore" class="loading-more">
-              <LoadingSpinner message="正在加载更多..." />
-            </div>
-
-            <div v-if="!syncing && !loadingMore && !hasMoreWorks && allWorks.length" class="no-more">
-              <span>已加载全部作品</span>
-            </div>
-
-            <div v-if="hasMoreWorks && !syncing" class="scroll-sentinel" />
-          </template>
-        </template>
-
-        <template v-else>
-          <LoadingSpinner v-if="favLoading" message="加载收藏..." />
-          <EmptyState
-            v-else-if="!favorites.length"
-            title="还没有收藏漫画"
-            message="在漫画详情页点击「收藏」,两个来源的漫画都可以收藏"
-          />
-          <div v-else class="favorite-list">
-            <p v-if="favSyncing" class="sync-progress">正在同步哔咔服务器收藏...</p>
-            <div
-              v-for="fav in favorites"
-              :key="`${fav.source}:${fav.comicId}`"
-              class="favorite-card"
-              @click="goToComic(fav)"
-            >
-              <ProxyImage
-                :src="fav.thumbnail"
-                :source="fav.source"
-                class="favorite-thumb"
-                loading="lazy"
-              />
-              <div class="favorite-info">
-                <span class="favorite-title">{{ fav.title }}</span>
-                <span class="favorite-meta">
-                  {{ sourceLabel(fav.source) }}<template v-if="fav.author"> · {{ fav.author }}</template> · {{ formatTime(fav.createdAt) }}
-                </span>
-              </div>
-              <div class="author-actions" @click.stop>
-                <button
-                  class="author-action-btn author-action-danger"
-                  :title="`取消收藏 ${fav.title}`"
-                  @click="unfavorite(fav)"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="currentColor" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        </template>
       </template>
     </div>
   </div>
