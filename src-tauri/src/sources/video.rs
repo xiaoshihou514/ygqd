@@ -297,13 +297,6 @@ fn dedup_key(code: &str) -> &str {
     key
 }
 
-/// 播放路径基础番号:只剥 -chinese-subtitle(保留 -uncensored-leak 等
-/// 后缀)——missav 播放页按完整变体路径分发,leak 码的详情页路径是
-/// /videos/{code}-uncensored-leak,剥掉后缀会 404。
-/// 返回 (中字优先尝试路径, 有码回退路径)。
-
-// (上段 doc 属 impl 内 play_paths,此处的游离残段已随函数移入 impl)
-
 /// 基础番号:剥离全部变体后缀(详情页 URL/标题回退/日语反查三处
 /// 的番号归一用途)
 fn base_code(code: &str) -> &str {
@@ -948,7 +941,9 @@ impl VideoApi {
                 chinese: code.ends_with("-chinese-subtitle"),
             });
         }
-        out
+        // 需求 12 归并语义贯彻页内:同番号变体按优先级取一
+        // (中字>有码>无码>英字),与 search 合并层行为一致
+        dedupe_by_base(out)
     }
 
     /// fs1 侧详情:元数据 + fs1 的 m3u8。code 为小写番号。
@@ -1384,10 +1379,10 @@ mod tests {
     }
 
     #[test]
-    fn variant_dedup_keeps_leak_and_plain_as_distinct() {
-        // 去重语义(lead 裁决):leak 变体与普通版是不同详情页的不同内容
-        // 版本,独立条目保留(源站本就并列展示,忠实转发);parse_missav_search
-        // 页内仅按完整 code 去重,base_code 只在 fs1 侧与跨源合并使用
+    fn variant_dedup_merges_by_priority() {
+        // 去重语义(需求 12 用户要求,覆盖更早的「独立保留」裁决):同番号
+        // 变体按优先级归并取一(中字>有码>无码>英字);无中字时有码优先于
+        // 无码流出
         let html = r#"
           <a href="https://missav.ai/snos-359"><p class="x"> SNOS-359 标题A </p></a>
           <a href="https://missav.ai/snos-359-uncensored-leak"><p class="x"> SNOS-359 标题B </p></a>
@@ -1398,16 +1393,13 @@ mod tests {
         let codes: Vec<&str> = cards.iter().map(|c| c.code.as_str()).collect();
         assert_eq!(
             codes,
-            [
-                "snos-359",
-                "snos-359-uncensored-leak",
-                "oftr-017-uncensored-leak",
-                "oftr-017-uncensored-leak-chinese-subtitle"
-            ],
-            "各形态并列保留,忠实源站: {codes:?}"
+            ["snos-359", "oftr-017-uncensored-leak-chinese-subtitle"],
+            "同番号归并取优:有码胜过无码流出,中字胜过一切: {codes:?}"
         );
-        assert!(cards[3].chinese);
-        assert!(!cards[2].chinese);
+        // 归并后 2 条:snos-359(有码胜无码流出)与
+        // oftr-017 中字(中字胜无码流出)
+        assert!(!cards[0].chinese);
+        assert!(cards[1].chinese);
     }
 
     #[test]
