@@ -248,6 +248,101 @@ function cyclePlaybackRate() {
   el.playbackRate = PLAYBACK_RATES[rateIndex.value]!
 }
 
+// ===== B5:shadow DOM 注入(scoped CSS 穿不进 shadowRoot,需向 skin.shadowRoot 追加) =====
+type SkinHost = HTMLElement & { shadowRoot?: ShadowRoot | null }
+
+function querySkin(): SkinHost | null {
+  return document.querySelector('video-skin') as SkinHost | null
+}
+
+async function waitSkinRoot(maxMs = 5000): Promise<ShadowRoot | null> {
+  for (let elapsed = 0; elapsed < maxMs; elapsed += 200) {
+    const root = querySkin()?.shadowRoot
+    if (root) return root
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  return querySkin()?.shadowRoot ?? null
+}
+
+/** 向 skin.shadowRoot 追加样式表(隐藏音量/静音,seek 指示器居中)并注入
+ *  快退/倍速/快进按钮(播放键两侧)——替代外置 .player-controls 悬浮条 */
+async function injectSkinControls() {
+  const root = await waitSkinRoot()
+  if (!root) return
+
+  const style = document.createElement('style')
+  style.textContent = `
+    .media-mute-button, .media-volume-popover,
+    [data-action="volume"], [data-action="mute"],
+    [part="mute-button"], [part="volume"] {
+      display: none !important;
+    }
+    .media-seek-indicator[data-direction] {
+      justify-self: center !important;
+    }
+    .skin-skip-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      margin: 0 4px;
+      border: none;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .skin-skip-btn:hover {
+      background: rgba(255, 255, 255, 0.28);
+    }
+    .skin-rate {
+      min-width: 44px;
+      font-weight: 600;
+    }
+  `
+  root.appendChild(style)
+
+  const playBtn =
+    root.querySelector('.media-play-button') ??
+    root.querySelector('[data-action="play"]') ??
+    root.querySelector('[part="play-button"]')
+  if (!playBtn?.parentElement) return
+
+  const mkBtn = (label: string, secs: number): HTMLButtonElement => {
+    const b = document.createElement('button')
+    b.className = 'skin-skip-btn'
+    b.textContent = label
+    b.title = secs > 0 ? `快进 ${secs} 秒` : `快退 ${-secs} 秒`
+    b.addEventListener('click', () => skipBy(secs))
+    return b
+  }
+  const back = mkBtn('«60s', -60)
+  const fwd = mkBtn('60s»', 60)
+  const rate = document.createElement('button')
+  rate.className = 'skin-skip-btn skin-rate'
+  rate.textContent = `${currentRate.value}x`
+  rate.title = '切换倍速'
+  rate.addEventListener('click', () => {
+    cyclePlaybackRate()
+    rate.textContent = `${currentRate.value}x`
+  })
+
+  const parent = playBtn.parentElement
+  parent.insertBefore(back, playBtn)
+  parent.insertBefore(fwd, playBtn.nextSibling)
+  parent.insertBefore(rate, playBtn)
+}
+
+// 番号变化重载后 skin 重建,重新注入
+watch(
+  () => route.params.code,
+  () => {
+    void nextTick(injectSkinControls)
+  },
+)
+
 async function copyError() {
   try {
     await navigator.clipboard.writeText(error.value)
@@ -261,7 +356,7 @@ onMounted(() => {
   landscapeQuery.addEventListener('change', onOrientationChange)
   // 初始即为横屏(平板横放打开)时自动进入伪全屏
   if (IS_ANDROID && landscapeQuery.matches) isFullscreen.value = true
-  void load()
+  void load().then(() => nextTick(injectSkinControls))
 })
 
 // 从相似影片进入另一部(同一路由组件复用):番号变化即重载
@@ -327,17 +422,6 @@ onBeforeUnmount(() => {
         <div v-if="recovering" class="recover-overlay">
           <span>播放地址已过期,正在自动刷新...</span>
         </div>
-      </div>
-      <div class="player-controls">
-        <button type="button" class="ctrl-btn" title="快退 1 分钟" @click="skipBy(-60)">
-          « 1min
-        </button>
-        <button type="button" class="ctrl-btn rate" :title="`倍速 ${currentRate}x`" @click="cyclePlaybackRate">
-          {{ currentRate }}x
-        </button>
-        <button type="button" class="ctrl-btn" title="快进 1 分钟" @click="skipBy(60)">
-          1min »
-        </button>
       </div>
     </div>
 
@@ -405,52 +489,6 @@ onBeforeUnmount(() => {
   background: #000;
 }
 
-/* 任务 7/8:播放控制条(快退/倍速/快进,player-section 底部悬浮) */
-.player-controls {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-md);
-  padding: 8px var(--spacing-md) calc(8px + env(safe-area-inset-bottom, 0px));
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
-}
-
-.ctrl-btn {
-  padding: 6px 14px;
-  border: none;
-  border-radius: var(--radius-pill, 999px);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-
-.ctrl-btn:hover {
-  background: rgba(0, 0, 0, 0.75);
-}
-
-.ctrl-btn.rate {
-  min-width: 52px;
-  font-weight: 600;
-}
-
-/* 任务 6:快进/快退指示动画往中心移(skin 默认贴左右边缘) */
-.player-skin ::v-deep(.media-seek-indicator[data-direction]) {
-  justify-self: center !important;
-}
-
-/* 任务 3:删除音量键(skin 音量按钮与指示器整体隐藏) */
-.player-skin ::v-deep([data-action='volume']) {
-  display: none !important;
-}
-.player-skin ::v-deep(.media-volume-indicator) {
-  display: none !important;
-}
 
 .back-btn {
   position: absolute;

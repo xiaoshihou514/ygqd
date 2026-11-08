@@ -359,16 +359,6 @@ function entryPosition(e: TimelineEntry): number | undefined {
         </div>
       </template>
 
-          source: h.source,
-          id: h.comicId,
-          title: h.title,
-          thumbnail: h.thumbnail,
-          category: '',
-          categoryId: h.categoryId,
-          tags: [],
-          likes: '',
-          link: '',
-        }))"
       />
     </div>
   </div>

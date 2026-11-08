@@ -25,7 +25,7 @@ const emit = defineEmits<{
   search: [keyword: string]
 }>()
 
-const { suggestions, remove, clear } = createSearchHistory(props.historyKey)
+const { suggestions, add, remove, clear } = createSearchHistory(props.historyKey)
 
 const showSuggestions = ref(false)
 const selectedIndex = ref(-1)
@@ -36,9 +36,15 @@ const keyword = computed({
 })
 const matchedSuggestions = computed(() => suggestions(keyword.value))
 
+function clearKeyword() {
+  keyword.value = ''
+  inputEl.value?.focus()
+}
+
 function submitSearch() {
   const kw = keyword.value.trim()
   if (!kw) return
+  add(kw)
   showSuggestions.value = false
   selectedIndex.value = -1
   emit('search', kw)
@@ -46,6 +52,7 @@ function submitSearch() {
 
 function selectSuggestion(text: string) {
   keyword.value = text
+  add(text)
   showSuggestions.value = false
   selectedIndex.value = -1
   emit('search', text)
@@ -110,6 +117,20 @@ function removeSuggestion(text: string) {
         @keydown="onInputKeydown"
         @keyup.enter="submitSearch"
       >
+      <button
+        v-if="keyword"
+        type="button"
+        class="search-clear"
+        title="清空搜索"
+        aria-label="清空搜索"
+        @mousedown.prevent
+        @click="clearKeyword"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
       <ul v-if="showSuggestions && matchedSuggestions.length > 0" class="suggestions-dropdown">
         <li
           v-for="(s, i) in matchedSuggestions"
@@ -160,13 +181,42 @@ function removeSuggestion(text: string) {
 
 .search-input {
   width: 100%;
-  padding: 9px 16px;
-  border: 1px solid var(--color-border, var(--color-hairline));
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-text-primary);
+  height: 44px;
+  padding: 0 44px 0 var(--spacing-lg);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-pill);
   font-size: var(--font-size-body);
+  outline: none;
+  transition: border-color 0.2s;
+  color: var(--color-text-primary);
+  background: var(--color-canvas);
   box-sizing: border-box;
+}
+
+.search-input:focus {
+  border-color: var(--color-primary);
+}
+
+.search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.search-clear:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-pearl, var(--color-divider-soft));
 }
 
 .search-input:focus {
@@ -175,7 +225,8 @@ function removeSuggestion(text: string) {
 }
 
 .search-submit {
-  padding: 8px 20px;
+  height: 44px;
+  padding: 0 22px;
   border: none;
   border-radius: var(--radius-pill, 999px);
   background: var(--color-primary);

@@ -59,11 +59,7 @@ async function loadWorks(reset = true) {
     if (reset) {
       works.value = dedupeByBase(res.items)
     } else {
-      const seen = new Set(works.value.map((v) => baseCode(v.code)))
-      const merged = dedupeByBase([...works.value, ...res.items]).filter(
-        (v) => !seen.has(baseCode(v.code)) || works.value.some((w) => w.code === v.code),
-      )
-      works.value = merged
+      works.value = dedupeByBase([...works.value, ...res.items])
     }
     worksPage.value += 1
     worksHasNext.value = res.pagination.hasNext

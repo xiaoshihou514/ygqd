@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { novelFollowedAuthors, novelFollowAuthor, novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
 import type { NovelPage, NovelSeries } from '@/types'
@@ -42,12 +42,12 @@ const hasPrevChapter = computed(() => chapterIndex.value > 0)
 // 阅读设置:纯前端 localStorage(对齐搜索历史先例,零后端依赖)
 type ReaderFontSize = 'sm' | 'md' | 'lg'
 type ReaderLineHeight = 'compact' | 'normal' | 'relaxed'
-type ReaderTheme = 'paper' | 'dark' | 'green'
+type ReaderTheme = 'paper' | 'dark' | 'green' | 'auto'
 const SETTINGS_KEY = 'niacg-reader-settings'
 const settings = ref({
   fontSize: 'md' as ReaderFontSize,
   lineHeight: 'normal' as ReaderLineHeight,
-  theme: 'paper' as ReaderTheme,
+  theme: 'auto' as ReaderTheme,
 })
 const showSettings = ref(false)
 // 面板与目录互斥开合(叠开视觉怪,backend-dev 审查裁决)
@@ -77,10 +77,42 @@ const LINE_HEIGHT_OPTIONS: Array<{ key: ReaderLineHeight; label: string }> = [
   { key: 'relaxed', label: '宽松' },
 ]
 const THEME_OPTIONS: Array<{ key: ReaderTheme; label: string }> = [
+  { key: 'auto', label: '跟随系统' },
   { key: 'paper', label: '纸白' },
   { key: 'dark', label: '暗黑' },
   { key: 'green', label: '护眼绿' },
 ]
+// ===== B4:主题「跟随系统」的生效判定与监听 =====
+// auto:matchMedia(系统偏好) + documentElement dark 类(全局主题切换)共同判定
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
+const systemDarkNow = ref(systemDark.matches)
+
+function applyEffectiveTheme() {
+  const t = settings.value.theme
+  if (t === 'auto') {
+    const globalDark = document.documentElement.classList.contains('dark')
+    settings.value.theme = globalDark || systemDarkNow.value ? 'dark' : 'paper'
+  }
+}
+
+function onSystemDarkChange() {
+  systemDarkNow.value = systemDark.matches
+  applyEffectiveTheme()
+}
+
+// 月亮按钮一键切换:暗 ↔ 亮(护眼绿保留在设置面板)
+function toggleDarkQuick() {
+  settings.value.theme = settings.value.theme === 'dark' ? 'paper' : 'dark'
+}
+
+/** 实际生效主题(auto 解析为系统偏好,其余原样) */
+const effectiveTheme = computed<ReaderTheme>(() => {
+  const t = settings.value.theme
+  if (t !== 'auto') return t
+  const globalDark = document.documentElement.classList.contains('dark')
+  return globalDark || systemDarkNow.value ? 'dark' : 'paper'
+})
+
 // 任务 8:正文分段(按换行切段,段间距+首行缩进——用户「没分段」根因是纯文本连续渲染)
 const paragraphs = computed(() =>
   (page.value?.text ?? '')
@@ -113,7 +145,7 @@ function loadSettings() {
     if (parsed.lineHeight && parsed.lineHeight in LINE_HEIGHTS) {
       settings.value.lineHeight = parsed.lineHeight
     }
-    if (parsed.theme && ['paper', 'dark', 'green'].includes(parsed.theme)) {
+    if (parsed.theme && ['paper', 'dark', 'green', 'auto'].includes(parsed.theme)) {
       settings.value.theme = parsed.theme as ReaderTheme
     }
   } catch {
@@ -202,6 +234,8 @@ function jumpToProgress() {
 }
 
 onMounted(async () => {
+  systemDark.addEventListener('change', onSystemDarkChange)
+  applyEffectiveTheme()
   loadSettings()
   void loadNovelFollows()
   const id = String(route.params.id || '')
@@ -240,10 +274,14 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+onUnmounted(() => {
+  systemDark.removeEventListener('change', onSystemDarkChange)
+})
 </script>
 
 <template>
-  <div class="reader-page" :class="`theme-${settings.theme}`">
+  <div class="reader-page" :class="`theme-${effectiveTheme}`">
     <div class="reader-header">
       <button class="hdr-btn" @click="router.push('/novels')">‹ 小说</button>
       <div class="hdr-center">
@@ -251,6 +289,16 @@ onMounted(async () => {
         <span v-if="page" class="hdr-page">第 {{ articlePage }}/{{ page.totalPages }} 页</span>
       </div>
       <div class="hdr-actions">
+        <button
+          class="hdr-btn"
+          title="暗色切换"
+          aria-label="暗色切换"
+          @click="toggleDarkQuick"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+        </button>
         <button
           v-if="!inShelf && series?.author"
           class="hdr-btn"
