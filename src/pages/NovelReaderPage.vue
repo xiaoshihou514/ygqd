@@ -172,6 +172,7 @@ async function loadPage(silent = false) {
         series.value.id,
         currentChapter.value.order,
         articlePage.value,
+        series.value.title,
       )
     }
   } catch (e) {

@@ -364,7 +364,6 @@ async function handleVideoSearch() {
   videoError.value = ''
   videoSearchedKw.value = kw
   videoItems.value = []
-  addHistory(kw)
   try {
     const res = await searchVideos(kw, 1)
     videoItems.value = res.items
@@ -404,7 +403,6 @@ async function handleNovelSearch() {
   novelSearching.value = true
   novelSearchedKw.value = kw
   novelHits.value = []
-  addHistory(kw)
   try {
     const elapsed = Date.now() - lastNovelFetchAt
     if (elapsed < NOVEL_MIN_INTERVAL) {

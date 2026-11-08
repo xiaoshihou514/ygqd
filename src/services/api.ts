@@ -68,7 +68,8 @@ export const recordItemHistory = (
   itemId: string,
   title: string,
   progress?: string,
-) => invoke<void>('record_item_history', { source, kind, itemId, title, progress })
+  thumbnail?: string,
+) => invoke<void>('record_item_history', { source, kind, itemId, title, progress, thumbnail })
 export const fetchItemHistory = (source?: string, kind?: string, limit?: number) =>
   invoke<ItemHistoryEntry[]>('fetch_item_history', { source, kind, limit })
 export const videoFollow = (source: string, kind: string, targetId: string, displayName: string) =>
@@ -91,7 +92,7 @@ export const novelShelf = () => invoke<NovelSeries[]>('novel_shelf')
 export const novelRemove = (id: string) => invoke<void>('novel_remove', { id })
 export const novelRead = (chapterId: string, page: number) => invoke<NovelPage>('novel_read', { chapterId, page })
 export const novelProgress = (seriesId: string) => invoke<[number, number] | null>('novel_progress', { seriesId })
-export const novelSetProgress = (seriesId: string, chapterOrder: number, page: number) => invoke<void>('novel_set_progress', { seriesId, chapterOrder, page })
+export const novelSetProgress = (seriesId: string, chapterOrder: number, page: number, title?: string) => invoke<void>('novel_set_progress', { seriesId, chapterOrder, page, title })
 export const recordVideoWatched = (code: string) => invoke<void>('record_video_watched', { code })
 export const fetchVideoWatchedIds = (codes: string[]) => invoke<string[]>('fetch_video_watched_ids', { codes })
 export const fetchComicViewedIds = (source: SourceId, ids: string[]) => invoke<string[]>('fetch_comic_viewed_ids', { source, ids })

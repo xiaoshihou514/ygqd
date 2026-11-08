@@ -43,7 +43,7 @@ async function load() {
     void recordVideoWatched(code)
     // 相似影片:默认按厂商(无厂商取系列,再取首个女优)
     // 全局历史时间线:播放开始记录基础条目(位置在暂停/离开时补记)
-    void recordItemHistory(detail.value.provider || 'fs1', 'video', detail.value.code, detail.value.title || detail.value.code, `https://fourhoi.com/${detail.value.code}/cover-t.jpg`)
+    void recordItemHistory(detail.value.provider || 'fs1', 'video', detail.value.code, detail.value.title || detail.value.code, undefined, `https://fourhoi.com/${detail.value.code}/cover-t.jpg`)
   } catch (e) {
     error.value = errorMessage(e) || '加载失败'
   } finally {
