@@ -12,6 +12,7 @@ import { useComicViewedIds } from '@/composables/useComicViewedIds'
 import type { SourceId } from '@/config/sources'
 import { parseSearchScope } from '@/config/sources'
 import SearchForm from '@/components/SearchForm.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import ComicGrid from '@/components/ComicGrid.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -583,20 +584,13 @@ function goToSplit() {
       </template>
 
       <template v-else-if="scope === 'video'">
-        <form class="scope-search" @submit.prevent="handleVideoSearch">
-          <div class="scope-search-wrap">
-            <input
-              v-model="sharedKeyword"
-              type="search"
-              class="scope-input"
-              placeholder="搜索视频(番号/标题/厂商)…"
-              autocomplete="off"
-            >
-          </div>
-          <button type="submit" class="scope-btn-submit" :disabled="videoSearching">
-            {{ videoSearching ? '搜索中…' : '搜索' }}
-          </button>
-        </form>
+        <SearchInput
+          v-model="sharedKeyword"
+          history-key="niacg-video-search-history"
+          placeholder="搜索视频(番号/标题/厂商)…"
+          :loading="videoSearching"
+          @search="handleVideoSearch"
+        />
         <p v-if="videoError" class="scope-error">{{ videoError }}</p>
         <div v-if="videoSearching && !videoItems.length" class="scope-loading">
           <LoadingSpinner message="正在搜索视频..." />
@@ -609,20 +603,13 @@ function goToSplit() {
       </template>
 
       <template v-else-if="scope === 'novel'">
-        <form class="scope-search" @submit.prevent="handleNovelSearch">
-          <div class="scope-search-wrap">
-            <input
-              v-model="sharedKeyword"
-              type="search"
-              class="scope-input"
-              placeholder="搜索小说(书名/作者)…"
-              autocomplete="off"
-            >
-          </div>
-          <button type="submit" class="scope-btn-submit" :disabled="novelSearching || novelLoadingMore">
-            {{ novelSearching ? '搜索中…' : '搜索' }}
-          </button>
-        </form>
+        <SearchInput
+          v-model="sharedKeyword"
+          history-key="niacg-novel-search-history"
+          placeholder="搜索小说(书名/作者)…"
+          :loading="novelSearching || novelLoadingMore"
+          @search="handleNovelSearch"
+        />
         <div class="sort-row" role="group" aria-label="排序方式">
           <span class="sort-label">排序</span>
           <div class="sort-chips">
