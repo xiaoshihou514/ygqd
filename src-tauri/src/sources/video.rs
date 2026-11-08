@@ -275,24 +275,39 @@ fn percent_decode_simple(s: &str) -> String {
 }
 
 /// 基础番号:去掉 -chinese-subtitle 后缀
-/// 基础番号:剥离全部已知变体后缀(中字/英字/无码/流出),循环剥离
-/// 应对叠加形态(如 -uncensored-chinese-subtitle)
-fn base_code(code: &str) -> &str {
-    let mut base = code;
+/// 去重键:剥离全部已知变体后缀(中字/英字/无码/流出),循环剥离
+/// 应对叠加形态(如 -uncensored-leak-chinese-subtitle)。
+/// 仅用于同番号变体归并(dedupe_by_base/parse_missav_search 去重);
+/// 播放路径推导用 play_base(保留 leak 后缀),详情/标题回退用 base_code。
+fn dedup_key(code: &str) -> &str {
+    let mut key = code;
     loop {
         // N1 修正:站点真实后缀是 -leak(样本统计 62:0,无 -leaked 形态)
-        let stripped = base
+        let stripped = key
             .strip_suffix("-chinese-subtitle")
-            .or_else(|| base.strip_suffix("-english-subtitle"))
-            .or_else(|| base.strip_suffix("-uncensored-leak"))
-            .or_else(|| base.strip_suffix("-uncensored"))
-            .or_else(|| base.strip_suffix("-leak"));
+            .or_else(|| key.strip_suffix("-english-subtitle"))
+            .or_else(|| key.strip_suffix("-uncensored-leak"))
+            .or_else(|| key.strip_suffix("-uncensored"))
+            .or_else(|| key.strip_suffix("-leak"));
         match stripped {
-            Some(s) if !s.is_empty() => base = s,
+            Some(s) if !s.is_empty() => key = s,
             _ => break,
         }
     }
-    base
+    key
+}
+
+/// 播放路径基础番号:只剥 -chinese-subtitle(保留 -uncensored-leak 等
+/// 后缀)——missav 播放页按完整变体路径分发,leak 码的详情页路径是
+/// /videos/{code}-uncensored-leak,剥掉后缀会 404。
+/// 返回 (中字优先尝试路径, 有码回退路径)。
+
+// (上段 doc 属 impl 内 play_paths,此处的游离残段已随函数移入 impl)
+
+/// 基础番号:剥离全部变体后缀(详情页 URL/标题回退/日语反查三处
+/// 的番号归一用途)
+fn base_code(code: &str) -> &str {
+    dedup_key(code)
 }
 
 /// 变体优先级(需求 12 用户要求):中文字幕 > 有码 > 无码 > 英文字幕。
@@ -318,7 +333,7 @@ fn dedupe_by_base(cards: Vec<VideoCard>) -> Vec<VideoCard> {
     let mut best: HashMap<String, (u8, usize, VideoCard)> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
     for (seq, card) in cards.into_iter().enumerate() {
-        let base = base_code(&card.code).to_string();
+        let base = dedup_key(&card.code).to_string();
         let pri = variant_priority(&card);
         match best.get_mut(&base) {
             Some(entry) => {
@@ -513,9 +528,23 @@ impl VideoApi {
 
     /// missav 兜底播放地址:详情页的 packer 混淆脚本解码出 m3u8。
     /// 优先中文字幕变体,不存在回退原番号。
+    /// 播放路径基础番号:只剥 -chinese-subtitle(保留 -uncensored-leak
+    /// 等后缀)——missav 播放页按完整变体路径分发
+    fn play_paths(code: &str) -> (String, String) {
+        let lower = code.to_lowercase();
+        let bare = lower.strip_suffix("-chinese-subtitle").unwrap_or(&lower);
+        (format!("{bare}-chinese-subtitle"), bare.to_string())
+    }
+
+    /// 播放路径推导纯函数(回归测试用):leak 码推导路径仍带
+    /// -uncensored-leak(中字优先尝试,有码回退)
+    fn missav_video_paths(code: &str) -> Vec<(String, bool)> {
+        let (chinese, bare) = Self::play_paths(code);
+        vec![(chinese, true), (bare, false)]
+    }
+
     async fn missav_m3u8(&self, code: &str) -> Result<(String, bool, String), String> {
-        let lower = base_code(&code.to_lowercase()).to_string();
-        for (path, chinese) in [(format!("{lower}-chinese-subtitle"), true), (lower, false)] {
+        for (path, chinese) in Self::missav_video_paths(code) {
             let url = format!("https://missav.ai/videos/{path}");
             let Ok(html) = self.missav_get(&url).await else {
                 continue;
@@ -600,8 +629,8 @@ impl VideoApi {
         // 同番号的普通版与中字版只留一张,优先中字
         let mut dedup: Vec<VideoCard> = Vec::with_capacity(out.len());
         for card in out {
-            let base = base_code(&card.code);
-            if let Some(existing) = dedup.iter_mut().find(|c| base_code(&c.code) == base) {
+            let base = dedup_key(&card.code);
+            if let Some(existing) = dedup.iter_mut().find(|c| dedup_key(&c.code) == base) {
                 if card.chinese && !existing.chinese {
                     *existing = card;
                 }
@@ -640,7 +669,6 @@ impl VideoApi {
         out
     }
 
-    /// 最新上市列表,page 从 1 开始
     // ── 批次 3:视频关注(侦察取证形态) ──
 
     /// fs1 女优列表:/models/ 页卡片(链接 hash slug + h6.title 名字)
