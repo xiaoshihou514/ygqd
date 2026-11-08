@@ -400,6 +400,19 @@ pub struct NovelHit {
     /// 封面图展示走 fetch_image 代理的通用占位
     #[serde(default)]
     pub cover: String,
+    /// 发布日期(简介 meta 行「YYYY/MM/DD 首发」正则提取;
+    /// 依赖作者发帖格式,格式不符时为空)
+    #[serde(default)]
+    pub published_date: Option<String>,
+    /// 字数(登录态条目「N字」计数 span 提取)
+    #[serde(default)]
+    pub word_count: Option<String>,
+    /// 阅读量(登录态条目 eye-fill 图标配对计数;未登录会话不渲染)
+    #[serde(default)]
+    pub views: Option<String>,
+    /// 收藏量(登录态条目 heart-fill 图标配对计数;未登录会话不渲染)
+    #[serde(default)]
+    pub favorites: Option<String>,
 }
 
 /// 从站内任意形式的系列链接(/s/{id})提取标识,兼容绝对与相对地址。
@@ -421,6 +434,30 @@ fn series_id_from_href(href: &str) -> Option<String> {
 /// 从任意 HTML 提取系列信息。优先条目级解析(系列/列表/搜索结果的
 /// li.list-group-item 结构:id+标题+作者+标签),无该结构时回退全文
 /// /s/ 链接扫描(仅 id+title,如首页等异构页面)。
+// 需求 15(登录态结构化计数)的提取正则:模块级 OnceLock + helper
+// (循环内只调用 helper,编译一次)
+static RE_EYE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RE_HEART: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RE_WORDS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RE_DATE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+fn re_eye() -> &'static regex::Regex {
+    RE_EYE.get_or_init(|| {
+        regex::Regex::new(r#"bi-eye-fill[^>]*></i><span[^>]*>([^<]+)</span>"#).unwrap()
+    })
+}
+fn re_heart() -> &'static regex::Regex {
+    RE_HEART.get_or_init(|| {
+        regex::Regex::new(r#"bi-heart-fill[^>]*></i><span[^>]*>([^<]+)</span>"#).unwrap()
+    })
+}
+fn re_words() -> &'static regex::Regex {
+    RE_WORDS.get_or_init(|| regex::Regex::new(r#"text-sm text-gray">([\d,]+字)</span>"#).unwrap())
+}
+fn re_date() -> &'static regex::Regex {
+    RE_DATE.get_or_init(|| regex::Regex::new(r"(\d{4}/\d{2}/\d{2})").unwrap())
+}
+
 fn extract_series(html: &str) -> Vec<NovelHit> {
     let doc = Html::parse_document(html);
     let entry_sel = sel("li.list-group-item");
@@ -449,6 +486,29 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
                 .map(|a| normalize_text(&a.text().collect::<String>()))
                 .filter(|t| !t.is_empty())
                 .collect();
+            // 需求 15(登录态结构化计数):字数/收藏(heart-fill)/
+            // 阅读(eye-fill)——正则模块级 OnceLock(见 extract_series 上方)
+            let re_eye = re_eye();
+            let re_heart = re_heart();
+            let re_words = re_words();
+            let re_date = re_date();
+            let item_html = item.html();
+            let views = re_eye
+                .captures(&item_html)
+                .map(|c| c[1].trim().to_string())
+                .filter(|s| !s.is_empty());
+            let favorites = re_heart
+                .captures(&item_html)
+                .map(|c| c[1].trim().to_string())
+                .filter(|s| !s.is_empty());
+            let word_count = re_words
+                .captures(&item_html)
+                .map(|c| c[1].trim().to_string())
+                .filter(|s| !s.is_empty());
+            // 发布日期:条目简介 meta 行「YYYY/MM/DD 首发」(作者发帖格式,
+            // 格式不符时为空)
+            let intro_text = normalize_text(&item.text().collect::<String>());
+            let published_date = re_date.captures(&intro_text).map(|c| c[1].to_string());
             let final_title = if title.is_empty() { id.clone() } else { title };
             out.push(NovelHit {
                 id,
@@ -456,6 +516,10 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
                 author,
                 tags,
                 cover: String::new(),
+                published_date,
+                word_count,
+                views,
+                favorites,
             });
         }
         if !out.is_empty() {
@@ -484,6 +548,10 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
             author: String::new(),
             tags: Vec::new(),
             cover: String::new(),
+            published_date: None,
+            word_count: None,
+            views: None,
+            favorites: None,
         });
     }
     out
@@ -594,6 +662,10 @@ pub async fn author_page_works(app: &AppHandle, author_id: &str) -> Result<Vec<N
             author: String::new(),
             tags: Vec::new(),
             cover: String::new(),
+            published_date: None,
+            word_count: None,
+            views: None,
+            favorites: None,
         });
     }
     if out.is_empty() {
