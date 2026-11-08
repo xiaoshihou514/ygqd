@@ -6,6 +6,7 @@ import { novelAdd, novelSearchPage, searchComics, searchVideos } from '@/service
 import type { ComicItem, NovelHit, SearchParams, SearchResult, VideoCard } from '@/types'
 import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
+import { formatCount } from '@/utils/formatCount'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
 import { useComicViewedIds } from '@/composables/useComicViewedIds'
@@ -643,7 +644,13 @@ function goToSplit() {
               <span class="scope-row-title">{{ h.title }}</span>
               <span v-for="tag in (h.tags ?? []).slice(0, 2)" :key="tag" class="scope-row-badge">{{ tag }}</span>
             </span>
-            <span class="scope-row-sub">{{ h.author || '未知作者' }}</span>
+            <span class="scope-row-sub">
+              {{ h.author || '未知作者' }}
+              <template v-if="h.wordCount"> · {{ h.wordCount }}</template>
+              <template v-if="h.views"> · 阅读 {{ formatCount(parseLikes(h.views)) }}</template>
+              <template v-if="h.favorites"> · 收藏 {{ formatCount(parseLikes(h.favorites)) }}</template>
+              <template v-if="h.publishedDate"> · {{ h.publishedDate }}</template>
+            </span>
           </button>
         </div>
         <div v-if="novelPageNo < novelTotalPages && novelHits.length" class="scope-more-row">
@@ -928,9 +935,9 @@ function goToSplit() {
   font-size: var(--font-size-caption);
   font-weight: 600;
   color: var(--color-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 任务 15:标题完全显示(可换行) */
+  word-break: break-word;
+  white-space: normal;
 }
 
 .scope-row-badge {

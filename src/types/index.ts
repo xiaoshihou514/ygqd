@@ -209,6 +209,14 @@ export interface NovelHit {
   author?: string
   /** 内容标签(可空,未登录时可能拿不到) */
   tags?: string[]
+  /** 发布日期(简介 meta 行「YYYY/MM/DD 首发」;格式不符为空;未登录无) */
+  publishedDate?: string
+  /** 字数(站点原始文本,如「8,391字」;未登录无) */
+  wordCount?: string
+  /** 阅读量(站点原始文本,如「119」;未登录无) */
+  views?: string
+  /** 收藏量(站点原始文本;未登录无) */
+  favorites?: string
 }
 
 /** 小说搜索分页结果(站点每页 30 条,热门词可达数百页) */

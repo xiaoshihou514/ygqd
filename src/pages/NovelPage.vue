@@ -2,6 +2,8 @@
 // 小说发现页:推荐(首页最新流)/日榜/月榜。站内搜索统一在底部「搜索」页(小说范围),
 // 本页不再保留单独的搜索框
 import { errorMessage } from '@/utils/errors'
+import { formatCount } from '@/utils/formatCount'
+import { parseLikes } from '@/utils/likes'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { novelRanking, novelRecommend } from '@/services/api'
@@ -160,7 +162,7 @@ onMounted(() => {
           <div class="hit-main">
             <span class="hit-title">{{ hit.title }}</span>
             <span
-              v-if="hit.author || (hit.tags && hit.tags.length > 0)"
+              v-if="hit.author || (hit.tags && hit.tags.length > 0) || hit.wordCount || hit.views || hit.favorites || hit.publishedDate"
               class="hit-meta"
             >
               <template v-if="hit.author">{{ hit.author }}</template>
@@ -171,6 +173,10 @@ onMounted(() => {
               >
                 {{ tag }}
               </span>
+              <template v-if="hit.wordCount"> · {{ hit.wordCount }}</template>
+              <template v-if="hit.views"> · 阅读 {{ formatCount(parseLikes(hit.views)) }}</template>
+              <template v-if="hit.favorites"> · 收藏 {{ formatCount(parseLikes(hit.favorites)) }}</template>
+              <template v-if="hit.publishedDate"> · {{ hit.publishedDate }}</template>
             </span>
           </div>
         </button>
@@ -313,9 +319,9 @@ onMounted(() => {
 .hit-title {
   font-size: var(--font-size-caption);
   color: var(--color-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 任务 15:标题完全显示(可换行) */
+  word-break: break-word;
+  white-space: normal;
 }
 
 .hit-meta {
