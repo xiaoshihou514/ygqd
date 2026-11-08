@@ -470,9 +470,10 @@ async fn novel_followed_author_works(
     }
     let res = sources::novel::author_page_works(&app, &author_id).await;
     if let Ok(works) = &res {
-        state.put(key, works);
+        state.put(key.clone(), works);
     }
-    res
+    // 自查补漏(需求 5):关注作者作品流同样过黑名单
+    res.map(|works| filter_blacklisted(&state, works))
 }
 
 /// 关注作者列表(复用漫画源 followed_authors 表;authorId 以作者名充当)

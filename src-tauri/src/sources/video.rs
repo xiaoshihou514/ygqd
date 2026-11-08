@@ -691,7 +691,8 @@ impl VideoApi {
     ) -> Result<VideoListResult, String> {
         let url = missav_list_url(kind, target_id, page)?;
         let html = self.missav_get(&url).await?;
-        let items = Self::parse_missav_search(&html);
+        // 自查补漏(问题 2):作品列表与搜索同构,变体去重一并生效
+        let items = dedupe_by_base(Self::parse_missav_search(&html));
         Ok(VideoListResult {
             pagination: PaginationInfo {
                 current: page - 1,
