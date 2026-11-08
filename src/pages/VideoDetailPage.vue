@@ -211,21 +211,17 @@ function onFullscreenChange() {
   isFullscreen.value = !!document.fullscreenElement
 }
 
+// ===== 任务 1:横屏自动全屏/竖屏自动退出(旋转传感器驱动) =====
+// Android:伪全屏 class 随横竖屏自动切换(无手动按钮);桌面:保留手动按钮
+const landscapeQuery = window.matchMedia('(orientation: landscape)')
+
+function onOrientationChange() {
+  if (!IS_ANDROID) return
+  isFullscreen.value = landscapeQuery.matches
+}
+
 async function toggleFullscreen() {
-  if (IS_ANDROID) {
-    isFullscreen.value = !isFullscreen.value
-    try {
-      // 伪全屏下尝试横屏锁定(Android WebView 一般可用,失败静默)
-      if (isFullscreen.value) {
-        await screen.orientation.lock('landscape')
-      } else {
-        screen.orientation.unlock()
-      }
-    } catch {
-      /* 不支持或被拒,忽略 */
-    }
-    return
-  }
+  if (IS_ANDROID) return
   const box = playerBox.value
   if (!box) return
   try {
@@ -239,6 +235,25 @@ async function toggleFullscreen() {
   }
 }
 
+// ===== 任务 7:快进快退(±1 分钟) =====
+function skipBy(seconds: number) {
+  const el = mediaEl.value as unknown as { currentTime?: number } | null
+  if (!el || typeof el.currentTime !== 'number') return
+  el.currentTime = Math.max(0, el.currentTime + seconds)
+}
+
+// ===== 任务 8:倍速档(0.5/1/2 循环) =====
+const PLAYBACK_RATES = [0.5, 1, 2] as const
+const rateIndex = ref(1)
+const currentRate = computed(() => PLAYBACK_RATES[rateIndex.value]!)
+
+function cyclePlaybackRate() {
+  const el = mediaEl.value as unknown as { playbackRate?: number } | null
+  if (!el) return
+  rateIndex.value = (rateIndex.value + 1) % PLAYBACK_RATES.length
+  el.playbackRate = PLAYBACK_RATES[rateIndex.value]!
+}
+
 async function copyError() {
   try {
     await navigator.clipboard.writeText(error.value)
@@ -249,6 +264,9 @@ async function copyError() {
 
 onMounted(() => {
   document.addEventListener('fullscreenchange', onFullscreenChange)
+  landscapeQuery.addEventListener('change', onOrientationChange)
+  // 初始即为横屏(平板横放打开)时自动进入伪全屏
+  if (IS_ANDROID && landscapeQuery.matches) isFullscreen.value = true
   void load()
 })
 
@@ -267,7 +285,7 @@ watch(
 
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
-  if (IS_ANDROID && isFullscreen.value) screen.orientation.unlock()
+  landscapeQuery.removeEventListener('change', onOrientationChange)
   if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined)
   // 全局历史:离开页面补记播放位置
   void recordProgressSnapshot()
@@ -279,6 +297,7 @@ onBeforeUnmount(() => {
     <div class="player-section" :class="{ 'player-fullscreen': isFullscreen && IS_ANDROID }">
       <button class="back-btn" @click="router.back()">‹ 返回</button>
       <button
+        v-if="!IS_ANDROID"
         class="fs-btn"
         :title="isFullscreen ? '退出全屏' : '全屏'"
         :aria-label="isFullscreen ? '退出全屏' : '全屏'"
@@ -314,6 +333,17 @@ onBeforeUnmount(() => {
         <div v-if="recovering" class="recover-overlay">
           <span>播放地址已过期,正在自动刷新...</span>
         </div>
+      </div>
+      <div class="player-controls">
+        <button type="button" class="ctrl-btn" title="快退 1 分钟" @click="skipBy(-60)">
+          « 1min
+        </button>
+        <button type="button" class="ctrl-btn rate" :title="`倍速 ${currentRate}x`" @click="cyclePlaybackRate">
+          {{ currentRate }}x
+        </button>
+        <button type="button" class="ctrl-btn" title="快进 1 分钟" @click="skipBy(60)">
+          1min »
+        </button>
       </div>
     </div>
 
@@ -379,6 +409,45 @@ onBeforeUnmount(() => {
 .player-section {
   position: relative;
   background: #000;
+}
+
+/* 任务 7/8:播放控制条(快退/倍速/快进,player-section 底部悬浮) */
+.player-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-md);
+  padding: 8px var(--spacing-md) calc(8px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+}
+
+.ctrl-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-pill, 999px);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.ctrl-btn:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.ctrl-btn.rate {
+  min-width: 52px;
+  font-weight: 600;
+}
+
+/* 任务 6:快进/快退指示动画往中心移(skin 默认贴左右边缘) */
+.player-skin ::v-deep(.media-seek-indicator[data-direction]) {
+  justify-self: center !important;
 }
 
 .back-btn {

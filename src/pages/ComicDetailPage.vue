@@ -331,7 +331,7 @@ export default {
               <span class="tag-label">作者</span>
               <div class="detail-tags">
                 <span class="detail-tag-wrap">
-                  <button class="detail-tag detail-tag-link" @click="searchByScope(effectiveAuthor, 'writer')">
+                  <button class="detail-tag detail-tag-link" @click="searchByScope(effectiveAuthor)">
                     {{ effectiveAuthor }}
                   </button>
                   <button

@@ -634,6 +634,10 @@ function goToSplit() {
             class="scope-row"
             @click="router.push(`/novels/series/${h.id}`)"
           >
+            <svg class="scope-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
             <span class="scope-row-main">
               <span class="scope-row-title">{{ h.title }}</span>
               <span v-for="tag in (h.tags ?? []).slice(0, 2)" :key="tag" class="scope-row-badge">{{ tag }}</span>
@@ -902,6 +906,14 @@ function goToSplit() {
 
 .scope-row:hover {
   border-color: var(--color-primary);
+}
+
+.scope-row-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  color: var(--color-text-muted);
+  opacity: 0.5;
 }
 
 .scope-row-main {
