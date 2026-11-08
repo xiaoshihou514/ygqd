@@ -359,7 +359,6 @@ function entryPosition(e: TimelineEntry): number | undefined {
         </div>
       </template>
 
-      />
     </div>
   </div>
 </template>

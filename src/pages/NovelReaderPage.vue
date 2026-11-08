@@ -87,22 +87,13 @@ const THEME_OPTIONS: Array<{ key: ReaderTheme; label: string }> = [
 const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
 const systemDarkNow = ref(systemDark.matches)
 
-function applyEffectiveTheme() {
-  const t = settings.value.theme
-  if (t === 'auto') {
-    const globalDark = document.documentElement.classList.contains('dark')
-    settings.value.theme = globalDark || systemDarkNow.value ? 'dark' : 'paper'
-  }
-}
-
 function onSystemDarkChange() {
   systemDarkNow.value = systemDark.matches
-  applyEffectiveTheme()
 }
 
 // 月亮按钮一键切换:暗 ↔ 亮(护眼绿保留在设置面板)
 function toggleDarkQuick() {
-  settings.value.theme = settings.value.theme === 'dark' ? 'paper' : 'dark'
+  setSetting('theme', effectiveTheme.value === 'dark' ? 'paper' : 'dark')
 }
 
 /** 实际生效主题(auto 解析为系统偏好,其余原样) */
@@ -131,9 +122,7 @@ function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
     if (!raw) {
-      // 任务 8:无本地阅读设置时,默认主题跟随全局暗色(system 暗色也算)
-      const globalDark = document.documentElement.classList.contains('dark')
-      settings.value.theme = globalDark ? 'dark' : 'paper'
+      // 无本地阅读设置:保持默认 auto(跟随系统),不在此处改写具体主题
       return
     }
     const parsed = JSON.parse(raw) as Partial<{
@@ -236,7 +225,6 @@ function jumpToProgress() {
 
 onMounted(async () => {
   systemDark.addEventListener('change', onSystemDarkChange)
-  applyEffectiveTheme()
   loadSettings()
   void loadNovelFollows()
   const id = String(route.params.id || '')

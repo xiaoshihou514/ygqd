@@ -190,7 +190,7 @@ function onMediaError() {
 
 function retry() {
   recoverCount = 0
-  void load()
+  void load().then(() => nextTick(injectSkinControls))
 }
 
 // 全屏:Android WebView 的全屏请求被 wry 宿主立即取消
@@ -269,6 +269,8 @@ async function waitSkinRoot(maxMs = 5000): Promise<ShadowRoot | null> {
 async function injectSkinControls() {
   const root = await waitSkinRoot()
   if (!root) return
+  // 防重复标记:skin 未重建时跳过(skin 重建会换新 shadowRoot,标记随之失效)
+  if (root.querySelector('.skin-skip-btn')) return
 
   const style = document.createElement('style')
   style.textContent = `
