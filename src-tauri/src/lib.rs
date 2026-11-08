@@ -300,10 +300,19 @@ fn record_item_history(
     item_id: String,
     title: String,
     progress: Option<String>,
+    thumbnail: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::item_history_record(&conn, &source, &kind, &item_id, &title, progress.as_deref())
+    db::item_history_record(
+        &conn,
+        &source,
+        &kind,
+        &item_id,
+        &title,
+        progress.as_deref(),
+        thumbnail.as_deref(),
+    )
 }
 
 /// 全局历史查询(source/kind 可选过滤;None=全板块时间线)

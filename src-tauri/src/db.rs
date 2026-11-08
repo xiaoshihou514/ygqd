@@ -53,8 +53,12 @@ fn migrate_view_history(db: &Connection) -> Result<(), String> {
         COMMIT;",
     )
     .map_err(|e| e.to_string())?;
+    // 存量 item_history 表补 thumbnail 列(契约扩展;SQLite ALTER 非幂等,
+    // 重复执行的 duplicate column 错误静默忽略)
+    let _ = db.execute("ALTER TABLE item_history ADD COLUMN thumbnail TEXT", []);
     Ok(())
 }
+
 pub fn follows(db: &Connection) -> Result<Vec<FollowedAuthor>, String> {
     // 批次 4 迁移:实现切换到 follow_target 统一表(接口 FollowedAuthor 不变;
     // last_checked_at 由 followed_at 兼容填充)
@@ -350,7 +354,15 @@ pub fn novel_set_progress(
     // 时间线;item_id 用系列,progress JSON 记章节与页码
     let progress_json = format!("{{\"chapter\":{},\"page\":{}}}", chapter_order, page);
     let title = novel_series_title(db, series_id).unwrap_or_else(|| format!("系列 {series_id}"));
-    item_history_record(db, "hlib", "novel", series_id, &title, Some(&progress_json))?;
+    item_history_record(
+        db,
+        "hlib",
+        "novel",
+        series_id,
+        &title,
+        Some(&progress_json),
+        None,
+    )?;
     Ok(())
 }
 
@@ -498,12 +510,14 @@ pub fn item_history_record(
     item_id: &str,
     title: &str,
     progress: Option<&str>,
+    thumbnail: Option<&str>,
 ) -> Result<(), String> {
     let time = now();
     conn.execute(
-        "INSERT INTO item_history VALUES(?1,?2,?3,?4,?5,?6)
-         ON CONFLICT(source,kind,item_id) DO UPDATE SET title=?4, viewed_at=?5, progress=?6",
-        params![source, kind, item_id, title, time, progress],
+        "INSERT INTO item_history VALUES(?1,?2,?3,?4,?5,?6,?7)
+         ON CONFLICT(source,kind,item_id) DO UPDATE SET title=?4, viewed_at=?5,
+           progress=COALESCE(?6,progress), thumbnail=COALESCE(?7,thumbnail)",
+        params![source, kind, item_id, title, time, progress, thumbnail],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
