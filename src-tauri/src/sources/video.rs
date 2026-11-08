@@ -275,8 +275,66 @@ fn percent_decode_simple(s: &str) -> String {
 }
 
 /// 基础番号:去掉 -chinese-subtitle 后缀
+/// 基础番号:剥离全部已知变体后缀(中字/英字/无码/流出),循环剥离
+/// 应对叠加形态(如 -uncensored-chinese-subtitle)
 fn base_code(code: &str) -> &str {
-    code.strip_suffix("-chinese-subtitle").unwrap_or(code)
+    let mut base = code;
+    loop {
+        let stripped = base
+            .strip_suffix("-chinese-subtitle")
+            .or_else(|| base.strip_suffix("-english-subtitle"))
+            .or_else(|| base.strip_suffix("-uncensored-leaked"))
+            .or_else(|| base.strip_suffix("-uncensored"))
+            .or_else(|| base.strip_suffix("-leaked"));
+        match stripped {
+            Some(s) if !s.is_empty() => base = s,
+            _ => break,
+        }
+    }
+    base
+}
+
+/// 变体优先级(需求 12 用户要求):中文字幕 > 有码 > 无码 > 英文字幕。
+/// 数值小者优先。
+fn variant_priority(card: &VideoCard) -> u8 {
+    let c = &card.code;
+    if c.contains("chinese-subtitle") {
+        0
+    } else if c.contains("english-subtitle") {
+        3
+    } else if c.contains("uncensored") {
+        2
+    } else {
+        1
+    }
+}
+
+/// 同番号变体去重:按基础番号分组,组内取优先级最高者;
+/// 输出保持基础番号的首次出现顺序。
+fn dedupe_by_base(cards: Vec<VideoCard>) -> Vec<VideoCard> {
+    use std::collections::HashMap;
+    // base -> (优先级, 首现序, card)
+    let mut best: HashMap<String, (u8, usize, VideoCard)> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    for (seq, card) in cards.into_iter().enumerate() {
+        let base = base_code(&card.code).to_string();
+        let pri = variant_priority(&card);
+        match best.get_mut(&base) {
+            Some(entry) => {
+                if pri < entry.0 {
+                    *entry = (pri, entry.1, card);
+                }
+            }
+            None => {
+                order.push(base.clone());
+                best.insert(base, (pri, seq, card));
+            }
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|base| best.remove(&base).map(|(_, _, c)| c))
+        .collect()
 }
 
 /// 多源合并后的 has_next:任一源本页还有货即 true。
@@ -670,7 +728,7 @@ impl VideoApi {
         });
         let fs1_has_next = matches!(&fs1_res, Ok(r) if r.items.len() >= 24);
         let (missav, missav_has_next) = missav_res;
-        let mut items = match fs1_res {
+        let mut all: Vec<VideoCard> = match fs1_res {
             Ok(r) => r.items,
             Err(e) => {
                 if missav.is_empty() {
@@ -679,13 +737,9 @@ impl VideoApi {
                 Vec::new()
             }
         };
-        for card in missav {
-            let base = base_code(&card.code);
-            if items.iter().any(|c| base_code(&c.code) == base) {
-                continue;
-            }
-            items.push(card);
-        }
+        all.extend(missav);
+        // 需求 12:同番号变体去重(中字>有码>无码>英字取一)
+        let items = dedupe_by_base(all);
         Ok(VideoListResult {
             pagination: PaginationInfo {
                 current: page - 1,
@@ -1144,6 +1198,43 @@ pub struct VideoDetail {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn base_code_strips_all_variants() {
+        assert_eq!(base_code("mida-829"), "mida-829");
+        assert_eq!(base_code("mida-829-chinese-subtitle"), "mida-829");
+        assert_eq!(base_code("mida-829-uncensored"), "mida-829");
+        assert_eq!(base_code("mida-829-english-subtitle"), "mida-829");
+        assert_eq!(base_code("mida-829-uncensored-leaked"), "mida-829");
+    }
+
+    #[test]
+    fn dedupe_prefers_chinese_then_default() {
+        let card = |code: &str| VideoCard {
+            code: code.into(),
+            title: String::new(),
+            thumbnail: String::new(),
+            views: String::new(),
+            likes: String::new(),
+            chinese: code.contains("chinese"),
+        };
+        // 中字优先于 fs1 首现的有码
+        let out = dedupe_by_base(vec![card("mida-829"), card("mida-829-chinese-subtitle")]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].code, "mida-829-chinese-subtitle");
+        // 有码优先于无码与英字
+        let out = dedupe_by_base(vec![
+            card("ssis-001-uncensored"),
+            card("ssis-001-english-subtitle"),
+            card("ssis-001"),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].code, "ssis-001");
+        // 不同番号不去重,保持首现顺序
+        let out = dedupe_by_base(vec![card("aaa-001"), card("bbb-002")]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].code, "aaa-001");
+    }
+
     use super::*;
 
     #[test]

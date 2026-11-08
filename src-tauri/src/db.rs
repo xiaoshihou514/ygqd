@@ -14,6 +14,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
       CREATE TABLE IF NOT EXISTS followed_authors(author TEXT PRIMARY KEY, followed_at INTEGER NOT NULL, last_checked_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS follow_target(source TEXT NOT NULL, kind TEXT NOT NULL, target_id TEXT NOT NULL, display_name TEXT NOT NULL, followed_at INTEGER NOT NULL, PRIMARY KEY(source, kind, target_id));
       CREATE TABLE IF NOT EXISTS item_history(source TEXT NOT NULL, kind TEXT NOT NULL, item_id TEXT NOT NULL, title TEXT NOT NULL, viewed_at INTEGER NOT NULL, progress TEXT, PRIMARY KEY(source, kind, item_id));
+      CREATE TABLE IF NOT EXISTS novel_blacklist(keyword TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_item_history_viewed ON item_history(viewed_at DESC);
       INSERT OR IGNORE INTO follow_target(source,kind,target_id,display_name,followed_at)
         SELECT 'bika','author',author,author,followed_at FROM followed_authors;
@@ -537,4 +538,50 @@ pub fn item_history_fetch(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     Ok(rows)
+}
+
+/// 小说关键词黑名单条目
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NovelBlacklistEntry {
+    pub keyword: String,
+    pub created_at: i64,
+}
+
+/// 黑名单列表
+pub fn novel_blacklist_list(conn: &Connection) -> Result<Vec<NovelBlacklistEntry>, String> {
+    let mut s = conn
+        .prepare("SELECT keyword,created_at FROM novel_blacklist ORDER BY created_at DESC")
+        .map_err(|e| e.to_string())?;
+    let rows = s
+        .query_map([], |r| {
+            Ok(NovelBlacklistEntry {
+                keyword: r.get(0)?,
+                created_at: r.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// 添加黑名单关键词(子串匹配语义,与漫画 tag 精确匹配不同故独立表)
+pub fn novel_blacklist_add(conn: &Connection, keyword: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR IGNORE INTO novel_blacklist VALUES(?1,?2)",
+        params![keyword, now()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 移除黑名单关键词
+pub fn novel_blacklist_remove(conn: &Connection, keyword: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM novel_blacklist WHERE keyword=?1",
+        params![keyword],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }

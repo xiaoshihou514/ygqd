@@ -243,6 +243,53 @@ async fn novel_series_info(app: AppHandle, id: String) -> Result<NovelSeries, St
     sources::novel::fetch_series(&app, &id).await
 }
 
+// ── 需求 5:小说关键词黑名单 ──
+
+/// 拉黑名单关键词并过滤小说条目(标题命中子串即剔除)
+fn filter_blacklisted(
+    state: &State<'_, AppState>,
+    hits: Vec<sources::novel::NovelHit>,
+) -> Vec<sources::novel::NovelHit> {
+    let keywords: Vec<String> = match state.db.lock() {
+        Ok(conn) => db::novel_blacklist_list(&conn)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.keyword)
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    if keywords.is_empty() {
+        return hits;
+    }
+    let lower_kw: Vec<String> = keywords.iter().map(|k| k.to_lowercase()).collect();
+    hits.into_iter()
+        .filter(|h| {
+            let title = h.title.to_lowercase();
+            !lower_kw.iter().any(|k| title.contains(k))
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn novel_blacklist_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<db::NovelBlacklistEntry>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::novel_blacklist_list(&conn)
+}
+
+#[tauri::command]
+fn novel_blacklist_add(keyword: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::novel_blacklist_add(&conn, &keyword)
+}
+
+#[tauri::command]
+fn novel_blacklist_remove(keyword: String, state: State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::novel_blacklist_remove(&conn, &keyword)
+}
+
 // ── 批次 4:全局历史(item_history 统一时间线) ──
 
 /// 记录全局历史(视频/小说;漫画继续走 record_history 存量)
@@ -371,10 +418,13 @@ async fn novel_recommend(
         return Ok(hit);
     }
     let res = sources::novel::latest_series(&app, page.unwrap_or(1)).await;
-    if let Ok(page_data) = &res {
-        state.put(key, page_data);
+    if let Ok(mut page_data) = res {
+        page_data.hits = filter_blacklisted(&state, page_data.hits);
+        state.put(key.clone(), &page_data);
+        Ok(page_data)
+    } else {
+        res
     }
-    res
 }
 
 /// 系列排行榜(日/周/月;/rank/s 需登录,登录后网关会话可用)
@@ -467,8 +517,14 @@ async fn novel_search_page(
     keyword: String,
     page: Option<i64>,
     sort: Option<String>,
+    state: State<'_, AppState>,
 ) -> Result<sources::novel::NovelSearchPage, String> {
-    sources::novel::search_series_page(&app, &keyword, page.unwrap_or(1), sort.as_deref()).await
+    let page_data =
+        sources::novel::search_series_page(&app, &keyword, page.unwrap_or(1), sort.as_deref())
+            .await?;
+    let mut page_data = page_data;
+    page_data.hits = filter_blacklisted(&state, page_data.hits);
+    Ok(page_data)
 }
 
 #[tauri::command]
@@ -1283,6 +1339,9 @@ pub fn run() {
             video_follow_list,
             video_follow_targets,
             video_follow_works,
+            novel_blacklist_list,
+            novel_blacklist_add,
+            novel_blacklist_remove,
             novel_recommend,
             novel_ranking,
             novel_followed_author_works,
