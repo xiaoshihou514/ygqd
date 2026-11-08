@@ -292,30 +292,10 @@ fn handle_gateway_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
     false // 阻止真实导航,页面留在原地
 }
 
-/// 完成栏注入 JS:底部悬浮「完成,返回应用」(放底部:顶部会盖住站点导航栏
-/// 的登录入口,Android 全面屏下还与状态栏重叠、易误触通知),点击经主框架导航
-/// `ygwd-gw://finish` 通知宿主(on_navigation 拦截处理,页面不跳转)
-fn finish_bar_js(label: &str) -> String {
-    let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".into());
-    format!(
-        r#"(function() {{
-          function ensureBar() {{
-            if (document.getElementById('ygwd-gw-bar')) return;
-            var bar = document.createElement('div');
-            bar.id = 'ygwd-gw-bar';
-            bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483647;background:#0066cc;color:#fff;padding:14px 14px max(env(safe-area-inset-bottom), 16px);text-align:center;font-size:16px;font-weight:600;cursor:pointer';
-            bar.textContent = '\\u2713 完成,返回应用';
-            bar.addEventListener('click', function() {{
-              location.href = 'ygwd-gw://finish?label=' + encodeURIComponent({label_json});
-            }});
-            var host = document.body || document.documentElement;
-            host.appendChild(bar);
-          }}
-          ensureBar();
-          setInterval(ensureBar, 1500);
-        }})();"#
-    )
-}
+// 完成栏注入已移除(需求 11:用户明确不要人工出口)。网关的退出路径:
+// 静默化就绪自动收回(抓取成功 finish)+ Android 返回键
+// moveTaskToBack(GatewayActivity.handleBackNavigation=false 的回调),
+// 交互式挑战完成后用户按返回键即可回主界面。
 
 /// 确保指定站点的网关 webview 存在。返回是否为本次新建。
 pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
@@ -342,7 +322,6 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
         .map_err(|e| format!("无效网关地址: {e}"))?;
     // 完成栏注入用 on_page_load(Android 上 initialization_script 不可靠);
     // 每次页面加载完成都会重新注入
-    let bar_js = finish_bar_js(label);
     let builder = WebviewWindowBuilder::new(app, &window_label, WebviewUrl::External(url));
     // Android:网关放进独立的 GatewayActivity(仓库 overlay 提供,见
     // src-tauri/android-overlay)。wry 在 Android 上一个 Activity 只挂一个
@@ -398,13 +377,6 @@ pub fn ensure_gateway(app: &AppHandle, label: &str) -> Result<bool, String> {
                     false // panic 态一律阻止真实导航
                 });
                 allow
-            }
-        })
-        .on_page_load({
-            move |webview, payload| {
-                if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                    let _ = webview.eval(&bar_js);
-                }
             }
         })
         .build()
