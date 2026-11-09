@@ -3,6 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { videoFollow, videoFollowWorks, videoUnfollow } from '@/services/api'
+import { dedupeByVideoBase } from '@/utils/videoCode'
 import type { FollowTargetEntry, VideoCard } from '@/types'
 import VideoCardGrid from '@/components/VideoCardGrid.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -26,29 +27,6 @@ const worksError = ref('')
 const followedEntry = ref<FollowTargetEntry | null>(null)
 const followBusy = ref(false)
 
-/** base_code 优先级去重:中字 > 有码 > 无码 > 英字(需求 12 同款逻辑) */
-function baseCode(code: string): string {
-  return code
-    .replace('-uncensored-leak-chinese-subtitle', '')
-    .replace('-uncensored-leak', '')
-    .replace('-chinese-subtitle', '')
-}
-
-function dedupeByBase(items: VideoCard[]): VideoCard[] {
-  const priority = (c: string): number => {
-    if (c.includes('-chinese-subtitle')) return 3
-    if (!c.includes('-uncensored-leak')) return 2
-    return 1
-  }
-  const best = new Map<string, VideoCard>()
-  for (const item of items) {
-    const base = baseCode(item.code)
-    const cur = best.get(base)
-    if (!cur || priority(item.code) > priority(cur.code)) best.set(base, item)
-  }
-  return [...best.values()]
-}
-
 async function loadWorks(reset = true) {
   if (worksLoading.value || !targetId.value) return
   if (reset) worksPage.value = 1
@@ -57,9 +35,9 @@ async function loadWorks(reset = true) {
   try {
     const res = await videoFollowWorks(source.value, kind.value, targetId.value, worksPage.value)
     if (reset) {
-      works.value = dedupeByBase(res.items)
+      works.value = dedupeByVideoBase(res.items)
     } else {
-      works.value = dedupeByBase([...works.value, ...res.items])
+      works.value = dedupeByVideoBase([...works.value, ...res.items])
     }
     worksPage.value += 1
     worksHasNext.value = res.pagination.hasNext

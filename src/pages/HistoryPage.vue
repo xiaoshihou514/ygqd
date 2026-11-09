@@ -3,6 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchItemHistory, fetchFavorites, removeFavorite } from '@/services/api'
+import { formatTimestamp } from '@/utils/formatTime'
 import type { FavoriteEntry } from '@/types'
 import { useViewHistory } from '@/composables/useViewHistory'
 import ProxyImage from '@/components/ProxyImage.vue'
@@ -163,15 +164,6 @@ function kindLabel(kind: string): string {
   return kind === 'comic' ? '漫画' : kind === 'video' ? '视频' : '小说'
 }
 
-function formatTime(ts: number): string {
-  const d = new Date(ts)
-  const M = String(d.getMonth() + 1).padStart(2, '0')
-  const D = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  return `${M}-${D} ${hh}:${mm}`
-}
-
 function formatPosition(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = Math.floor(seconds % 60)
@@ -256,7 +248,7 @@ function entryPosition(e: TimelineEntry): number | undefined {
             <span v-else-if="e.kind === 'video' && entryPosition(e)" class="timeline-progress">
               {{ formatPosition(entryPosition(e)!) }}
             </span>
-            <span class="timeline-time">{{ formatTime(e.viewedAt) }}</span>
+            <span class="timeline-time">{{ formatTimestamp(e.viewedAt) }}</span>
           </button>
         </div>
       </template>
@@ -318,7 +310,7 @@ function entryPosition(e: TimelineEntry): number | undefined {
             />
             <div class="favorite-info">
               <span class="favorite-title">{{ fav.title }}</span>
-              <span class="favorite-meta">{{ fav.author || '' }} · 收藏于 {{ formatTime(fav.createdAt) }}</span>
+              <span class="favorite-meta">{{ fav.author || '' }} · 收藏于 {{ formatTimestamp(fav.createdAt) }}</span>
             </div>
             <button
               type="button"
@@ -354,7 +346,7 @@ function entryPosition(e: TimelineEntry): number | undefined {
             <span class="timeline-kind-badge" :class="`kind-${e.kind}`">{{ kindLabel(e.kind) }}</span>
             <span class="timeline-title">{{ e.title }}</span>
             <span v-if="e.chapter" class="timeline-progress">读到第 {{ e.chapter }} 章{{ e.page ? ` 第 ${e.page} 页` : '' }}</span>
-            <span class="timeline-time">{{ formatTime(e.viewedAt) }}</span>
+            <span class="timeline-time">{{ formatTimestamp(e.viewedAt) }}</span>
           </button>
         </div>
       </template>

@@ -3,6 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchVideoList, fetchVideoWatchedIds } from '@/services/api'
+import { videoBaseCode } from '@/utils/videoCode'
 import { formatCount } from '@/utils/formatCount'
 import { parseLikes } from '@/utils/likes'
 import type { VideoCard } from '@/types'
@@ -74,14 +75,6 @@ async function load(reset: boolean) {
 
 /** 徽标展示用基础番号:剥无码流出与中字后缀(先长后短,与后端 title
  *  剥离同序)。跳转 / 去重 / 已看记录仍用完整 code,不受展示层影响。 */
-function basicCode(code: string): string {
-  return code
-    .replace('-uncensored-leak-chinese-subtitle', '')
-    .replace('-uncensored-leak', '')
-    .replace('-chinese-subtitle', '')
-    .toUpperCase()
-}
-
 /** 哨兵常驻 DOM(v-show 控制显隐):display:none 的元素与视口不相交,
  *  隐藏期间不触发回调,恢复显示即自动恢复工作——节点不随条件分支
  *  销毁重建,observer 一次绑定终身有效(前两轮「搜索后翻页失效」的
@@ -146,11 +139,11 @@ onUnmounted(() => {
           </div>
           <div class="video-card-body">
             <span class="video-code-row">
-              <span class="video-code">{{ basicCode(card.code) }}</span>
+              <span class="video-code">{{ videoBaseCode(card.code) }}</span>
               <span v-if="card.code.includes('-uncensored-leak')" class="video-leak-badge">无码</span>
               <span v-if="card.chinese" class="video-cs-badge">中字</span>
             </span>
-            <span class="video-card-title">{{ card.title || basicCode(card.code) }}</span>
+            <span class="video-card-title">{{ card.title || videoBaseCode(card.code) }}</span>
           </div>
         </button>
       </div>

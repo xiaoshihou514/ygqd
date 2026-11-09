@@ -3,6 +3,7 @@
 // 样式与首页 VideoBrowser 的卡片一致
 import { useRouter } from 'vue-router'
 import { formatCount } from '@/utils/formatCount'
+import { videoBaseCode } from '@/utils/videoCode'
 import { parseLikes } from '@/utils/likes'
 import type { VideoCard } from '@/types'
 import ProxyImage from '@/components/ProxyImage.vue'
@@ -11,13 +12,6 @@ defineProps<{ items: VideoCard[]; watched?: Set<string> }>()
 
 const router = useRouter()
 
-function basicCode(code: string): string {
-  return code
-    .replace('-uncensored-leak-chinese-subtitle', '')
-    .replace('-uncensored-leak', '')
-    .replace('-chinese-subtitle', '')
-    .toUpperCase()
-}
 </script>
 
 <template>
@@ -36,11 +30,11 @@ function basicCode(code: string): string {
       </div>
       <div class="video-card-body">
         <span class="video-code-row">
-          <span class="video-code">{{ basicCode(card.code) }}</span>
+          <span class="video-code">{{ videoBaseCode(card.code) }}</span>
           <span v-if="card.code.includes('-uncensored-leak')" class="video-leak-badge">无码</span>
           <span v-if="card.chinese" class="video-cs-badge">中字</span>
         </span>
-        <span class="video-card-title">{{ card.title || basicCode(card.code) }}</span>
+        <span class="video-card-title">{{ card.title || videoBaseCode(card.code) }}</span>
       </div>
     </button>
   </div>
