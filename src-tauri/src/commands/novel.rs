@@ -288,3 +288,26 @@ fn filter_blacklisted(
         })
         .collect()
 }
+
+// ── 关注作者(批次 2 契约:复用 follow_target 表,kind=author/source=hlib) ──
+// novel_followed_authors/novel_followed_author_works 已在批次 2 实施(见上),
+// 此处补写接口两件(需求 1:frontend 调用 novel_follow_author 报命令不存在)
+
+#[tauri::command]
+pub(crate) fn novel_follow_author(
+    author_id: String,
+    author_name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::follow_target_add(&conn, "hlib", "author", &author_id, &author_name)
+}
+
+#[tauri::command]
+pub(crate) fn novel_unfollow_author(
+    author_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    db::follow_target_remove(&conn, "hlib", "author", &author_id)
+}
