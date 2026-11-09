@@ -4,6 +4,7 @@
 //! 直连(搜索/兜底播放地址均不再经 WebView 网关);播放地址在详情页的
 //! Dean Edwards packer 混淆脚本内,由 unpack_packed 解码提取。
 
+use super::shared::percent_decode_simple;
 use crate::models::*;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
@@ -256,24 +257,6 @@ fn strip_tags(s: &str) -> String {
     t.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn percent_decode_simple(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(b);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
 /// 基础番号:去掉 -chinese-subtitle 后缀
 /// 去重键:剥离全部已知变体后缀(中字/英字/无码/流出),循环剥离
 /// 应对叠加形态(如 -uncensored-leak-chinese-subtitle)。
@@ -421,9 +404,7 @@ impl VideoApi {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
-            HeaderValue::from_static(
-                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
-            ),
+            HeaderValue::from_static(crate::sources::shared::FS1_UA),
         );
         headers.insert(REFERER, HeaderValue::from_static(BASE));
         let client = reqwest::Client::builder()
