@@ -5,7 +5,6 @@ mod sources;
 mod stream_proxy;
 
 use gateway::GatewayManager;
-use models::NovelPage;
 use models::*;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use rusqlite::Connection;
@@ -22,6 +21,8 @@ use tauri::{ipc::Response, AppHandle, Manager, State};
 const BASE: &str = "https://www.niacg.com";
 /// niacg 限制两次搜索至少间隔 5 秒,违反时返回无结果的提示页
 const NIACG_SEARCH_INTERVAL: Duration = Duration::from_millis(5200);
+mod commands;
+
 struct AppState {
     niacg: reqwest::Client,
     video: VideoApi,
@@ -33,8 +34,8 @@ struct AppState {
     cache: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
     /// niacg 搜索全局限速:串行化并保证间隔,避免触发 5 秒限制拿到空结果
     niacg_search_gate: tokio::sync::Mutex<Instant>,
-    /// hlib 抓取全局限速:串行化并保证间隔,对齐站点「连续抓取敏感」
-    hlib_gate: tokio::sync::Mutex<Instant>,
+    /// hlib 抓取全局限速:shared.rs 的 RateGate 统一封装(对齐站点「连续抓取敏感」)
+    hlib_gate: crate::sources::shared::RateGate,
 }
 impl AppState {
     /// 取当前哔咔客户端快照(clone 便宜,reqwest::Client 内部为 Arc)
@@ -88,13 +89,7 @@ impl AppState {
     /// hlib 抓取统一闸:串行化并保证间隔(对齐站点反爬敏感度)。
     /// 与 niacg_search_gate 同架构;锁跨 await 持有(串行化语义)。
     async fn hlib_throttle(&self) {
-        let mut gate = self.hlib_gate.lock().await;
-        let min = Duration::from_secs(3);
-        let elapsed = gate.elapsed();
-        if elapsed < min {
-            tokio::time::sleep(min - elapsed).await;
-        }
-        *gate = std::time::Instant::now();
+        self.hlib_gate.throttle().await;
     }
     fn put<T: serde::Serialize>(&self, key: String, value: &T) {
         if let Ok(v) = serde_json::to_value(value) {
@@ -155,801 +150,18 @@ impl AppState {
         }
     }
 }
-#[tauri::command]
-async fn fetch_category(
-    source: Source,
-    category: String,
-    page: i32,
-    state: State<'_, AppState>,
-) -> Result<CategoryListResult, String> {
-    let key = format!("{source}:list-{category}-{page}");
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let out = match source {
-        Source::Bika => {
-            let bika = state.bika_snapshot();
-            state
-                .bika_call(|token| bika.comics(token, &category, "", "", page + 1))
-                .await?
-        }
-        Source::Niacg => sources::niacg::list(
-            &state
-                .niacg_get(&format!("/listinfo-{category}-{page}.html"))
-                .await?,
-        ),
-    };
-    state.put(key, &out);
-    Ok(out)
-}
-
-#[tauri::command]
-async fn fetch_bika_categories(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let key = "bika:categories";
-    if let Some(v) = state.cached(key) {
-        return Ok(v);
-    }
-    let out = {
-        let bika = state.bika_snapshot();
-        state.bika_call(|token| bika.categories(token)).await?
-    };
-    state.put(key.into(), &out);
-    Ok(out)
-}
-
-/// 通过 WebView 网关抓取页面/接口(用于 CF 严防站点: hlib/missav)。
-/// 首次调用会创建可见网关窗口,若遇人机挑战需用户点一次。
-#[tauri::command]
-async fn gateway_fetch(
-    app: AppHandle,
-    state: State<'_, GatewayManager>,
-    label: String,
-    url: String,
-) -> Result<String, String> {
-    gateway::gateway_fetch(&app, &state, &label, &url).await
-}
-
-/// 打开网关窗口(不存在则创建):供用户登录站点/完成人机验证,
-/// 或在网关内直接浏览站点内容
-#[tauri::command]
-fn gateway_open(app: AppHandle, label: String) -> Result<(), String> {
-    gateway::ensure_gateway(&app, &label)?;
-    let window = app
-        .get_webview_window(&format!("gateway_{label}"))
-        .ok_or("网关窗口不存在")?;
-    gateway::present(&window);
-    Ok(())
-}
-
-/// 显示/隐藏网关窗口(挑战已过后隐藏)
-#[tauri::command]
-fn gateway_set_visible(app: AppHandle, label: String, visible: bool) -> Result<(), String> {
-    let window = app
-        .get_webview_window(&format!("gateway_{label}"))
-        .ok_or("网关窗口不存在")?;
-    if visible {
-        gateway::present(&window);
-        Ok(())
-    } else {
-        gateway::finish(&app, &label)
-    }
-}
-
-/// 系列详情预览:按 hlib 系列 ID 抓取系列信息(章节列表/简介),
-/// 不入库——供「浏览 → 决策 → 加书架」漏斗的浏览阶段使用。
-/// 首次会弹出网关窗口(登录/安全验证与 novel_add 同一套会话)。
-#[tauri::command]
-async fn novel_series_info(app: AppHandle, id: String) -> Result<NovelSeries, String> {
-    sources::novel::fetch_series(&app, &id).await
-}
-
 // ── 需求 5:小说关键词黑名单 ──
 
 /// 拉黑名单关键词并过滤小说条目(标题命中子串即剔除)
-fn filter_blacklisted(
-    state: &State<'_, AppState>,
-    hits: Vec<sources::novel::NovelHit>,
-) -> Vec<sources::novel::NovelHit> {
-    let keywords: Vec<String> = match state.db.lock() {
-        Ok(conn) => db::novel_blacklist_list(&conn)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| e.keyword)
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-    if keywords.is_empty() {
-        return hits;
-    }
-    let lower_kw: Vec<String> = keywords.iter().map(|k| k.to_lowercase()).collect();
-    hits.into_iter()
-        .filter(|h| {
-            let title = h.title.to_lowercase();
-            !lower_kw.iter().any(|k| title.contains(k))
-        })
-        .collect()
-}
-
-#[tauri::command]
-fn novel_blacklist_list(
-    state: State<'_, AppState>,
-) -> Result<Vec<db::NovelBlacklistEntry>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_blacklist_list(&conn)
-}
-
-#[tauri::command]
-fn novel_blacklist_add(keyword: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_blacklist_add(&conn, &keyword)
-}
-
-#[tauri::command]
-fn novel_blacklist_remove(keyword: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_blacklist_remove(&conn, &keyword)
-}
 
 // ── 批次 4:全局历史(item_history 统一时间线) ──
 
-/// 记录全局历史(视频/小说;漫画继续走 record_history 存量)
-#[tauri::command]
-fn record_item_history(
-    source: String,
-    kind: String,
-    item_id: String,
-    title: String,
-    progress: Option<String>,
-    thumbnail: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::item_history_record(
-        &conn,
-        &source,
-        &kind,
-        &item_id,
-        &title,
-        progress.as_deref(),
-        thumbnail.as_deref(),
-    )
-}
-
-/// 全局历史查询(source/kind 可选过滤;None=全板块时间线)
-#[tauri::command]
-fn fetch_item_history(
-    source: Option<String>,
-    kind: Option<String>,
-    limit: Option<i64>,
-    state: State<'_, AppState>,
-) -> Result<Vec<db::ItemHistoryEntry>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::item_history_fetch(
-        &conn,
-        source.as_deref(),
-        kind.as_deref(),
-        limit.unwrap_or(100),
-    )
-}
-
 // ── 批次 3:视频关注(follow_target 统一表首个用例) ──
 
-/// 关注/取关视频目标(厂商/女优;source: fs1|missav, kind: maker|actress)
-#[tauri::command]
-fn video_follow(
-    source: String,
-    kind: String,
-    target_id: String,
-    display_name: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follow_target_add(&conn, &source, &kind, &target_id, &display_name)
-}
-
-#[tauri::command]
-fn video_unfollow(
-    source: String,
-    kind: String,
-    target_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follow_target_remove(&conn, &source, &kind, &target_id)
-}
-
-/// 关注目标列表(按来源+类型过滤)
-#[tauri::command]
-fn video_follow_list(
-    source: String,
-    kind: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<db::FollowTargetEntry>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follow_targets(&conn, &source, &kind)
-}
-
-/// 可关注目标列表(fs1 女优 / missav 厂商 / missav 女优排行)
-#[tauri::command]
-async fn video_follow_targets(
-    source: String,
-    kind: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<sources::video::FollowTargetItem>, String> {
-    match (source.as_str(), kind.as_str()) {
-        ("fs1", "actress") => state.video.fs1_models_list().await,
-        ("missav", "maker") => state.video.missav_makers_list().await,
-        ("missav", "actress") => state.video.missav_actresses_list().await,
-        _ => Err(format!("不支持的关注类型 {source}/{kind}")),
-    }
-}
-
-/// 关注对象的作品流(详情页视频列表,复用现有解析;串行闸保站点友好)
-#[tauri::command]
-async fn video_follow_works(
-    source: String,
-    kind: String,
-    target_id: String,
-    page: Option<i32>,
-    state: State<'_, AppState>,
-) -> Result<sources::video::VideoListResult, String> {
-    let page = page.unwrap_or(1).max(1);
-    match (source.as_str(), kind.as_str()) {
-        ("fs1", "actress") => state.video.fs1_model_works(&target_id, page).await,
-        // 关注(maker/actress)与详情页元数据条目(男优/系列/导演/标签/类型)
-        // 共用同一作品流通道,路由映射见 missav_list_url
-        (
-            "missav",
-            kind @ ("maker" | "actress" | "actor" | "series" | "director" | "label" | "genre"),
-        ) => {
-            state
-                .video
-                .missav_follow_works(kind, &target_id, page)
-                .await
-        }
-        _ => Err(format!("不支持的作品流类型 {source}/{kind}")),
-    }
-}
-
-/// 推荐流:hlib 首页聚合(最新+推荐位混合,进入即看到内容)
-#[tauri::command]
-async fn novel_recommend(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    page: Option<i64>,
-) -> Result<sources::novel::NovelLatestPage, String> {
-    state.hlib_throttle().await;
-    let key = format!("novel_recommend_p{}", page.unwrap_or(1));
-    // 访问预算:手动刷新数据缓存 30 分钟(批次 2 默认)
-    if let Some(hit) =
-        state.cached_ttl::<sources::novel::NovelLatestPage>(&key, Duration::from_secs(1800))
-    {
-        return Ok(hit);
-    }
-    let res = sources::novel::latest_series(&app, page.unwrap_or(1)).await;
-    if let Ok(mut page_data) = res {
-        page_data.hits = filter_blacklisted(&state, page_data.hits);
-        state.put(key.clone(), &page_data);
-        Ok(page_data)
-    } else {
-        res
-    }
-}
-
-/// 系列排行榜(日/周/月;/rank/s 需登录,登录后网关会话可用)
-#[tauri::command]
-async fn novel_ranking(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    period: Option<String>,
-    page: Option<i64>,
-) -> Result<sources::novel::NovelLatestPage, String> {
-    state.hlib_throttle().await;
-    let period = period.unwrap_or_else(|| "day".into());
-    let key = format!("novel_ranking_{}_p{}", period, page.unwrap_or(1));
-    if let Some(hit) =
-        state.cached_ttl::<sources::novel::NovelLatestPage>(&key, Duration::from_secs(1800))
-    {
-        return Ok(hit);
-    }
-    // 周期切换控件在榜单页上自适应发现(见 rank_series)
-    let page_data = sources::novel::rank_series(
-        &app,
-        sources::novel::RankPeriod::parse(&period),
-        page.unwrap_or(1),
-    )
-    .await?;
-    state.put(key, &page_data);
-    Ok(page_data)
-}
-
-/// 关注作者的作品流:/u/{author_id} 页面的 /n/ 单篇列表
-#[tauri::command]
-async fn novel_followed_author_works(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    author_id: String,
-) -> Result<Vec<sources::novel::NovelHit>, String> {
-    state.hlib_throttle().await;
-    let key = format!("novel_author_works_{author_id}");
-    if let Some(hit) =
-        state.cached_ttl::<Vec<sources::novel::NovelHit>>(&key, Duration::from_secs(1800))
-    {
-        return Ok(hit);
-    }
-    let res = sources::novel::author_page_works(&app, &author_id).await;
-    if let Ok(works) = &res {
-        state.put(key.clone(), works);
-    }
-    // 自查补漏(需求 5):关注作者作品流同样过黑名单
-    res.map(|works| filter_blacklisted(&state, works))
-}
-
-/// 关注作者列表(复用漫画源 followed_authors 表;authorId 以作者名充当)
-#[tauri::command]
-fn novel_followed_authors(state: State<'_, AppState>) -> Result<Vec<FollowedAuthor>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follows(&conn)
-}
-
-/// 添加小说系列到书架:输入 hlib 系列链接或纯 ID。
-/// 首次会弹出网关窗口,需用户完成一次登录/安全验证。
-#[tauri::command]
-async fn novel_add(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    input: String,
-) -> Result<NovelSeries, String> {
-    let id = sources::novel::parse_series_id(&input)?;
-    let mut series = sources::novel::fetch_series(&app, &id).await?;
-    {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        db::novel_upsert(&conn, &series)?;
-        series.added_at = db::now();
-    }
-    Ok(series)
-}
-
-/// 站内搜索系列(端点自适应;首次需网关完成验证/登录)
-#[tauri::command]
-async fn novel_search(
-    app: AppHandle,
-    keyword: String,
-) -> Result<Vec<sources::novel::NovelHit>, String> {
-    sources::novel::search_series(&app, &keyword).await
-}
-
-/// 发现:首页最新系列
-/// 分页搜索:返回该页命中与总页数(前端「加载更多」用)
-#[tauri::command]
-async fn novel_search_page(
-    app: AppHandle,
-    keyword: String,
-    page: Option<i64>,
-    sort: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<sources::novel::NovelSearchPage, String> {
-    let page_data =
-        sources::novel::search_series_page(&app, &keyword, page.unwrap_or(1), sort.as_deref())
-            .await?;
-    let mut page_data = page_data;
-    page_data.hits = filter_blacklisted(&state, page_data.hits);
-    Ok(page_data)
-}
-
-#[tauri::command]
-async fn novel_latest(
-    app: AppHandle,
-    page: Option<i64>,
-) -> Result<sources::novel::NovelLatestPage, String> {
-    // page 可选:前端不传视为第 1 页(旧调用兼容)
-    let page = page.unwrap_or(1);
-    sources::novel::latest_series(&app, page).await
-}
-
-#[tauri::command]
-fn novel_shelf(state: State<'_, AppState>) -> Result<Vec<NovelSeries>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_shelf(&conn)
-}
-
-#[tauri::command]
-fn novel_remove(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_remove(&conn, &id)
-}
-
-/// 读取章节某页正文;网关直连 hlib,未登录/未验证时返回引导错误
-#[tauri::command]
-async fn novel_read(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    chapter_id: String,
-    page: i64,
-) -> Result<NovelPage, String> {
-    // 问题 9:章节内容缓存(24 小时,读过的不重抓——减少网关抓取
-    // 次数 = 减少 CF 弹窗次数)
-    let key = format!("article_{chapter_id}_p{page}");
-    if let Some(hit) = state.cached_ttl::<NovelPage>(&key, Duration::from_secs(24 * 3600)) {
-        return Ok(hit);
-    }
-    state.hlib_throttle().await;
-    let res = sources::novel::fetch_article_page(&app, &chapter_id, page).await;
-    if let Ok(np) = &res {
-        state.put(key, np);
-    }
-    res
-}
-
-/// 章节预取(问题 9):后台抓取指定页入缓存,翻页时命中缓存零等待。
-/// 预取经 hlib 闸串行(不与主抓取并发竞争)。
-#[tauri::command]
-async fn novel_prefetch(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    chapter_id: String,
-    page: i64,
-) -> Result<(), String> {
-    let key = format!("article_{chapter_id}_p{page}");
-    if state
-        .cached_ttl::<NovelPage>(&key, Duration::from_secs(24 * 3600))
-        .is_some()
-    {
-        return Ok(());
-    }
-    let handle = app.clone();
-    let key_owned = key;
-    tauri::async_runtime::spawn(async move {
-        let st = handle.state::<AppState>();
-        st.hlib_throttle().await;
-        if let Ok(np) = sources::novel::fetch_article_page(&handle, &chapter_id, page).await {
-            st.put(key_owned, &np);
-        }
-    });
-    Ok(())
-}
-
-#[tauri::command]
-fn novel_progress(
-    series_id: String,
-    state: State<'_, AppState>,
-) -> Result<Option<(i64, i64)>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_progress(&conn, &series_id)
-}
-
-#[tauri::command]
-fn novel_set_progress(
-    series_id: String,
-    chapter_order: i64,
-    page: i64,
-    title: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::novel_set_progress(&conn, &series_id, chapter_order, page, title.as_deref())
-}
-
-/// 完成网关操作(用户点了网关内「完成返回」栏):隐藏网关回主界面
-#[tauri::command]
-fn gateway_finish(app: AppHandle, label: String) -> Result<(), String> {
-    gateway::diag(&app, "[通道观测] gwfinish 经 IPC 通道到达");
-    gateway::finish(&app, &label)
-}
-
-/// 读取诊断日志(应用内查看)
-#[tauri::command]
-fn diag_read(app: AppHandle) -> Result<String, String> {
-    use tauri::Manager as _;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(std::fs::read_to_string(dir.join("diag.log")).unwrap_or_default())
-}
-
-/// 清空诊断日志
-#[tauri::command]
-fn diag_clear(app: AppHandle) -> Result<(), String> {
-    use tauri::Manager as _;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(dir.join("diag.log"));
-    Ok(())
-}
-
-/// 网关桥回传(由网关 webview 内的 JS 调用,不暴露给主窗口前端)
-#[tauri::command]
-fn gateway_result(app: AppHandle, state: State<'_, GatewayManager>, result: gateway::GatewayReply) {
-    gateway::diag(
-        &app,
-        &format!(
-            "[通道观测] gwresult 经 IPC 通道到达 id={} status={} body={}B",
-            result.id,
-            result.status,
-            result.body.len()
-        ),
-    );
-    state.resolve_reply(result);
-}
-
-/// 视频列表(fs1 最新上市),page 从 1 开始
-#[tauri::command]
-async fn fetch_video_list(
-    page: i32,
-    state: State<'_, AppState>,
-) -> Result<VideoListResult, String> {
-    let key = format!("video:list-{page}");
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let out = state.video.list(page).await?;
-    state.put(key, &out);
-    Ok(out)
-}
-
-/// 视频搜索(番号/标题),page 从 1 开始
-#[tauri::command]
-async fn search_videos(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    keyword: String,
-    page: i32,
-) -> Result<VideoListResult, String> {
-    let key = format!("video:search-{keyword}-{page}");
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let out = match state.video.search(&keyword, page).await {
-        Ok(v) => {
-            gateway::diag(
-                &app,
-                &format!("search ok kw={keyword} items={}", v.items.len()),
-            );
-            v
-        }
-        Err(e) => {
-            gateway::diag(&app, &format!("search FAIL kw={keyword} err={e}"));
-            return Err(e);
-        }
-    };
-    state.put(key, &out);
-    Ok(out)
-}
-
-/// 视频详情(元数据与播放优先走 fs1,不可用时由 missav 直连兜底)
-#[tauri::command]
-async fn fetch_video_detail(
-    state: State<'_, AppState>,
-    code: String,
-) -> Result<VideoDetail, String> {
-    let key = format!("video:detail-{code}");
-    if let Some(mut v) = state.cached::<VideoDetail>(&key) {
-        // 缓存存原始地址;代理端口每次启动随机,读取时重新包装
-        v.m3u8 = stream_proxy::hls_url(&v.m3u8);
-        return Ok(v);
-    }
-    let out = state.video.detail(&code).await?;
-    // 播放器只接触本地代理地址(CDN 校验 Referer/拒绝浏览器 TLS,直连必 403)
-    let mut playable = out.clone();
-    playable.m3u8 = stream_proxy::hls_url(&out.m3u8);
-    state.put(key, &out);
-    Ok(playable)
-}
-
-/// 哔咔排行榜;tt 为 "H24"(日)/"D7"(周)/"D30"(月)
-#[tauri::command]
-async fn fetch_bika_leaderboard(
-    tt: String,
-    state: State<'_, AppState>,
-) -> Result<CategoryListResult, String> {
-    let key = format!("bika:leaderboard-{tt}");
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let out = {
-        let bika = state.bika_snapshot();
-        state
-            .bika_call(|token| bika.leaderboard(token, &tt))
-            .await?
-    };
-    state.put(key, &out);
-    Ok(out)
-}
-
-#[tauri::command]
-async fn search_comics(
-    source: Source,
-    keyword: String,
-    classid: i32,
-    show: String,
-    page: i32,
-    cache_buster: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<SearchResult, String> {
-    let key = format!(
-        "{source}:search-{classid}-{keyword}-{show}-{page}-{}",
-        cache_buster.unwrap_or_default()
-    );
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let mut out = match source {
-        Source::Bika => {
-            let bika = state.bika_snapshot();
-            let result = if show == "tags" {
-                state
-                    .bika_call(|token| bika.comics(token, "", &keyword, "", page + 1))
-                    .await?
-            } else if show == "writer" {
-                state
-                    .bika_call(|token| bika.comics(token, "", "", &keyword, page + 1))
-                    .await?
-            } else {
-                state
-                    .bika_call(|token| bika.search(token, &keyword, page + 1))
-                    .await?
-            };
-            SearchResult {
-                items: result.items,
-                pagination: result.pagination,
-                page_url_template: None,
-            }
-        }
-        Source::Niacg => {
-            // 全局限速:niacg 搜索间隔不足 5 秒会返回无结果的提示页
-            let _search_turn = state.niacg_search_turn().await;
-            if show == "tags" {
-                let html = state
-                    .niacg_get(&format!(
-                        "/tags-{}-{page}.html",
-                        url::form_urlencoded::byte_serialize(keyword.as_bytes())
-                            .collect::<String>()
-                    ))
-                    .await?;
-                let mut r = sources::niacg::search(&html);
-                let max = sources::niacg::tag_max_page(&html);
-                r.pagination = PaginationInfo {
-                    current: page,
-                    total: max + 1,
-                    has_next: page < max,
-                    has_prev: page > 0,
-                };
-                r
-            } else {
-                let body = [
-                    ("classid", classid.to_string()),
-                    ("keyboard", keyword),
-                    ("show", show),
-                    ("tempid", "1".into()),
-                    ("Submit", "".into()),
-                ];
-                let html = state
-                    .niacg
-                    .post(format!("{BASE}/e/search/index.php"))
-                    .form(&body)
-                    .send()
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .error_for_status()
-                    .map_err(|e| e.to_string())?
-                    .text()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let first = sources::niacg::search(&html);
-                let total_pages = first.pagination.total + 1;
-                if page == 0 {
-                    SearchResult {
-                        pagination: PaginationInfo {
-                            current: 0,
-                            total: total_pages,
-                            has_next: total_pages > 1,
-                            has_prev: false,
-                        },
-                        ..first
-                    }
-                } else {
-                    let template = first
-                        .page_url_template
-                        .clone()
-                        .ok_or("Search pagination URL unavailable")?;
-                    let mut result = sources::niacg::search(
-                        &state
-                            .niacg_get(&template.replace("{}", &(page + 1).to_string()))
-                            .await?,
-                    );
-                    result.pagination = PaginationInfo {
-                        current: page,
-                        total: total_pages,
-                        has_next: page + 1 < total_pages,
-                        has_prev: true,
-                    };
-                    result
-                }
-            }
-        }
-    };
-    out.pagination.current = page;
-    out.pagination.has_prev = page > 0;
-    state.put(key, &out);
-    Ok(out)
-}
-
-#[tauri::command]
-async fn fetch_comic(
-    source: Source,
-    category_id: i32,
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<ComicDetail, String> {
-    let key = format!("{source}:detail-{category_id}-{id}");
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let out = match source {
-        Source::Bika => {
-            let bika = state.bika_snapshot();
-            let mut detail = state.bika_call(|token| bika.detail(token, &id)).await?;
-            detail.episodes = state.bika_call(|token| bika.episodes(token, &id)).await?;
-            detail
-        }
-        Source::Niacg => sources::niacg::detail(
-            &state
-                .niacg_get(&format!("/moehome-{category_id}-{id}.html"))
-                .await?,
-            category_id,
-            id.clone(),
-        ),
-    };
-    state.put(key, &out);
-    Ok(out)
-}
-
-#[tauri::command]
-async fn fetch_comic_images(
-    source: Source,
-    category_id: i32,
-    id: String,
-    ep_order: i32,
-    page: i32,
-    state: State<'_, AppState>,
-) -> Result<ComicImagesResult, String> {
-    match source {
-        Source::Bika => {
-            let bika = state.bika_snapshot();
-            state
-                .bika_call(|token| bika.pictures(token, &id, ep_order, page + 1))
-                .await
-        }
-        Source::Niacg => {
-            let key = format!("niacg:images-{category_id}-{id}");
-            if let Some(images) = state.cached::<Vec<String>>(&key) {
-                return Ok(ComicImagesResult {
-                    images,
-                    pagination: PaginationInfo {
-                        current: 0,
-                        total: 1,
-                        has_next: false,
-                        has_prev: false,
-                    },
-                });
-            }
-            let images = sources::niacg::images(
-                &state
-                    .niacg_get(&format!("/moeupup-{category_id}-{id}.html"))
-                    .await?,
-            );
-            state.put(key, &images);
-            Ok(ComicImagesResult {
-                pagination: PaginationInfo {
-                    current: 0,
-                    total: 1,
-                    has_next: false,
-                    has_prev: false,
-                },
-                images,
-            })
-        }
-    }
-}
-
-async fn fetch_image_with_client(client: reqwest::Client, url: String) -> Result<Response, String> {
+pub(crate) async fn fetch_image_with_client(
+    client: reqwest::Client,
+    url: String,
+) -> Result<Response, String> {
     let bytes = client
         .get(url)
         .send()
@@ -965,7 +177,10 @@ async fn fetch_image_with_client(client: reqwest::Client, url: String) -> Result
 
 /// wreq 版图片抓取(与 reqwest 版同构):供 fourhoi 图床使用——
 /// missav 客户端默认无 Referer,绕过其防盗链白名单
-async fn fetch_image_with_wreq(client: wreq::Client, url: String) -> Result<Response, String> {
+pub(crate) async fn fetch_image_with_wreq(
+    client: wreq::Client,
+    url: String,
+) -> Result<Response, String> {
     let bytes = client
         .get(url)
         .send()
@@ -990,286 +205,6 @@ async fn fetch_image(
         Source::Niacg => state.niacg.clone(),
     };
     fetch_image_with_client(client, url).await
-}
-
-/// 视频封面按图床分流:fourhoi(missav 卡片封面)防盗链仅放行白名单
-/// Referer 与空 Referer,fs1 等 Referer 一律 403——对它用 missav 的
-/// wreq 客户端(Chrome 指纹、默认无 Referer);其余图床沿用 fs1 客户端
-/// 请求头(fs1 自家封面需其 Referer)。
-#[tauri::command]
-async fn fetch_video_image(
-    app: AppHandle,
-    url: String,
-    state: State<'_, AppState>,
-) -> Result<Response, String> {
-    let result = if sources::video::is_fourhoi_url(&url) {
-        fetch_image_with_wreq(state.video.missav.clone(), url.clone()).await
-    } else {
-        fetch_image_with_client(state.video.client.clone(), url.clone()).await
-    };
-    if let Err(e) = &result {
-        gateway::diag(&app, &format!("video image FAIL {url}: {e}"));
-    }
-    result
-}
-
-#[tauri::command]
-async fn bika_login(
-    email: String,
-    password: String,
-    state: State<'_, AppState>,
-) -> Result<BikaAccountStatus, String> {
-    let token = state.bika_snapshot().sign_in(&email, &password).await?;
-    {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        db::save_bika_account(&conn, &email, &password, &token)?;
-    }
-    *state.bika_token.lock().map_err(|e| e.to_string())? = Some(token);
-    state.clear_cache();
-    Ok(BikaAccountStatus {
-        logged_in: true,
-        email,
-    })
-}
-
-#[tauri::command]
-async fn bika_logout(state: State<'_, AppState>) -> Result<(), String> {
-    {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        db::clear_bika_account(&conn)?;
-    }
-    *state.bika_token.lock().map_err(|e| e.to_string())? = None;
-    state.clear_cache();
-    Ok(())
-}
-
-#[tauri::command]
-fn bika_status(state: State<'_, AppState>) -> Result<BikaAccountStatus, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let account = db::bika_account(&conn)?;
-    Ok(match account {
-        Some(account) => BikaAccountStatus {
-            logged_in: true,
-            email: account.email,
-        },
-        None => BikaAccountStatus {
-            logged_in: false,
-            email: String::new(),
-        },
-    })
-}
-
-/// 从哔咔官方 init 端点同步可用分流地址
-#[tauri::command]
-async fn fetch_bika_addresses(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    state.bika_snapshot().fetch_addresses().await
-}
-
-/// 哔咔漫画点赞/取消点赞(toggle)
-#[tauri::command]
-async fn bika_switch_like(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let bika = state.bika_snapshot();
-    state.bika_call(|token| bika.switch_like(token, &id)).await
-}
-
-/// 哔咔漫画收藏/取消收藏(toggle)
-#[tauri::command]
-async fn bika_switch_favourite(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let bika = state.bika_snapshot();
-    state
-        .bika_call(|token| bika.switch_favourite(token, &id))
-        .await
-}
-
-#[tauri::command]
-fn fetch_favorites(state: State<'_, AppState>) -> Result<Vec<FavoriteEntry>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::favorites(&conn)
-}
-
-#[tauri::command]
-fn is_favorite(
-    source: Source,
-    comic_id: String,
-    state: State<'_, AppState>,
-) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::is_favorite(&conn, source, &comic_id)
-}
-
-/// 收藏漫画:写入本地表;哔咔源同时同步到服务器(toggle 方向由
-/// 调用方当前状态决定,前端保证仅在未收藏时调用)
-#[tauri::command]
-async fn add_favorite(entry: RecordFavorite, state: State<'_, AppState>) -> Result<(), String> {
-    if entry.source == Source::Bika {
-        let bika = state.bika_snapshot();
-        let id = entry.comic_id.clone();
-        state
-            .bika_call(|token| bika.switch_favourite(token, &id))
-            .await?;
-    }
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::add_favorite(&conn, &entry)
-}
-
-/// 取消收藏:本地删除;哔咔源同时从服务器移除
-#[tauri::command]
-async fn remove_favorite(
-    source: Source,
-    comic_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    if source == Source::Bika {
-        let bika = state.bika_snapshot();
-        state
-            .bika_call(|token| bika.switch_favourite(token, &comic_id))
-            .await?;
-    }
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::remove_favorite(&conn, source, &comic_id)
-}
-
-/// 把哔咔服务器端的收藏拉取并合并到本地表(官方 app 收的也能看到);
-/// 返回本次同步新增的条数
-#[tauri::command]
-async fn sync_bika_favorites(state: State<'_, AppState>) -> Result<usize, String> {
-    let before = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        db::favorites(&conn)?.len()
-    };
-    let bika = state.bika_snapshot();
-    let mut page = 1;
-    loop {
-        let result = state
-            .bika_call(|token| bika.favourite_list(token, page))
-            .await?;
-        let has_next = result.pagination.has_next;
-        {
-            let conn = state.db.lock().map_err(|e| e.to_string())?;
-            for item in &result.items {
-                let entry = RecordFavorite {
-                    source: Source::Bika,
-                    comic_id: item.id.clone(),
-                    title: item.title.clone(),
-                    thumbnail: item.thumbnail.clone(),
-                    category_id: item.category_id,
-                    author: item.author.clone(),
-                };
-                db::add_favorite(&conn, &entry)?;
-            }
-        }
-        if !has_next {
-            break;
-        }
-        page += 1;
-    }
-    let after = {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        db::favorites(&conn)?.len()
-    };
-    Ok(after.saturating_sub(before))
-}
-
-/// 当前分流地址,空字符串表示不分流
-#[tauri::command]
-fn get_bika_address(state: State<'_, AppState>) -> Result<String, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::bika_address(&conn)
-}
-
-/// 设置分流地址并重建哔咔客户端;空字符串表示恢复系统 DNS
-#[tauri::command]
-async fn set_bika_address(address: String, state: State<'_, AppState>) -> Result<(), String> {
-    let address = address.trim().to_string();
-    let api = BikaApi::new(if address.is_empty() {
-        None
-    } else {
-        Some(&address)
-    })?;
-    {
-        let conn = state.db.lock().map_err(|e| e.to_string())?;
-        db::save_bika_address(&conn, &address)?;
-    }
-    *state.bika.write().map_err(|e| e.to_string())? = api;
-    state.clear_cache();
-    Ok(())
-}
-
-#[tauri::command]
-fn record_video_watched(code: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::record_video_watched(&conn, &code)
-}
-
-/// 批量查询视频已看集合(入集中已看的 code)
-#[tauri::command]
-fn fetch_video_watched_ids(
-    codes: Vec<String>,
-    state: State<'_, AppState>,
-) -> Result<Vec<String>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::video_watched_ids(&conn, &codes)
-}
-
-/// 批量查询漫画已看集合(入集中已看的 id,基于浏览历史)
-#[tauri::command]
-fn fetch_comic_viewed_ids(
-    source: Source,
-    ids: Vec<String>,
-    state: State<'_, AppState>,
-) -> Result<Vec<String>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::comic_viewed_ids(&conn, source, &ids)
-}
-
-#[tauri::command]
-fn fetch_follows(state: State<'_, AppState>) -> Result<Vec<FollowedAuthor>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follows(&conn)
-}
-#[tauri::command]
-fn follow_author(author: String, state: State<'_, AppState>) -> Result<FollowedAuthor, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follow(&conn, &author)
-}
-#[tauri::command]
-fn unfollow_author(author: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::unfollow(&conn, &author)
-}
-#[tauri::command]
-fn fetch_history(limit: i64, state: State<'_, AppState>) -> Result<Vec<ViewHistoryEntry>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::history(&conn, limit)
-}
-#[tauri::command]
-fn record_history(entry: RecordHistory, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::record(&conn, entry)
-}
-#[tauri::command]
-fn fetch_blacklist(state: State<'_, AppState>) -> Result<Vec<BlacklistEntry>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::blacklist(&conn)
-}
-#[tauri::command]
-fn add_blacklist(
-    tag: String,
-    mode: String,
-    state: State<'_, AppState>,
-) -> Result<BlacklistEntry, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::add_blacklist(&conn, &tag, &mode)
-}
-#[tauri::command]
-fn remove_blacklist(tag: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::remove_blacklist(&conn, &tag)
-}
-#[tauri::command]
-fn update_blacklist(tag: String, mode: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::update_blacklist(&conn, &tag, &mode)
 }
 
 /// 小说链路无头自检(仅 debug 构建,环境变量 YGQD_SELFTEST_NOVEL=关键词 门控):
@@ -1395,79 +330,79 @@ pub fn run() {
                 db: Mutex::new(conn),
                 cache: Mutex::new(HashMap::new()),
                 niacg_search_gate: tokio::sync::Mutex::new(Instant::now() - Duration::from_secs(3600)),
-            hlib_gate: tokio::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(10)),
+            hlib_gate: crate::sources::shared::RateGate::new(std::time::Duration::from_secs(3)),
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            fetch_category,
-            fetch_bika_categories,
-            fetch_bika_leaderboard,
-            fetch_video_list,
-            search_videos,
-            fetch_video_detail,
-            gateway_fetch,
-            gateway_open,
-            gateway_set_visible,
-            gateway_finish,
-            diag_read,
-            diag_clear,
-            gateway_result,
-            record_item_history,
-            fetch_item_history,
-            video_follow,
-            video_unfollow,
-            video_follow_list,
-            video_follow_targets,
-            video_follow_works,
-            novel_blacklist_list,
-            novel_blacklist_add,
-            novel_blacklist_remove,
-            novel_recommend,
-            novel_ranking,
-            novel_followed_author_works,
-            novel_followed_authors,
-            novel_series_info,
-            novel_add,
-            novel_search,
-            novel_search_page,
-            novel_latest,
-            novel_shelf,
-            novel_remove,
-            novel_read,
-            novel_prefetch,
-            novel_progress,
-            novel_set_progress,
-            bika_switch_like,
-            bika_switch_favourite,
-            fetch_favorites,
-            record_video_watched,
-            fetch_video_watched_ids,
-            fetch_comic_viewed_ids,
-            is_favorite,
-            add_favorite,
-            remove_favorite,
-            sync_bika_favorites,
-            search_comics,
-            fetch_comic,
-            fetch_comic_images,
+            commands::comic::fetch_category,
+            commands::comic::fetch_bika_categories,
+            commands::comic::fetch_bika_leaderboard,
+            commands::video::fetch_video_list,
+            commands::video::search_videos,
+            commands::video::fetch_video_detail,
+            commands::gateway::gateway_fetch,
+            commands::gateway::gateway_open,
+            commands::gateway::gateway_set_visible,
+            commands::gateway::gateway_finish,
+            commands::gateway::diag_read,
+            commands::gateway::diag_clear,
+            commands::gateway::gateway_result,
+            commands::settings::record_item_history,
+            commands::settings::fetch_item_history,
+            commands::video::video_follow,
+            commands::video::video_unfollow,
+            commands::video::video_follow_list,
+            commands::video::video_follow_targets,
+            commands::video::video_follow_works,
+            commands::novel::novel_blacklist_list,
+            commands::novel::novel_blacklist_add,
+            commands::novel::novel_blacklist_remove,
+            commands::novel::novel_recommend,
+            commands::novel::novel_ranking,
+            commands::novel::novel_followed_author_works,
+            commands::novel::novel_followed_authors,
+            commands::novel::novel_series_info,
+            commands::novel::novel_add,
+            commands::novel::novel_search,
+            commands::novel::novel_search_page,
+            commands::novel::novel_latest,
+            commands::novel::novel_shelf,
+            commands::novel::novel_remove,
+            commands::novel::novel_read,
+            commands::novel::novel_prefetch,
+            commands::novel::novel_progress,
+            commands::novel::novel_set_progress,
+            commands::comic::bika_switch_like,
+            commands::comic::bika_switch_favourite,
+            commands::comic::fetch_favorites,
+            commands::video::record_video_watched,
+            commands::video::fetch_video_watched_ids,
+            commands::comic::fetch_comic_viewed_ids,
+            commands::comic::is_favorite,
+            commands::comic::add_favorite,
+            commands::comic::remove_favorite,
+            commands::comic::sync_bika_favorites,
+            commands::comic::search_comics,
+            commands::comic::fetch_comic,
+            commands::comic::fetch_comic_images,
             fetch_image,
-            fetch_video_image,
-            bika_login,
-            bika_logout,
-            bika_status,
-            fetch_bika_addresses,
-            get_bika_address,
-            set_bika_address,
-            fetch_follows,
-            follow_author,
-            unfollow_author,
-            fetch_history,
-            record_history,
-            fetch_blacklist,
-            add_blacklist,
-            remove_blacklist,
-            update_blacklist
+            commands::video::fetch_video_image,
+            commands::comic::bika_login,
+            commands::comic::bika_logout,
+            commands::comic::bika_status,
+            commands::comic::fetch_bika_addresses,
+            commands::comic::get_bika_address,
+            commands::comic::set_bika_address,
+            commands::settings::fetch_follows,
+            commands::settings::follow_author,
+            commands::settings::unfollow_author,
+            commands::settings::fetch_history,
+            commands::settings::record_history,
+            commands::settings::fetch_blacklist,
+            commands::settings::add_blacklist,
+            commands::settings::remove_blacklist,
+            commands::settings::update_blacklist
         ])
         .run(tauri::generate_context!())
         .expect("failed to run app")
