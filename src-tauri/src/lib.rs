@@ -38,6 +38,16 @@ struct AppState {
     hlib_gate: crate::sources::shared::RateGate,
 }
 impl AppState {
+    /// 连接互斥锁的短路封装(P2 样板收敛:30+ 处 command 的
+    /// `state.db.lock().map_err(|e| e.to_string())?` 收敛为一行)
+    fn with_db<T>(
+        &self,
+        f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let conn = self.db.lock().map_err(|e| e.to_string())?;
+        f(&conn)
+    }
+
     /// 取当前哔咔客户端快照(clone 便宜,reqwest::Client 内部为 Arc)
     fn bika_snapshot(&self) -> BikaApi {
         self.bika.read().expect("bika client lock poisoned").clone()
