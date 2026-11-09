@@ -91,6 +91,7 @@ export const novelLatest = (page?: number) =>
 export const novelShelf = () => invoke<NovelSeries[]>('novel_shelf')
 export const novelRemove = (id: string) => invoke<void>('novel_remove', { id })
 export const novelRead = (chapterId: string, page: number) => invoke<NovelPage>('novel_read', { chapterId, page })
+export const novelPrefetch = (chapterId: string, page: number) => invoke<void>('novel_prefetch', { chapterId, page })
 export const novelProgress = (seriesId: string) => invoke<[number, number] | null>('novel_progress', { seriesId })
 export const novelSetProgress = (seriesId: string, chapterOrder: number, page: number, title?: string) => invoke<void>('novel_set_progress', { seriesId, chapterOrder, page, title })
 export const recordVideoWatched = (code: string) => invoke<void>('record_video_watched', { code })

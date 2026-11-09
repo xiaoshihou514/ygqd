@@ -2,7 +2,7 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { novelFollowedAuthors, novelFollowAuthor, novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
+import { novelFollowedAuthors, novelFollowAuthor, novelPrefetch, novelProgress, novelRead, novelSeriesInfo, novelSetProgress, novelShelf } from '@/services/api'
 import type { NovelPage, NovelSeries } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -156,6 +156,10 @@ async function loadPage(silent = false) {
   error.value = ''
   try {
     page.value = await novelRead(currentChapter.value.id, articlePage.value)
+    // 问题 9:当前页渲染完成后预取下一页(翻页命中 24 小时缓存零等待)
+    if (hasNextPage.value) {
+      void novelPrefetch(currentChapter.value.id, articlePage.value + 1).catch(() => undefined)
+    }
     if (series.value) {
       void novelSetProgress(
         series.value.id,
