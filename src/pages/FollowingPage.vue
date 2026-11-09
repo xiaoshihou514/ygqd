@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { formatCount } from '@/utils/formatCount'
 import { videoFollow, videoFollowList, videoFollowTargets, videoFollowWorks, videoUnfollow as apiVideoUnfollow, novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
 import type { AuthorFollow, FollowTargetEntry, FollowTargetItem, NovelHit, VideoCard } from '@/types'
@@ -239,8 +240,6 @@ let syncCacheBuster = ''
 /** 会话级 buster:进页面时命中后端 5 分钟缓存,避开 niacg 搜索限速的串行等待 */
 const SESSION_BUSTER = String(Date.now())
 let nextAuthorIndex = 0
-let sentinel: HTMLElement | null = null
-let observer: IntersectionObserver | null = null
 
 const allWorks = computed<ComicItem[]>(() => {
   const seen = new Set<string>()
@@ -419,19 +418,11 @@ function handleRefresh() {
   void loadAllAuthors(true)
 }
 
-function setupObserver() {
-  observer?.disconnect()
-  sentinel = document.querySelector('.scroll-sentinel')
-  if (!sentinel) return
-
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) {
-      loadNextPage()
-    }
-  }, { rootMargin: '200px' })
-
-  observer.observe(sentinel)
-}
+const { setup: setupObserver } = useInfiniteScroll({
+  target: () => document.querySelector('.scroll-sentinel'),
+  onHit: () => loadNextPage(),
+  enabled: () => hasMoreWorks.value && !syncing.value,
+})
 
 function goToAuthor(author: string) {
   router.push({ name: 'search', query: { keyword: author, show: 'title,text,keyboard,ftitle' } })
@@ -467,10 +458,6 @@ async function handleExport() {
   }
 }
 
-onUnmounted(() => {
-  observer?.disconnect()
-  observer = null
-})
 </script>
 
 <template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { videoFollow, videoFollowWorks, videoUnfollow } from '@/services/api'
@@ -49,19 +50,11 @@ async function loadWorks(reset = true) {
 }
 
 /** 哨兵滚动加载(视频源无反爬闸,无限滚动无节流) */
-function setupSentinel() {
-  const el = document.querySelector('.target-scroll-sentinel')
-  if (!el) return
-  observer = new IntersectionObserver(
-    (entries) => {
-      if (entries[0]?.isIntersecting) void loadWorks(false)
-    },
-    { rootMargin: '400px' },
-  )
-  observer.observe(el)
-}
-
-let observer: IntersectionObserver | null = null
+const { setup: setupSentinel } = useInfiniteScroll({
+  target: () => document.querySelector('.target-scroll-sentinel'),
+  onHit: () => loadWorks(false),
+  rootMargin: '400px',
+})
 
 /** 关注/取关(与关注 tab 双向同步:关注后关注列表即时更新) */
 async function toggleFollow() {
@@ -96,9 +89,6 @@ onMounted(async () => {
   setupSentinel()
 })
 
-onUnmounted(() => {
-  observer?.disconnect()
-})
 </script>
 
 <template>
