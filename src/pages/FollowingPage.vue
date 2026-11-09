@@ -4,7 +4,7 @@ import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { formatCount } from '@/utils/formatCount'
 import { videoFollow, videoFollowList, videoFollowTargets, videoFollowWorks, videoUnfollow as apiVideoUnfollow, novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
 import type { AuthorFollow, FollowTargetEntry, FollowTargetItem, NovelHit, VideoCard } from '@/types'
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onActivated, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
 import { searchComics, fetchFavorites, removeFavorite, syncBikaFavorites } from '@/services/api'
@@ -269,6 +269,13 @@ onMounted(async () => {
     await nextTick()
     setupObserver()
   }
+})
+
+// 任务 2:keep-alive 返回时静默刷新(当前 tab 数据,滚动位置由组件状态保留)
+onActivated(() => {
+  if (activeTab.value === 'authors') void loadAllAuthors(true)
+  if (activeTab.value === 'novel-authors') void loadNovelAuthors(true)
+  if (activeTab.value === 'videos') void loadVideoFollows()
 })
 
 /** 收藏列表:本地表立即展示,哔咔登录时后台把服务器收藏合并进来 */

@@ -147,7 +147,16 @@ onMounted(() => {
         </div>
         <div class="hero-info">
           <h2 class="hero-title">{{ series.title }}</h2>
-          <span class="hero-author">{{ authorText }}</span>
+          <button
+            v-if="series.author"
+            type="button"
+            class="hero-author hero-author-link"
+            title="搜索该作者的其他作品"
+            @click="router.push({ name: 'search', query: { keyword: series.author, show: 'title,text,keyboard,ftitle' } })"
+          >
+            {{ series.author }}
+          </button>
+          <span v-else class="hero-author">未知作者</span>
           <span class="hero-count">{{ chapters.length }} 章</span>
           <button
             v-if="inShelf"
@@ -278,6 +287,20 @@ onMounted(() => {
   color: var(--color-text-primary);
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.hero-author-link {
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.hero-author-link:hover {
+  text-decoration: underline;
 }
 
 .hero-author {

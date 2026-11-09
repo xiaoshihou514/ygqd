@@ -6,7 +6,7 @@ import { formatCount } from '@/utils/formatCount'
 import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { useHlibGuard } from '@/composables/useHlibGuard'
 import { parseLikes } from '@/utils/likes'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { novelRanking, novelRecommend } from '@/services/api'
 import type { NovelHit } from '@/types'
@@ -113,6 +113,11 @@ function openSeries(hit: NovelHit) {
 // 首次切到某个 tab 才加载(榜单需登录,不在进入页面时就打扰)
 watch(novelTab, (tab) => {
   if (!states.value[tab].loaded && !states.value[tab].loading) void loadTab(tab, 1)
+})
+
+// 任务 2:keep-alive 返回时静默刷新数据(滚动位置由组件状态天然保留)
+onActivated(() => {
+  void loadTab(novelTab.value, 1).then(() => nextTick(setupSentinel))
 })
 
 onMounted(() => {

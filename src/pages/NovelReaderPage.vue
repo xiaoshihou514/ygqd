@@ -301,6 +301,14 @@ onUnmounted(() => {
         >
           {{ authorFollowed ? '已关注' : '+ 关注作者' }}
         </button>
+        <button
+          class="hdr-btn"
+          title="作品界面"
+          aria-label="跳转到作品界面(系列详情)"
+          @click="router.push(`/novels/series/${series?.id}`)"
+        >
+          作品
+        </button>
         <button class="hdr-btn" @click="toggleSettings">Aa</button>
         <button class="hdr-btn" @click="toggleChapters">目录</button>
       </div>

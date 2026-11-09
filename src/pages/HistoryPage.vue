@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { useTimeline } from '@/composables/useTimeline'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchItemHistory, fetchFavorites, removeFavorite } from '@/services/api'
 import { formatTimestamp } from '@/utils/formatTime'
@@ -71,6 +71,15 @@ async function loadItemHistory() {
   }
 }
 
+// 任务 2:keep-alive 返回时静默刷新(数据更新,滚动位置保留)
+onActivated(() => {
+  void loadItemHistory()
+  void loadFavorites()
+})
+
+onMounted(async () => {
+  await Promise.all([load(), loadItemHistory(), loadFavorites()])
+})
 </script>
 
 <template>

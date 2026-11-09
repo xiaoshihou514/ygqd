@@ -9,7 +9,7 @@ import BottomTabBar from '@/components/BottomTabBar.vue'
   <main class="main-content">
     <RouterView v-slot="{ Component }">
       <transition name="page" mode="out-in">
-        <keep-alive include="HomePage,SearchPage,ComicDetailPage">
+        <keep-alive include="HomePage,SearchPage,ComicDetailPage,NovelPage,FollowingPage,HistoryPage">
           <component :is="Component" />
         </keep-alive>
       </transition>
