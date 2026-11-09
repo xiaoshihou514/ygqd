@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { formatCount } from '@/utils/formatCount'
 import { parseLikes } from '@/utils/likes'
 import { ref, onMounted, onUnmounted, onActivated, nextTick, computed } from 'vue'
@@ -161,35 +162,18 @@ function goNextEp() {
   switchEp(activeEp.value + 1)
 }
 
-let sentinel: HTMLElement | null = null
-let observer: IntersectionObserver | null = null
 
-function setupObserver() {
-  if (observer) {
-    observer.disconnect()
-  }
-  sentinel = document.querySelector('.scroll-sentinel')
-  if (!sentinel || !hasMore.value) return
-
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) {
-      loadMore()
-    }
-  }, { rootMargin: '200px' })
-
-  observer.observe(sentinel)
-}
+const { setup: setupObserver, teardown: teardownObserver } = useInfiniteScroll({
+  target: () => document.querySelector('.scroll-sentinel'),
+  onHit: () => loadMore(),
+  enabled: () => hasMore.value,
+})
 
 async function loadComic(categoryId: number, id: string) {
   loading.value = true
   error.value = ''
   activeEp.value = 1
   resetGallery(false)
-
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
 
   try {
     detail.value = await fetchComicDetail(source.value, categoryId, id)
@@ -236,10 +220,7 @@ onActivated(() => {
 })
 
 onUnmounted(() => {
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
+  teardownObserver()
 })
 
 function goBack() {

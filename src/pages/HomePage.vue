@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
+import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchCategoryList, fetchBikaCategories, fetchBikaLeaderboard } from '@/services/api'
@@ -187,18 +188,10 @@ async function loadNextPage() {
   }
 }
 
-function setupObserver() {
-  sentinel = document.querySelector('.scroll-sentinel')
-  if (!sentinel) return
-
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) {
-      loadNextPage()
-    }
-  }, { rootMargin: '200px' })
-
-  observer.observe(sentinel)
-}
+const { setup: setupObserver, teardown: teardownObserver } = useInfiniteScroll({
+  target: () => document.querySelector('.scroll-sentinel'),
+  onHit: () => loadNextPage(),
+})
 
 function retry() {
   loading.value = true
@@ -281,8 +274,6 @@ function restoreHomeScroll() {
   nextTick(() => window.scrollTo(0, activeState.value.scrollY))
 }
 
-let sentinel: HTMLElement | null = null
-let observer: IntersectionObserver | null = null
 
 onMounted(() => {
   loadBikaTabs()
@@ -302,15 +293,12 @@ onActivated(() => {
 
 onDeactivated(() => {
   saveHomeState()
-  observer?.disconnect()
+  teardownObserver()
 })
 
 onUnmounted(() => {
   saveHomeState()
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
+  teardownObserver()
 })
 </script>
 
