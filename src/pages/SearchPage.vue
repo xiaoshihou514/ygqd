@@ -6,6 +6,7 @@ import { novelAdd, novelSearchPage, searchComics, searchVideos } from '@/service
 import type { ComicItem, NovelHit, SearchParams, SearchResult, VideoCard } from '@/types'
 import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
+import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { formatCount } from '@/utils/formatCount'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
@@ -123,8 +124,6 @@ const visibleItems = computed(() => processedItems.value.slice(0, visibleCount.v
 
 const hasMoreLocal = computed(() => visibleCount.value < processedItems.value.length)
 
-let sentinel: HTMLElement | null = null
-let observer: IntersectionObserver | null = null
 
 async function loadMore() {
   if (loadingMore.value) return
@@ -154,39 +153,28 @@ async function loadMore() {
   }
 }
 
+const videoScroll = useInfiniteScroll({
+  target: () => (scope.value === 'video' ? document.querySelector('.scroll-sentinel') : null),
+  onHit: () => loadMoreVideos(),
+  enabled: () => scope.value === 'video' && videoHasNext.value,
+  rootMargin: '400px',
+})
+
+const comicScroll = useInfiniteScroll({
+  target: () => (scope.value !== 'video' ? document.querySelector('.scroll-sentinel') : null),
+  onHit: () => loadMore(),
+  enabled: () => scope.value !== 'video' && (hasMoreLocal.value || hasNextPage.value),
+  rootMargin: '200px',
+})
+
 function setupObserver() {
-  teardownObserver()
-  sentinel = document.querySelector('.scroll-sentinel')
-  if (!sentinel) return
-
-  // ⑬ 三范围统一哨兵:视频范围哨兵驱动 loadMoreVideos,漫画范围驱动 loadMore
-  if (scope.value === 'video') {
-    if (!videoHasNext.value) return
-    observer = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) {
-        void loadMoreVideos()
-      }
-    }, { rootMargin: '400px' })
-    observer.observe(sentinel)
-    return
-  }
-
-  if (!hasMoreLocal.value && !hasNextPage.value) return
-
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) {
-      loadMore()
-    }
-  }, { rootMargin: '200px' })
-
-  observer.observe(sentinel)
+  if (scope.value === 'video') videoScroll.setup()
+  else comicScroll.setup()
 }
 
 function teardownObserver() {
-  if (observer) {
-    observer.disconnect()
-    observer = null
-  }
+  videoScroll.teardown()
+  comicScroll.teardown()
 }
 
 watch([minLikes, sortOrder], () => {
