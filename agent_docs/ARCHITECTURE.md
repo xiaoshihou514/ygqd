@@ -126,3 +126,27 @@ export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/<NDK 版本目录>"
 
 CI 为 GitHub Actions 双流水线（`.github/workflows/`）：Android Nightly（APK）
 与 Linux Nightly（AppImage），推送 main 触发并发布滚动 nightly release。
+
+## 已登记技术债
+
+### T-1 video.rs 单文件过大（1736 行，重构搁置）
+
+**现状**：`src/sources/video.rs` 单文件承载 fs1/missav 双源的全部解析、
+抓取与 VideoApi（68 函数）。两次拆分尝试（脚本批量/手工批量迁移）
+均在 impl 方法与自由函数的交织处失控（错误连锁 97 条），已回滚止损。
+
+**建议拆分路径**（未来有 IDE 级重构工具或人力时执行）：
+- `video/mod.rs`：VideoApi 结构、new、HTTP 层（get/missav_get）、
+  入口（list/search/detail）、共享类型
+- `video/fs1.rs`：parse_cards、scan_codes_fallback、search_fs1、
+  detail_fs1 系列、to_base、fs1_models 系列
+- `video/missav.rs`：search_missav、missav_m3u8、play_paths、
+  parse_missav 系列、MissavMeta、apply_missav_meta、meta 链接提取
+- `video/follow.rs`：dedup_key、base_code、variant_priority、
+  dedupe_by_base、merged_has_next、关注作品流
+
+**实施要求**：rust-analyzer 的 move item 重构（文本剪切在 27 方法
+与 20 自由函数的交织处已被证明不可靠）；每移动 3-5 函数一次
+编译核对；expert 复审的 c879957 版本（MissavMeta 结构化）为准。
+
+**记录日期**：2026-11-09（重构批次收官，lead 裁决方案 1 搁置）
