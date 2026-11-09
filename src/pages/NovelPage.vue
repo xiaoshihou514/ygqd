@@ -160,7 +160,11 @@ onMounted(() => {
       <p v-if="current.error" class="add-error">{{ current.error }}</p>
 
       <div v-if="current.loading && !current.items.length" class="tab-loading">
-        <LoadingSpinner message="正在加载(经小说源连接,首次可能需要十几秒)..." />
+        <LoadingSpinner
+          :message="novelTab === 'recommend'
+            ? '正在加载(经小说源连接,首次可能需要十几秒)...'
+            : '首次加载约需 3 分钟(站点校验),之后 30 分钟内秒开...'"
+        />
       </div>
 
       <div v-if="current.items.length" class="hit-list">

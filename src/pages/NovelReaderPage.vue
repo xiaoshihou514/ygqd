@@ -374,7 +374,7 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <LoadingSpinner v-if="loading" message="打开小说..." />
+    <LoadingSpinner v-if="loading" message="首次加载需要站点校验,约 30 秒..." />
     <EmptyState v-else-if="error" title="阅读失败" :message="error">
       <button class="retry-btn" @click="loadPage()">重试</button>
       <button class="retry-btn ghost" @click="router.push('/novels')">返回小说</button>
