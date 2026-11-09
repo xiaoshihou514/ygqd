@@ -121,7 +121,8 @@ function loadMore() {
 }
 
 function openSeries(hit: NovelHit) {
-  void router.push(`/novels/series/${hit.id}`)
+  // 任务 7:点条目直接进阅读器(阅读器自动取首章/续读进度,不经章节列表)
+  void router.push(`/novels/${hit.id}`)
 }
 
 // 首次切到某个 tab 才加载(榜单需登录,不在进入页面时就打扰)

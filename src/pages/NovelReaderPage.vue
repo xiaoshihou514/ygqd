@@ -386,7 +386,7 @@ onUnmounted(() => {
         :disabled="!hasNextPage && !hasNextChapter"
         @click="goPage(1)"
       >
-        下一页
+        {{ !hasNextPage && hasNextChapter ? '下一章' : '下一页' }}
       </button>
     </div>
   </div>
