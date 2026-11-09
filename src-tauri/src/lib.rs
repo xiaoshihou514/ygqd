@@ -5,11 +5,11 @@ mod sources;
 mod stream_proxy;
 
 use gateway::GatewayManager;
-use models::*;
+use models::Source;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use rusqlite::Connection;
 use sources::bika::BikaApi;
-use sources::video::{VideoApi, VideoDetail, VideoListResult};
+use sources::video::VideoApi;
 use std::{
     collections::HashMap,
     future::Future,
@@ -40,6 +40,8 @@ struct AppState {
 impl AppState {
     /// 连接互斥锁的短路封装(P2 样板收敛:30+ 处 command 的
     /// `state.db.lock().map_err(|e| e.to_string())?` 收敛为一行)
+    /// 渐进迁移期:存量 30+ 处尚未全部接入,标注 dead_code 消除告警
+    #[allow(dead_code)]
     fn with_db<T>(
         &self,
         f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
@@ -160,13 +162,7 @@ impl AppState {
         }
     }
 }
-// ── 需求 5:小说关键词黑名单 ──
-
-/// 拉黑名单关键词并过滤小说条目(标题命中子串即剔除)
-
-// ── 批次 4:全局历史(item_history 统一时间线) ──
-
-// ── 批次 3:视频关注(follow_target 统一表首个用例) ──
+// ── 通用图片代理(漫画/视频共用) ──
 
 pub(crate) async fn fetch_image_with_client(
     client: reqwest::Client,
