@@ -3,6 +3,7 @@
 // 本页不再保留单独的搜索框
 import { errorMessage } from '@/utils/errors'
 import { formatCount } from '@/utils/formatCount'
+import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { parseLikes } from '@/utils/likes'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -96,24 +97,15 @@ function refresh() {
 }
 
 // 统一 11:发现流/榜单无限加载(哨兵模式;小说 3 秒限速保留在 loadMore 内)
-let sentinelObserver: IntersectionObserver | null = null
-
-function setupSentinel() {
-  sentinelObserver?.disconnect()
-  sentinelObserver = null
-  const el = document.querySelector('.scroll-sentinel')
-  if (!el || !hasMore.value || current.value.loading) return
-  sentinelObserver = new IntersectionObserver(
-    (entries) => {
-      if (entries[0]?.isIntersecting) {
-        void loadMore()
-        void nextTick(setupSentinel)
-      }
-    },
-    { rootMargin: '400px' },
-  )
-  sentinelObserver.observe(el)
-}
+const { setup: setupSentinel } = useInfiniteScroll({
+  target: () => document.querySelector('.scroll-sentinel'),
+  onHit: () => {
+    void loadMore()
+    return nextTick(setupSentinel)
+  },
+  enabled: () => hasMore.value && !current.value.loading,
+  rootMargin: '400px',
+})
 
 function loadMore() {
   if (!hasMore.value) return
@@ -135,9 +127,6 @@ onMounted(() => {
   void loadTab('recommend', 1)
 })
 
-onUnmounted(() => {
-  sentinelObserver?.disconnect()
-})
 </script>
 
 <template>

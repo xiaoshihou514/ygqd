@@ -3,6 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchVideoList, fetchVideoWatchedIds } from '@/services/api'
+import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { videoBaseCode } from '@/utils/videoCode'
 import { formatCount } from '@/utils/formatCount'
 import { parseLikes } from '@/utils/likes'
@@ -75,40 +76,19 @@ async function load(reset: boolean) {
 
 /** 徽标展示用基础番号:剥无码流出与中字后缀(先长后短,与后端 title
  *  剥离同序)。跳转 / 去重 / 已看记录仍用完整 code,不受展示层影响。 */
-/** 哨兵常驻 DOM(v-show 控制显隐):display:none 的元素与视口不相交,
+/** 哨兵常驻 DOM(v-show 显隐):display:none 的元素与视口不相交,
  *  隐藏期间不触发回调,恢复显示即自动恢复工作——节点不随条件分支
  *  销毁重建,observer 一次绑定终身有效(前两轮「搜索后翻页失效」的
  *  根因即哨兵节点重建导致观察失联,本结构从根上消除该模式)。 */
-function bindObserver() {
-  if (!sentinelEl.value) {
-    console.info('[video-browser] 绑定失败:哨兵节点不存在')
-    return
-  }
-  observer = new IntersectionObserver(
-    (entries) => {
-      console.info('[video-browser] 哨兵回调', {
-        intersecting: entries[0]?.isIntersecting ?? false,
-        page: page.value,
-        hasNext: hasNext.value,
-        loading: loading.value,
-        loadingMore: loadingMore.value,
-        items: items.value.length,
-      })
-      if (entries[0]?.isIntersecting) void load(false)
-    },
-    { rootMargin: '400px' },
-  )
-  observer.observe(sentinelEl.value)
-  console.info('[video-browser] observer 已绑定哨兵')
-}
-
-onMounted(() => {
-  bindObserver()
-  void load(true)
+const { setup: setupInfiniteScroll } = useInfiniteScroll({
+  target: () => sentinelEl.value,
+  onHit: () => void load(false),
+  rootMargin: '400px',
 })
 
-onUnmounted(() => {
-  observer?.disconnect()
+onMounted(() => {
+  setupInfiniteScroll()
+  void load(true)
 })
 </script>
 
