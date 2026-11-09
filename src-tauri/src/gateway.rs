@@ -597,10 +597,14 @@ async fn gateway_fetch_inner(
                 window.set_focus().ok();
             }
             diag(app, "[网关链路] 挑战态,等待就绪后重试");
-            // 问题 10:第 1 轮等待 60→30 秒——Turnstile 自动求解典型
-            // 21 秒,30 秒足够;缩短挑战循环时前端转圈 3-4 分钟的
-            // 「60 秒无回传」无感等待
-            wait_until_ready(&window, 30).await;
+            // 问题 4 取证修正:桌面 WebKitGTK 的 CF 挑战全程实测 62 秒
+            // (403 → 主框架导航挑战页 → Turnstile 求解 → 通过回跳 →
+            // 就绪报到),等待窗口 30 秒不足——挑战进行中盲重试 403×2
+            // 且不必要前置转人工。窗口 30→90 秒:覆盖 62 秒挑战+余量,
+            // 就绪报到(ygwd-gw://ready)触发即刻返回重试,不再盲等。
+            // Android WebView(Chromium)过挑战更快(Turnstile 实测 21
+            // 秒),90 秒窗口为桌面最差环境的上界。
+            wait_until_ready(&window, 90).await;
         }
         rx = dispatch_fetch(&window, manager, url)?;
         diag(app, "[网关链路] 重试 dispatch 已发起");
