@@ -530,55 +530,32 @@ onUnmounted(() => {
             title="还没有关注任何作者"
             message="在漫画详情页点击作者旁的心形图标即可关注"
           />
-          <div v-else class="following-list">
-            <div
-              v-for="fa in followed"
-              :key="fa.author"
-              class="author-card"
-            >
-              <div class="author-header">
-                <span class="author-name">{{ fa.author }}</span>
-                <span class="author-meta">关注于 {{ formatTime(fa.followedAt) }}</span>
-                <div class="author-actions" @click.stop>
-                  <button
-                    class="author-action-btn"
-                    :title="`搜索 ${fa.author}`"
-                    @click="goToAuthor(fa.author)"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                      <circle cx="11" cy="11" r="8" />
-                      <path d="M21 21l-4.35-4.35" />
-                    </svg>
-                  </button>
-                  <button
-                    class="author-action-btn author-action-danger"
-                    :title="`取消关注 ${fa.author}`"
-                    @click="unfollow(fa.author)"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="currentColor" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <div class="author-works">
-                <LoadingSpinner
-                  v-if="!authorWorks[fa.author]?.items.length && (syncing || authorWorks[fa.author]?.loading)"
-                  message="加载作品..."
-                />
-                <ComicGrid
-                  v-if="authorWorks[fa.author]?.items.length"
-                  :items="authorWorks[fa.author]!.items"
-                />
-                <EmptyState
-                  v-if="!syncing && !authorWorks[fa.author]?.loading && !authorWorks[fa.author]?.items.length"
-                  title="未找到作品"
-                  :message="`未能搜索到 ${fa.author} 的作品`"
-                />
-              </div>
+          <template v-else>
+            <div class="author-chips-row">
+              <span v-for="fa in followed" :key="fa.author" class="author-chip">
+                {{ fa.author }}
+                <button
+                  type="button"
+                  class="chip-remove"
+                  title="取消关注"
+                  aria-label="取消关注"
+                  @click="unfollow(fa.author)"
+                >×</button>
+              </span>
             </div>
-          </div>
+            <p v-if="syncing && syncProgress" class="sync-progress">{{ syncProgress }}</p>
+            <ComicGrid v-if="allWorks.length" :items="allWorks" />
+            <LoadingSpinner v-else-if="syncing" message="正在加载作品..." />
+            <EmptyState v-else-if="!syncing && !allWorks.length" title="暂无作品" message="未能获取到关注作者的作品" />
+
+            <div v-if="loadingMore" class="loading-more">
+              <LoadingSpinner message="正在加载更多..." />
+            </div>
+            <div v-if="!syncing && !loadingMore && !hasMoreWorks && allWorks.length" class="no-more">
+              <span>已加载全部作品</span>
+            </div>
+            <div v-if="hasMoreWorks && !syncing" class="scroll-sentinel" />
+          </template>
         </template>
 
         <template v-else-if="activeTab === 'videos'">
@@ -1260,5 +1237,38 @@ onUnmounted(() => {
 .works-more-btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.author-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.author-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--color-card-bg);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+}
+
+.chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.chip-remove:hover {
+  color: var(--color-error);
 }
 </style>

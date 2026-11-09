@@ -402,12 +402,13 @@ function entryPosition(e: TimelineEntry): number | undefined {
 }
 
 .timeline {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
+  /* 任务 5:瀑布流式混排(多列各自向下延伸,卡片不跨列,不强行每行对齐) */
+  columns: 2;
+  column-gap: var(--spacing-sm);
 }
 
 .timeline-row {
+  break-inside: avoid;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -418,6 +419,7 @@ function entryPosition(e: TimelineEntry): number | undefined {
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s;
+  margin-bottom: var(--spacing-xs);
 }
 
 .timeline-row:hover {
