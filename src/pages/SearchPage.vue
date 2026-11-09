@@ -7,6 +7,7 @@ import type { ComicItem, NovelHit, SearchParams, SearchResult, VideoCard } from 
 import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
 import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
+import { useHlibGuard } from '@/composables/useHlibGuard'
 import { formatCount } from '@/utils/formatCount'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
@@ -385,8 +386,8 @@ const NOVEL_SORTS: Array<{ key: NovelSort; label: string }> = [
   { key: 'char', label: '字数' },
   { key: 'like', label: '最多点赞' },
 ]
-let lastNovelFetchAt = 0
-const NOVEL_MIN_INTERVAL = 3000
+
+const { guard: guardHlibInterval } = useHlibGuard()
 
 async function handleNovelSearch() {
   const kw = sharedKeyword.value.trim()
@@ -396,11 +397,7 @@ async function handleNovelSearch() {
   novelSearchedKw.value = kw
   novelHits.value = []
   try {
-    const elapsed = Date.now() - lastNovelFetchAt
-    if (elapsed < NOVEL_MIN_INTERVAL) {
-      await new Promise((resolve) => setTimeout(resolve, NOVEL_MIN_INTERVAL - elapsed))
-    }
-    lastNovelFetchAt = Date.now()
+    await guardHlibInterval()
     const res = await novelSearchPage(kw, 1, novelSort.value)
     novelHits.value = res.hits
     novelPageNo.value = res.page
@@ -427,11 +424,7 @@ async function loadMoreNovels() {
   novelLoadingMore.value = true
   novelError.value = ''
   try {
-    const elapsed = Date.now() - lastNovelFetchAt
-    if (elapsed < NOVEL_MIN_INTERVAL) {
-      await new Promise((resolve) => setTimeout(resolve, NOVEL_MIN_INTERVAL - elapsed))
-    }
-    lastNovelFetchAt = Date.now()
+    await guardHlibInterval()
     const res = await novelSearchPage(novelSearchedKw.value, novelPageNo.value + 1, novelSort.value)
     const seen = new Set(novelHits.value.map((h) => h.id))
     novelHits.value.push(...res.hits.filter((h) => !seen.has(h.id)))

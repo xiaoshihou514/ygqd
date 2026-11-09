@@ -4,6 +4,7 @@
 import { errorMessage } from '@/utils/errors'
 import { formatCount } from '@/utils/formatCount'
 import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
+import { useHlibGuard } from '@/composables/useHlibGuard'
 import { parseLikes } from '@/utils/likes'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -47,15 +48,7 @@ const current = computed(() => states.value[novelTab.value])
 const hasMore = computed(() => current.value.page < current.value.totalPages)
 
 // hlib 统一节流:各 tab 共用同一站点反爬闸,相邻抓取保底 3 秒
-let lastHlibFetchAt = 0
-const HLIB_MIN_INTERVAL = 3000
-async function guardHlibInterval() {
-  const elapsed = Date.now() - lastHlibFetchAt
-  if (elapsed < HLIB_MIN_INTERVAL) {
-    await new Promise((resolve) => setTimeout(resolve, HLIB_MIN_INTERVAL - elapsed))
-  }
-  lastHlibFetchAt = Date.now()
-}
+const { guard: guardHlibInterval, lastAt: lastHlibFetchAt } = useHlibGuard()
 
 function fetchPage(tab: NovelTab, page: number) {
   if (tab === 'recommend') return novelRecommend(page)
