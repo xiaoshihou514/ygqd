@@ -2,7 +2,7 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { gatewayOpen, novelAdd, novelFollowedAuthors, novelFollowAuthor, novelProgress, novelRemove, novelSeriesInfo, novelShelf } from '@/services/api'
+import { novelAdd, novelFollowedAuthors, novelFollowAuthor, novelProgress, novelRemove, novelSeriesInfo, novelShelf } from '@/services/api'
 import type { NovelSeries } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -115,10 +115,6 @@ async function handleRemove() {
   }
 }
 
-function openHlib() {
-  void gatewayOpen('hlib').catch(() => undefined)
-}
-
 onMounted(() => {
   void loadNovelFollows()
   void load()
@@ -129,7 +125,6 @@ onMounted(() => {
   <div class="series-detail-page">
     <div class="detail-header">
       <button class="back-btn" @click="router.push('/novels')">‹ 小说</button>
-      <button class="hlib-btn" @click="openHlib">打开 hlib</button>
     </div>
 
     <LoadingSpinner v-if="loading" message="加载系列..." />
@@ -229,20 +224,7 @@ onMounted(() => {
 }
 
 .back-btn,
-.hlib-btn {
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-primary);
-  font-size: var(--font-size-caption);
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
 .back-btn:hover,
-.hlib-btn:hover {
-  border-color: var(--color-primary);
-}
 
 .detail-hero {
   display: flex;

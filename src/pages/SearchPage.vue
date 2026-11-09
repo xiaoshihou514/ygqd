@@ -371,6 +371,9 @@ async function handleVideoSearch() {
     videoPage.value = 1
     videoHasNext.value = res.pagination.hasNext
     if (!res.items.length) videoError.value = '没有匹配的视频'
+    // 哨兵在结果渲染后才存在:DOM 更新后重绑 observer(不绑则永不触发)
+    await nextTick()
+    setupObserver()
   } catch (e) {
     videoError.value = errorMessage(e) || '搜索失败'
   } finally {
@@ -937,6 +940,7 @@ function goToSplit() {
   color: var(--color-text-primary);
   /* 任务 15:标题完全显示(可换行) */
   word-break: break-word;
+  overflow-wrap: anywhere;
   white-space: normal;
 }
 

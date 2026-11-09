@@ -4,7 +4,7 @@
 import { errorMessage } from '@/utils/errors'
 import { formatCount } from '@/utils/formatCount'
 import { parseLikes } from '@/utils/likes'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { novelRanking, novelRecommend } from '@/services/api'
 import type { NovelHit } from '@/types'
@@ -95,6 +95,26 @@ function refresh() {
   void loadTab(novelTab.value, 1)
 }
 
+// 统一 11:发现流/榜单无限加载(哨兵模式;小说 3 秒限速保留在 loadMore 内)
+let sentinelObserver: IntersectionObserver | null = null
+
+function setupSentinel() {
+  sentinelObserver?.disconnect()
+  sentinelObserver = null
+  const el = document.querySelector('.scroll-sentinel')
+  if (!el || !hasMore.value || current.value.loading) return
+  sentinelObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries[0]?.isIntersecting) {
+        void loadMore()
+        void nextTick(setupSentinel)
+      }
+    },
+    { rootMargin: '400px' },
+  )
+  sentinelObserver.observe(el)
+}
+
 function loadMore() {
   if (!hasMore.value) return
   void loadTab(novelTab.value, current.value.page + 1)
@@ -110,7 +130,12 @@ watch(novelTab, (tab) => {
 })
 
 onMounted(() => {
+  void nextTick(setupSentinel)
   void loadTab('recommend', 1)
+})
+
+onUnmounted(() => {
+  sentinelObserver?.disconnect()
 })
 </script>
 
@@ -183,10 +208,9 @@ onMounted(() => {
       </div>
       <p v-else-if="current.loaded && !current.loading && !current.error" class="hit-end">暂无内容</p>
 
-      <div v-if="current.items.length && hasMore" class="hit-more">
-        <button class="hit-more-btn" :disabled="current.loading" @click="loadMore">
-          {{ current.loading ? '加载中…(站点限速约 3 秒/次)' : `加载更多(第 ${current.page + 1}/${current.totalPages} 页)` }}
-        </button>
+      <div v-if="current.items.length && hasMore" class="scroll-sentinel" />
+      <div v-if="current.loading && current.items.length" class="hit-loading-more">
+        <LoadingSpinner message="加载中…(站点限速约 3 秒/次)" />
       </div>
       <div v-else-if="current.items.length && !hasMore" class="hit-end">
         已展示全部
@@ -321,6 +345,7 @@ onMounted(() => {
   color: var(--color-text-primary);
   /* 任务 15:标题完全显示(可换行) */
   word-break: break-word;
+  overflow-wrap: anywhere;
   white-space: normal;
 }
 

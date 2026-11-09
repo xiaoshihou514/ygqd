@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import type { SearchParams } from '@/types'
 import type { SearchScope } from '@/config/sources'
 import { SEARCH_SOURCE_OPTIONS, parseSearchScope } from '@/config/sources'
-import { useSearchHistory } from '@/composables/useSearchHistory'
+import SearchInput from '@/components/SearchInput.vue'
 
 const emit = defineEmits<{
   search: [params: SearchParams, minLikes: number, sortOrder: string]
@@ -12,13 +12,6 @@ const emit = defineEmits<{
 
 const route = useRoute()
 
-const { suggestions, remove, clear } = useSearchHistory()
-
-function clearAllHistory() {
-  clear()
-  showSuggestions.value = false
-  selectedIndex.value = -1
-}
 
 const CATEGORIES = [
   { id: 9, label: 'A漫' },
@@ -53,71 +46,14 @@ const form = reactive({
   sortOrder: 'default',
 })
 
-const inputRef = ref<HTMLInputElement | null>(null)
-const showSuggestions = ref(false)
-const selectedIndex = ref(-1)
 
-const matchedSuggestions = computed(() => suggestions(form.keyword))
 
-function selectSuggestion(keyword: string) {
-  form.keyword = keyword
-  showSuggestions.value = false
-  selectedIndex.value = -1
-  nextTick(() => {
-    handleSubmit()
-  })
-}
 
-function onInputFocus() {
-  if (matchedSuggestions.value.length > 0) {
-    showSuggestions.value = true
-  }
-}
 
-function onInputBlur() {
-  setTimeout(() => {
-    showSuggestions.value = false
-    selectedIndex.value = -1
-  }, 150)
-}
-
-function onKeydown(e: KeyboardEvent) {
-  const list = matchedSuggestions.value
-  if (list.length === 0) return
-
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    selectedIndex.value = Math.min(selectedIndex.value + 1, list.length - 1)
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    selectedIndex.value = Math.max(selectedIndex.value - 1, -1)
-  } else if (e.key === 'Enter' && selectedIndex.value >= 0) {
-    e.preventDefault()
-    selectSuggestion(list[selectedIndex.value]!)
-  } else if (e.key === 'Escape') {
-    showSuggestions.value = false
-    selectedIndex.value = -1
-  }
-}
-
-watch(() => form.keyword, () => {
-  if (showSuggestions.value) {
-    selectedIndex.value = -1
-  }
-})
 
 watch(() => route.query.keyword, (kw) => {
   if (kw && typeof kw === 'string') form.keyword = kw
 })
-
-function clearKeyword() {
-  form.keyword = ''
-  showSuggestions.value = false
-  selectedIndex.value = -1
-  nextTick(() => {
-    inputRef.value?.focus()
-  })
-}
 
 function handleSubmit() {
   if (!form.keyword.trim()) return
@@ -149,71 +85,12 @@ onMounted(() => {
 <template>
   <div class="search-form-wrapper">
     <form class="search-form" @submit.prevent="handleSubmit">
-      <div class="search-input-row">
-        <div class="search-input-wrap">
-          <input
-            ref="inputRef"
-            v-model="form.keyword"
-            type="text"
-            class="search-input"
-            placeholder="输入关键词搜索..."
-            autocomplete="off"
-            @focus="onInputFocus"
-            @blur="onInputBlur"
-            @keydown="onKeydown"
-          />
-          <button
-            v-if="form.keyword"
-            type="button"
-            class="search-clear"
-            title="清空搜索"
-            aria-label="清空搜索"
-            @mousedown.prevent
-            @click="clearKeyword"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-          <ul v-if="showSuggestions && matchedSuggestions.length > 0" class="suggestions-dropdown">
-            <li
-              v-for="(s, i) in matchedSuggestions"
-              :key="s"
-              class="suggestion-item"
-              :class="{ highlighted: i === selectedIndex }"
-              @mousedown.prevent="selectSuggestion(s)"
-            >
-              <svg class="suggestion-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-              <span class="suggestion-text">{{ s }}</span>
-              <button
-                type="button"
-                class="suggestion-remove"
-                @mousedown.stop.prevent="remove(s)"
-                title="删除历史"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </li>
-            <li class="suggestion-clear-row">
-              <button type="button" class="clear-history" @mousedown.stop.prevent="clearAllHistory()">
-                清空搜索历史
-              </button>
-            </li>
-          </ul>
-        </div>
-        <button type="submit" class="search-btn">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8" />
-            <path d="M21 21l-4.35-4.35" />
-          </svg>
-        </button>
-      </div>
+      <SearchInput
+        v-model="form.keyword"
+        history-key="niacg-search-history"
+        placeholder="输入关键词搜索..."
+        @search="handleSubmit"
+      />
 
       <div class="search-options">
         <div class="option-group">

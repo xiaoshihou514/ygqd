@@ -236,18 +236,6 @@ function skipBy(seconds: number) {
   el.currentTime = Math.max(0, el.currentTime + seconds)
 }
 
-// ===== 任务 8:倍速档(0.5/1/2 循环) =====
-const PLAYBACK_RATES = [0.5, 1, 2] as const
-const rateIndex = ref(1)
-const currentRate = computed(() => PLAYBACK_RATES[rateIndex.value]!)
-
-function cyclePlaybackRate() {
-  const el = mediaEl.value as unknown as { playbackRate?: number } | null
-  if (!el) return
-  rateIndex.value = (rateIndex.value + 1) % PLAYBACK_RATES.length
-  el.playbackRate = PLAYBACK_RATES[rateIndex.value]!
-}
-
 // ===== B5:shadow DOM 注入(scoped CSS 穿不进 shadowRoot,需向 skin.shadowRoot 追加) =====
 type SkinHost = HTMLElement & { shadowRoot?: ShadowRoot | null }
 
@@ -286,22 +274,21 @@ async function injectSkinControls() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 4px 10px;
+      width: 34px;
+      height: 30px;
       margin: 0 4px;
       border: none;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.14);
       color: #fff;
-      font-size: 13px;
       cursor: pointer;
-      white-space: nowrap;
     }
     .skin-skip-btn:hover {
       background: rgba(255, 255, 255, 0.28);
     }
-    .skin-rate {
-      min-width: 44px;
-      font-weight: 600;
+    .skin-skip-btn svg {
+      width: 18px;
+      height: 18px;
     }
   `
   root.appendChild(style)
@@ -312,29 +299,25 @@ async function injectSkinControls() {
     root.querySelector('[part="play-button"]')
   if (!playBtn?.parentElement) return
 
-  const mkBtn = (label: string, secs: number): HTMLButtonElement => {
+  // 任务 3:快进快退改图标(任务 2:倍速按钮删除——皮肤自带设置有速度)
+  const SKIP_ICON_BACK = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>'
+  const SKIP_ICON_FWD = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 6v12l8.5-6L4 6zm9.5 6l8.5 6V6l-8.5 6z"/></svg>'
+
+  const mkBtn = (icon: string, secs: number): HTMLButtonElement => {
     const b = document.createElement('button')
     b.className = 'skin-skip-btn'
-    b.textContent = label
-    b.title = secs > 0 ? `快进 ${secs} 秒` : `快退 ${-secs} 秒`
+    b.innerHTML = icon
+    b.title = secs > 0 ? '快进 1 分钟' : '快退 1 分钟'
+    b.setAttribute('aria-label', b.title)
     b.addEventListener('click', () => skipBy(secs))
     return b
   }
-  const back = mkBtn('«60s', -60)
-  const fwd = mkBtn('60s»', 60)
-  const rate = document.createElement('button')
-  rate.className = 'skin-skip-btn skin-rate'
-  rate.textContent = `${currentRate.value}x`
-  rate.title = '切换倍速'
-  rate.addEventListener('click', () => {
-    cyclePlaybackRate()
-    rate.textContent = `${currentRate.value}x`
-  })
+  const back = mkBtn(SKIP_ICON_BACK, -60)
+  const fwd = mkBtn(SKIP_ICON_FWD, 60)
 
   const parent = playBtn.parentElement
   parent.insertBefore(back, playBtn)
   parent.insertBefore(fwd, playBtn.nextSibling)
-  parent.insertBefore(rate, playBtn)
 }
 
 // 番号变化重载后 skin 重建,重新注入
