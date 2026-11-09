@@ -37,6 +37,11 @@ pub fn init_diag_dir(dir: std::path::PathBuf) {
 /// (release 无法 run-as/logcat,应用内读取是唯一通道)。
 /// 只用 setup 缓存的目录,任何线程(含 Android 主线程回调)调用都安全;
 /// 未登记时静默丢弃。
+/// diag.log 所在目录访问(DIAG_DIR 缓存;未登记返回 None)
+pub fn diag_dir() -> Option<&'static std::path::PathBuf> {
+    DIAG_DIR.get()
+}
+
 pub fn diag(_app: &AppHandle, msg: &str) {
     use std::io::Write;
     let Some(dir) = DIAG_DIR.get() else {
@@ -592,7 +597,10 @@ async fn gateway_fetch_inner(
                 window.set_focus().ok();
             }
             diag(app, "[网关链路] 挑战态,等待就绪后重试");
-            wait_until_ready(&window, 60).await;
+            // 问题 10:第 1 轮等待 60→30 秒——Turnstile 自动求解典型
+            // 21 秒,30 秒足够;缩短挑战循环时前端转圈 3-4 分钟的
+            // 「60 秒无回传」无感等待
+            wait_until_ready(&window, 30).await;
         }
         rx = dispatch_fetch(&window, manager, url)?;
         diag(app, "[网关链路] 重试 dispatch 已发起");

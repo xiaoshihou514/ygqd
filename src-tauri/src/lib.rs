@@ -561,8 +561,52 @@ fn novel_remove(id: String, state: State<'_, AppState>) -> Result<(), String> {
 
 /// 读取章节某页正文;网关直连 hlib,未登录/未验证时返回引导错误
 #[tauri::command]
-async fn novel_read(app: AppHandle, chapter_id: String, page: i64) -> Result<NovelPage, String> {
-    sources::novel::fetch_article_page(&app, &chapter_id, page).await
+async fn novel_read(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    chapter_id: String,
+    page: i64,
+) -> Result<NovelPage, String> {
+    // 问题 9:章节内容缓存(24 小时,读过的不重抓——减少网关抓取
+    // 次数 = 减少 CF 弹窗次数)
+    let key = format!("article_{chapter_id}_p{page}");
+    if let Some(hit) = state.cached_ttl::<NovelPage>(&key, Duration::from_secs(24 * 3600)) {
+        return Ok(hit);
+    }
+    state.hlib_throttle().await;
+    let res = sources::novel::fetch_article_page(&app, &chapter_id, page).await;
+    if let Ok(np) = &res {
+        state.put(key, np);
+    }
+    res
+}
+
+/// 章节预取(问题 9):后台抓取指定页入缓存,翻页时命中缓存零等待。
+/// 预取经 hlib 闸串行(不与主抓取并发竞争)。
+#[tauri::command]
+async fn novel_prefetch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    chapter_id: String,
+    page: i64,
+) -> Result<(), String> {
+    let key = format!("article_{chapter_id}_p{page}");
+    if state
+        .cached_ttl::<NovelPage>(&key, Duration::from_secs(24 * 3600))
+        .is_some()
+    {
+        return Ok(());
+    }
+    let handle = app.clone();
+    let key_owned = key;
+    tauri::async_runtime::spawn(async move {
+        let st = handle.state::<AppState>();
+        st.hlib_throttle().await;
+        if let Ok(np) = sources::novel::fetch_article_page(&handle, &chapter_id, page).await {
+            st.put(key_owned, &np);
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1233,6 +1277,32 @@ fn update_blacklist(tag: String, mode: String, state: State<'_, AppState>) -> Re
 /// 不落正文内容。用于无界面端到端验证网关 + 会话 cookie 是否可用。
 #[cfg(debug_assertions)]
 fn spawn_novel_selftest(app: AppHandle) {
+    // 临时侦察:YGQD_TMP_FETCH=空格分隔的多 URL,逐个经网关抓取落盘
+    // (取证完成后移除)
+    if let Ok(urls) = std::env::var("YGQD_TMP_FETCH") {
+        let probe_app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            tauri::async_runtime::block_on(async {
+                let manager = probe_app.state::<GatewayManager>();
+                let manager_ref = manager.inner();
+                for (i, url) in urls.split(' ').enumerate() {
+                    let r = gateway::gateway_fetch(&probe_app, manager_ref, "hlib", url).await;
+                    let body = r.unwrap_or_else(|e| format!("ERR {e}"));
+                    if let Some(dir) = gateway::diag_dir() {
+                        let _ = std::fs::write(dir.join(format!("recon_{i}.html")), &body);
+                    }
+                    gateway::diag(
+                        &probe_app,
+                        &format!("[临时抓取] {i} url={url} bytes={}", body.len()),
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+                }
+                gateway::diag(&probe_app, "[临时抓取] 完成");
+            });
+        });
+        return;
+    }
     let Ok(keyword) = std::env::var("YGQD_SELFTEST_NOVEL") else {
         return;
     };
@@ -1365,6 +1435,7 @@ pub fn run() {
             novel_shelf,
             novel_remove,
             novel_read,
+            novel_prefetch,
             novel_progress,
             novel_set_progress,
             bika_switch_like,

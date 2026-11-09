@@ -486,6 +486,13 @@ impl VideoApi {
             let status = resp.status();
             let body = resp.text().await.map_err(|e| e.to_string())?;
             if !status.is_success() {
+                // 问题 4:403 为 CF 对连续请求的间歇拦截,退避 3 秒由
+                // 外层循环重试一次(hop 预算内);IP 级封禁时仍 403,
+                // 如实返回错误由前端重试按钮兜底
+                if status.as_u16() == 403 && _hop == 0 {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    continue;
+                }
                 return Err(format!("HTTP {status}"));
             }
             match meta_refresh_url(&body, &current) {
@@ -719,8 +726,10 @@ impl VideoApi {
             pagination: PaginationInfo {
                 current: page - 1,
                 total: 0,
-                // missav 列表页每页 12 卡(实测),满页即可能有下一页
-                has_next: items.len() >= 12,
+                // 问题 4 修复:missav 列表每视频双链接(封面+标题),12 链接
+                // 去重后实为 6 部/页——阈值按去重后部数 6 判满页
+                // (此前 >=12 永远不满足,has_next 恒 false →「只有 6 部」)
+                has_next: items.len() >= 6,
                 has_prev: page > 1,
             },
             items,
