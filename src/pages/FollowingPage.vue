@@ -13,6 +13,7 @@ import { comicPath } from '@/utils/comicPath'
 import { sourceLabel } from '@/config/sources'
 import type { ComicItem, FavoriteEntry, FollowedAuthor } from '@/types'
 import ComicGrid from '@/components/ComicGrid.vue'
+import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import ProxyImage from '@/components/ProxyImage.vue'
@@ -263,7 +264,8 @@ const hasMoreWorks = computed(() =>
 )
 
 onMounted(async () => {
-  await load()
+  // 任务 6:三源并行加载(首条出现时间优化)
+  await Promise.all([load(), loadNovelAuthors(true), loadVideoFollows()])
   if (followed.value.length > 0) {
     await loadAllAuthors()
     await nextTick()
@@ -662,16 +664,20 @@ async function handleExport() {
             <LoadingSpinner v-if="worksLoading" message="加载作品..." />
             <p v-else-if="worksError" class="works-error">{{ worksError }}</p>
             <div v-else-if="hitList.length" class="novel-works">
-              <button
+              <NovelSeriesCard
                 v-for="h in hitList"
                 :key="h.id"
-                type="button"
-                class="novel-work-row"
-                @click="router.push(`/novels/series/${h.id}`)"
-              >
-                <span class="novel-work-title">{{ h.title }}</span>
-                <span v-if="h.author" class="novel-work-author">{{ h.author }}</span>
-              </button>
+                :series="{
+                  id: h.id,
+                  title: h.title,
+                  author: h.author ?? '',
+                  cover: '',
+                  chapters: [],
+                  addedAt: Date.now(),
+                }"
+                :progress="null"
+                @open="router.push(`/novels/series/${h.id}`)"
+              />
             </div>
           </template>
         </template>

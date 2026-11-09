@@ -301,7 +301,7 @@ async function injectSkinControls() {
 
   // 任务 3:快进快退改图标(任务 2:倍速按钮删除——皮肤自带设置有速度)
   const SKIP_ICON_BACK = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>'
-  const SKIP_ICON_FWD = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 6v12l8.5-6L4 6zm9.5 6l8.5 6V6l-8.5 6z"/></svg>'
+  const SKIP_ICON_FWD = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 6v12l8.5-6L4 6zm8.5 0v12l8.5-6-8.5-6z"/></svg>'
 
   const mkBtn = (icon: string, secs: number): HTMLButtonElement => {
     const b = document.createElement('button')

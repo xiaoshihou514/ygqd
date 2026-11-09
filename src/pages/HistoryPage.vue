@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { useTimeline } from '@/composables/useTimeline'
+import TimelineList from '@/components/TimelineList.vue'
+import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchItemHistory, fetchFavorites, removeFavorite } from '@/services/api'
@@ -110,45 +112,14 @@ onMounted(async () => {
           title="还没有浏览记录"
           message="看漫画、播放视频、读小说都会自动记录在这里"
         />
-        <div v-else class="timeline">
-          <button
-            v-for="(e, i) in timeline"
-            :key="`${e.kind}-${e.itemId}-${i}`"
-            type="button"
-            class="timeline-row"
-            @click="openTimelineEntry(e)"
-          >
-            <span v-if="e.thumbnail && e.kind === 'video'" class="timeline-thumb">
-              <ProxyImage :src="e.thumbnail" source="video" class="timeline-thumb-img" loading="lazy" />
-            </span>
-            <span v-else-if="e.thumbnail && e.kind === 'comic'" class="timeline-thumb">
-              <ProxyImage :src="e.thumbnail" :source="e.source as import('@/config/sources').SourceId" class="timeline-thumb-img" loading="lazy" />
-            </span>
-            <span v-else class="timeline-thumb placeholder" :class="`ph-${e.kind}`">
-              <svg v-if="e.kind === 'video'" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-              <svg v-else-if="e.kind === 'novel'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-              </svg>
-              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
-              </svg>
-            </span>
-            <span class="timeline-kind-badge" :class="`kind-${e.kind}`">{{ kindLabel(e.kind) }}</span>
-            <span class="timeline-title">{{ e.title }}</span>
-            <span v-if="e.kind === 'novel' && e.chapter" class="timeline-progress">
-              读到第 {{ e.chapter }} 章
-            </span>
-            <span v-else-if="e.kind === 'video' && entryPosition(e)" class="timeline-progress">
-              {{ formatPosition(entryPosition(e)!) }}
-            </span>
-            <span class="timeline-time">{{ formatTimestamp(e.viewedAt) }}</span>
-          </button>
-        </div>
+        <TimelineList
+          v-else
+          :entries="timeline"
+          :loading="loading || itemLoading"
+          empty-title="还没有浏览记录"
+          empty-message="看漫画、播放视频、读小说都会自动记录在这里"
+          @open="openTimelineEntry"
+        />
       </template>
 
       <!-- 漫画:存量网格 -->
@@ -225,7 +196,7 @@ onMounted(async () => {
         </div>
       </template>
 
-      <!-- 小说:全局历史条目(含章节进度) -->
+      <!-- 小说:封面网格(与漫画同一形态,用户口径「像漫画一样」) -->
       <template v-else>
         <LoadingSpinner v-if="itemLoading" message="加载阅读记录..." />
         <EmptyState
@@ -233,19 +204,21 @@ onMounted(async () => {
           title="还没有阅读记录"
           message="阅读小说时会自动记录进度"
         />
-        <div v-else class="timeline">
-          <button
-            v-for="(e, i) in novelEntries"
-            :key="`${e.itemId}-${i}`"
-            type="button"
-            class="timeline-row"
-            @click="openTimelineEntry(e)"
-          >
-            <span class="timeline-kind-badge" :class="`kind-${e.kind}`">{{ kindLabel(e.kind) }}</span>
-            <span class="timeline-title">{{ e.title }}</span>
-            <span v-if="e.chapter" class="timeline-progress">读到第 {{ e.chapter }} 章{{ e.page ? ` 第 ${e.page} 页` : '' }}</span>
-            <span class="timeline-time">{{ formatTimestamp(e.viewedAt) }}</span>
-          </button>
+        <div v-else class="novel-grid">
+          <NovelSeriesCard
+            v-for="e in novelEntries"
+            :key="e.itemId"
+            :series="{
+              id: e.itemId,
+              title: e.title,
+              author: e.source,
+              cover: '',
+              chapters: [],
+              addedAt: e.viewedAt,
+            }"
+            :progress="null"
+            @open="router.push(`/novels/series/${e.itemId}`)"
+          />
         </div>
       </template>
 
@@ -289,31 +262,6 @@ onMounted(async () => {
   color: var(--color-text-primary);
   margin-bottom: var(--spacing-lg);
   padding-top: var(--spacing-lg);
-}
-
-.timeline {
-  /* 任务 5:瀑布流式混排(多列各自向下延伸,卡片不跨列,不强行每行对齐) */
-  columns: 2;
-  column-gap: var(--spacing-sm);
-}
-
-.timeline-row {
-  break-inside: avoid;
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: 10px var(--spacing-md);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s;
-  margin-bottom: var(--spacing-xs);
-}
-
-.timeline-row:hover {
-  border-color: var(--color-primary);
 }
 
 .timeline-thumb {
@@ -457,5 +405,11 @@ onMounted(async () => {
   flex-shrink: 0;
   font-size: var(--font-size-fine-print);
   color: var(--color-text-muted);
+}
+
+.novel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--spacing-sm);
 }
 </style>
