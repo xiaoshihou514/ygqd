@@ -32,6 +32,8 @@ const props = withDefaults(
     /** 末尾提示;传空串不显示 */
     endText?: string
     skeletonCount?: number
+    /** 无限滚动提前触发距离 */
+    rootMargin?: string
   }>(),
   {
     layout: 'grid',
@@ -47,6 +49,7 @@ const props = withDefaults(
     emptyMessage: '',
     endText: '没有更多了',
     skeletonCount: 12,
+    rootMargin: '200px',
   },
 )
 const emit = defineEmits<{ loadMore: []; retry: []; open: [item: MediaItem] }>()
@@ -76,6 +79,7 @@ let active = true
 const { setup: setupScroll, teardown: teardownScroll } = useInfiniteScroll({
   target: () => (active ? sentinelEl.value : null),
   enabled: () => sentinelActive.value,
+  rootMargin: props.rootMargin,
   onHit: () => {
     console.info('[media-collection] 哨兵触发,请求下一页')
     emit('loadMore')

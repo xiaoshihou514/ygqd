@@ -1,12 +1,27 @@
 <script setup lang="ts">
-import VideoBrowser from '@/components/VideoBrowser.vue'
+import { onMounted } from 'vue'
+import MediaCollection from '@/components/MediaCollection.vue'
+import { useVideoFeed } from '@/composables/useVideoFeed'
+
+const feed = useVideoFeed()
+onMounted(feed.ensureLoaded)
 </script>
 
 <template>
   <div class="video-page-shell">
     <div class="container">
       <h2 class="page-title">视频</h2>
-      <VideoBrowser />
+      <MediaCollection
+        :items="feed.items.value"
+        density="video"
+        root-margin="400px"
+        :loading="feed.loading.value"
+        :loading-more="feed.loadingMore.value"
+        :has-more="feed.hasNext.value"
+        :error="feed.error.value"
+        @load-more="feed.loadMore"
+        @retry="feed.items.value.length ? feed.loadMore() : feed.reload()"
+      />
     </div>
   </div>
 </template>

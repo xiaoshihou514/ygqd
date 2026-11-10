@@ -6,7 +6,6 @@ import { novelAdd, novelSearchPage, searchComics, searchVideos } from '@/service
 import type { ComicItem, NovelHit, SearchParams, SearchResult, VideoCard } from '@/types'
 import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
-import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { useHlibGuard } from '@/composables/useHlibGuard'
 import { formatCount } from '@/utils/formatCount'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
@@ -17,10 +16,9 @@ import { parseSearchScope } from '@/config/sources'
 import SearchForm from '@/components/SearchForm.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComic } from '@/utils/mediaItem'
+import { fromComic, fromVideo } from '@/utils/mediaItem'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
-import VideoCardGrid from '@/components/VideoCardGrid.vue'
 
 defineOptions({ name: 'SearchPage' })
 
@@ -134,8 +132,6 @@ async function loadMore() {
   if (loadingMore.value) return
   if (hasMoreLocal.value) {
     visibleCount.value = Math.min(visibleCount.value + PAGE_SIZE, processedItems.value.length)
-    await nextTick()
-    setupObserver()
     return
   }
   if (!hasNextPage.value || !lastParams.value) return
@@ -153,26 +149,9 @@ async function loadMore() {
     // silently ignore page load failure
   } finally {
     loadingMore.value = false
-    await nextTick()
-    setupObserver()
   }
 }
 
-const videoScroll = useInfiniteScroll({
-  target: () => (scope.value === 'video' ? document.querySelector('.scroll-sentinel') : null),
-  onHit: () => loadMoreVideos(),
-  enabled: () => scope.value === 'video' && videoHasNext.value,
-  rootMargin: '400px',
-})
-
-// 漫画结果的无限滚动由 MediaCollection 内部负责;此处只剩视频范围(批次 2 迁移)
-function setupObserver() {
-  if (scope.value === 'video') videoScroll.setup()
-}
-
-function teardownObserver() {
-  videoScroll.teardown()
-}
 
 watch([minLikes, sortOrder], () => {
   visibleCount.value = PAGE_SIZE
@@ -211,8 +190,6 @@ async function reSearchWithCacheBuster() {
     items.value = []
   } finally {
     loadingMore.value = false
-    await nextTick()
-    setupObserver()
   }
 }
 
@@ -312,7 +289,7 @@ watch(scope, (s) => {
   const kw = sharedKeyword.value.trim()
   if (!kw) return
   if (s === 'video' && videoSearchedKw.value !== kw) {
-    void handleVideoSearch().then(() => nextTick(() => setupObserver()))
+    void handleVideoSearch()
     return
   }
   if (s === 'novel' && novelSearchedKw.value !== kw) void handleNovelSearch()
@@ -324,6 +301,7 @@ const videoPage = ref(1)
 const videoHasNext = ref(false)
 const videoSearching = ref(false)
 const videoError = ref('')
+const videoMediaItems = computed(() => videoItems.value.map((v) => fromVideo(v)))
 
 // ⑬ 视频搜索无限滚动:哨兵滚动加载(视频源无反爬闸,无节流)
 async function loadMoreVideos() {
@@ -355,10 +333,6 @@ async function handleVideoSearch() {
     videoItems.value = res.items
     videoPage.value = 1
     videoHasNext.value = res.pagination.hasNext
-    if (!res.items.length) videoError.value = '没有匹配的视频'
-    // 哨兵在结果渲染后才存在:DOM 更新后重绑 observer(不绑则永不触发)
-    await nextTick()
-    setupObserver()
   } catch (e) {
     videoError.value = errorMessage(e) || '搜索失败'
   } finally {
@@ -464,8 +438,6 @@ async function handleSearch(params: SearchParams, likesFilter: number, order: st
     items.value = []
   } finally {
     loading.value = false
-    await nextTick()
-    setupObserver()
   }
 }
 
@@ -488,18 +460,12 @@ onMounted(() => {
     const saved = restoreSearchState()
     if (saved && lastKeyword.value === keyword) {
       restoreScrollPosition()
-      nextTick(() => {
-        setupObserver()
-      })
     } else {
       clearSavedState()
       searchFromQuery()
     }
   } else if (restoreSearchState()) {
     restoreScrollPosition()
-    nextTick(() => {
-      setupObserver()
-    })
   } else {
     searchFromQuery()
   }
@@ -513,19 +479,14 @@ onActivated(() => {
     return
   }
   restoreScrollPosition()
-  nextTick(() => {
-    setupObserver()
-  })
 })
 
 onDeactivated(() => {
   saveSearchState()
-  teardownObserver()
 })
 
 onUnmounted(() => {
   saveSearchState()
-  teardownObserver()
 })
 
 const resultTitle = computed(() => {
@@ -570,15 +531,21 @@ function goToSplit() {
           :loading="videoSearching"
           @search="handleVideoSearch"
         />
-        <p v-if="videoError" class="scope-error">{{ videoError }}</p>
-        <div v-if="videoSearching && !videoItems.length" class="scope-loading">
-          <LoadingSpinner message="正在搜索视频..." />
-        </div>
-        <VideoCardGrid v-if="videoItems.length" :items="videoItems" class="scope-video-grid" />
-        <div v-if="videoHasNext && videoItems.length" class="scroll-sentinel" />
-        <div v-if="videoSearching && videoItems.length" class="scope-loading">
-          <LoadingSpinner message="正在加载更多..." />
-        </div>
+        <MediaCollection
+          v-if="videoSearchedKw"
+          :items="videoMediaItems"
+          density="video"
+          root-margin="400px"
+          :loading="videoSearching && !videoItems.length"
+          :loading-more="videoSearching && videoItems.length > 0"
+          :has-more="videoHasNext"
+          :error="videoError"
+          empty-title="没有匹配的视频"
+          empty-message="请尝试番号、日文标题或厂商名"
+          class="scope-video-grid"
+          @load-more="loadMoreVideos"
+          @retry="videoItems.length ? loadMoreVideos() : handleVideoSearch()"
+        />
       </template>
 
       <template v-else-if="scope === 'novel'">
@@ -770,9 +737,6 @@ function goToSplit() {
   }
 }
 
-.scroll-sentinel {
-  height: 1px;
-}
 
 
 .search-error-bar {

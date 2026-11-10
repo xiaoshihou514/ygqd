@@ -10,9 +10,8 @@ import { formatTimestamp } from '@/utils/formatTime'
 import type { FavoriteEntry } from '@/types'
 import { useViewHistory } from '@/composables/useViewHistory'
 import ProxyImage from '@/components/ProxyImage.vue'
-import VideoCardGrid from '@/components/VideoCardGrid.vue'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComicHistory } from '@/utils/mediaItem'
+import { fromComicHistory, fromTimeline } from '@/utils/mediaItem'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import type { ItemHistoryEntry } from '@/types'
@@ -38,6 +37,7 @@ const itemLoading = ref(false)
 // 重构笔 4:时间线混排逻辑迁移 useTimeline(行为零变化)
 const { timeline, videoEntries, novelEntries, entryPosition, openTimelineEntry, kindLabel, formatPosition } = useTimeline(history, itemHistory)
 const comicHistoryItems = computed(() => history.value.map(fromComicHistory))
+const videoHistoryItems = computed(() => videoEntries.value.map((e) => fromTimeline(e, { kindBadge: false })))
 // —— 收藏分组(⑯ 关注页重组:收藏并入历史) ——
 const favorites = ref<FavoriteEntry[]>([])
 const favLoading = ref(false)
@@ -137,24 +137,15 @@ onMounted(async () => {
         <MediaCollection v-else :items="comicHistoryItems" density="comic" end-text="" />
       </template>
 
-      <!-- 视频:封面网格(与视频板块 VideoCardGrid 统一,backend 布局建议) -->
+      <!-- 视频:封面网格(统一卡片,含播放进度) -->
       <template v-else-if="scope === 'video'">
-        <LoadingSpinner v-if="itemLoading" message="加载视频记录..." />
-        <EmptyState
-          v-else-if="videoEntries.length === 0"
-          title="还没有视频观看记录"
-          message="播放视频时会自动记录"
-        />
-        <VideoCardGrid
-          v-else
-          :items="videoEntries.map((e) => ({
-            code: e.itemId,
-            title: e.title,
-            thumbnail: e.thumbnail ?? '',
-            tags: [],
-            views: '',
-            likes: '',
-          }))"
+        <MediaCollection
+          :items="videoHistoryItems"
+          density="video"
+          :loading="itemLoading"
+          end-text=""
+          empty-title="还没有视频观看记录"
+          empty-message="播放视频时会自动记录"
         />
       </template>
 

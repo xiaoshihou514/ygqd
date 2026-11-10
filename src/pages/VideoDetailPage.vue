@@ -12,9 +12,8 @@ import '@videojs/html/media/hlsjs-video'
 import '@videojs/html/i18n'
 import type { HlsJsAdapter } from '@videojs/hlsjs-video'
 
-import { fetchVideoDetail, recordVideoWatched, recordItemHistory, videoFollowWorks, videoFollow } from '@/services/api'
-import type { VideoCard, VideoDetail, VideoMetaLink } from '@/types'
-import VideoCardGrid from '@/components/VideoCardGrid.vue'
+import { fetchVideoDetail, recordVideoWatched, recordItemHistory } from '@/services/api'
+import type { VideoDetail, VideoMetaLink } from '@/types'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -33,10 +32,6 @@ async function load() {
   detail.value = null
   loading.value = true
   error.value = ''
-  relatedTarget.value = null
-  relatedWorks.value = []
-  relatedError.value = ''
-  followNotice.value = ''
   try {
     const code = String(route.params.code || '').toLowerCase()
     detail.value = await fetchVideoDetail(code)
@@ -86,72 +81,9 @@ const metaRows = computed(() => {
     .filter((r) => r.links.length > 0)
 })
 
-const relatedTarget = ref<VideoMetaLink | null>(null)
-const relatedWorks = ref<VideoCard[]>([])
-const relatedPage = ref(1)
-const relatedHasNext = ref(false)
-const relatedLoading = ref(false)
-const relatedError = ref('')
-const followNotice = ref('')
-let relatedGen = 0
-
-function sameBase(a: string, b: string): boolean {
-  const base = (c: string) => c.replace('-chinese-subtitle', '')
-  return base(a) === base(b)
-}
-
-async function loadRelated(page: number) {
-  const target = relatedTarget.value
-  const d = detail.value
-  if (!target || !d) return
-  const gen = ++relatedGen
-  relatedLoading.value = true
-  relatedError.value = ''
-  try {
-    const res = await videoFollowWorks('missav', target.kind, target.id, page)
-    if (gen !== relatedGen) return
-    const fresh = res.items.filter((v) => !sameBase(v.code, d.code))
-    if (page === 1) {
-      relatedWorks.value = fresh
-    } else {
-      const seen = new Set(relatedWorks.value.map((v) => v.code))
-      relatedWorks.value.push(...fresh.filter((v) => !seen.has(v.code)))
-    }
-    relatedPage.value = page
-    relatedHasNext.value = res.pagination.hasNext
-  } catch (e) {
-    if (gen !== relatedGen) return
-    relatedError.value = errorMessage(e) || '相似影片加载失败'
-  } finally {
-    if (gen === relatedGen) relatedLoading.value = false
-  }
-}
-
 // 任务 2:点女优/厂商等元数据条目 → 独立视频列表页(非详情页内嵌)
 function selectMeta(link: VideoMetaLink) {
   void router.push(`/videos/target/missav/${link.kind}/${encodeURIComponent(link.id)}`)
-}
-
-function isSelected(link: VideoMetaLink): boolean {
-  const t = relatedTarget.value
-  return !!t && t.kind === link.kind && t.id === link.id
-}
-
-const canFollow = computed(() => {
-  const k = relatedTarget.value?.kind
-  return k === 'maker' || k === 'actress'
-})
-
-/** 关注当前选中的厂商/女优(关注列表可见) */
-async function followSelected() {
-  const t = relatedTarget.value
-  if (!t || !canFollow.value) return
-  try {
-    await videoFollow('missav', t.kind, t.id, t.name)
-    followNotice.value = `已关注「${t.name}」`
-  } catch (e) {
-    relatedError.value = errorMessage(e) || '关注失败,请重试'
-  }
 }
 
 /** hls.js 错误附带的原始数据,403 时含 response.code */
@@ -436,7 +368,6 @@ onBeforeUnmount(() => {
             :key="link.kind + link.id"
             type="button"
             class="meta-link"
-            :class="{ selected: isSelected(link) }"
             @click="selectMeta(link)"
           >
             {{ link.name }}
@@ -444,20 +375,6 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
-      <div v-if="relatedTarget" class="related-block">
-        <div class="related-head">
-          <span class="related-heading">「{{ relatedTarget.name }}」的作品</span>
-          <button v-if="canFollow" type="button" class="related-follow" @click="followSelected">+ 关注</button>
-          <span v-if="followNotice" class="related-notice">{{ followNotice }}</span>
-        </div>
-        <VideoCardGrid v-if="relatedWorks.length" :items="relatedWorks" />
-        <p v-else-if="!relatedLoading && !relatedError" class="related-empty">暂无其它作品</p>
-        <p v-if="relatedError" class="related-empty">{{ relatedError }}</p>
-        <div v-if="relatedLoading" class="related-loading"><LoadingSpinner message="加载相似影片..." /></div>
-        <div v-else-if="relatedHasNext" class="related-more-row">
-          <button type="button" class="related-more" @click="loadRelated(relatedPage + 1)">加载更多</button>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -662,11 +579,6 @@ video-skin:not(:defined) {
   border-color: var(--color-primary);
 }
 
-.meta-link.selected {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-on-primary);
-}
 
 .meta-actors {
   display: flex;
@@ -674,63 +586,12 @@ video-skin:not(:defined) {
   gap: 6px;
 }
 
-.related-block {
-  margin-top: var(--spacing-lg);
-  border-top: 1px solid var(--color-hairline);
-  padding-top: var(--spacing-md);
-}
 
-.related-head {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-sm);
-}
 
-.related-heading {
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
 
-.related-follow {
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--color-primary);
-  background: transparent;
-  color: var(--color-primary);
-  font-size: var(--font-size-fine-print);
-  cursor: pointer;
-}
 
-.related-notice {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
-}
 
-.related-empty {
-  font-size: var(--font-size-caption);
-  color: var(--color-text-secondary);
-  padding: var(--spacing-sm) 0;
-}
 
-.related-loading {
-  padding: var(--spacing-md) 0;
-}
 
-.related-more-row {
-  display: flex;
-  justify-content: center;
-  padding: var(--spacing-md) 0;
-}
 
-.related-more {
-  padding: 6px 18px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--color-hairline);
-  background: transparent;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
 </style>

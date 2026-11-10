@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { videoFollow, videoFollowWorks, videoUnfollow } from '@/services/api'
 import { dedupeByVideoBase } from '@/utils/videoCode'
 import type { FollowTargetEntry, VideoCard } from '@/types'
-import VideoCardGrid from '@/components/VideoCardGrid.vue'
-import LoadingSpinner from '@/components/LoadingSpinner.vue'
-import EmptyState from '@/components/EmptyState.vue'
+import MediaCollection from '@/components/MediaCollection.vue'
+import { fromVideo } from '@/utils/mediaItem'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,6 +21,7 @@ const worksPage = ref(1)
 const worksHasNext = ref(false)
 const worksLoading = ref(false)
 const worksError = ref('')
+const workItems = computed(() => works.value.map((v) => fromVideo(v)))
 
 // 关注状态(详情页/关注 tab 双入口共用的关注与浏览通道)
 const followedEntry = ref<FollowTargetEntry | null>(null)
@@ -48,13 +47,6 @@ async function loadWorks(reset = true) {
     worksLoading.value = false
   }
 }
-
-/** 哨兵滚动加载(视频源无反爬闸,无限滚动无节流) */
-const { setup: setupSentinel } = useInfiniteScroll({
-  target: () => document.querySelector('.target-scroll-sentinel'),
-  onHit: () => loadWorks(false),
-  rootMargin: '400px',
-})
 
 /** 关注/取关(与关注 tab 双向同步:关注后关注列表即时更新) */
 async function toggleFollow() {
@@ -84,9 +76,8 @@ async function toggleFollow() {
 const kindLabel = computed(() => (kind.value === 'maker' ? '厂商' : '女优'))
 const pageTitle = computed(() => `${targetId.value || kindLabel.value}的作品`)
 
-onMounted(async () => {
-  await loadWorks(true)
-  setupSentinel()
+onMounted(() => {
+  void loadWorks(true)
 })
 
 </script>
@@ -106,22 +97,20 @@ onMounted(async () => {
       </button>
     </div>
 
-    <LoadingSpinner v-if="worksLoading && !works.length" message="加载作品..." />
-    <EmptyState v-else-if="worksError && !works.length" title="加载失败" :message="worksError">
-      <button class="retry-btn" @click="loadWorks(true)">重试</button>
-    </EmptyState>
-    <EmptyState v-else-if="!works.length" title="暂无作品" message="该目标下暂无收录作品" />
-
-    <template v-else>
-      <VideoCardGrid :items="works" />
-      <div v-if="worksHasNext" class="target-scroll-sentinel" />
-      <div v-if="worksLoading" class="loading-more">
-        <LoadingSpinner message="正在加载更多..." />
-      </div>
-      <div v-if="!worksHasNext && works.length > 0" class="no-more">
-        <span>已加载全部作品</span>
-      </div>
-    </template>
+    <MediaCollection
+      :items="workItems"
+      density="video"
+      root-margin="400px"
+      :loading="worksLoading && !works.length"
+      :loading-more="worksLoading && works.length > 0"
+      :has-more="worksHasNext"
+      :error="worksError"
+      end-text="已加载全部作品"
+      empty-title="暂无作品"
+      empty-message="该目标下暂无收录作品"
+      @load-more="loadWorks(false)"
+      @retry="loadWorks(!works.length)"
+    />
   </div>
 </template>
 
@@ -185,12 +174,4 @@ onMounted(async () => {
   cursor: default;
 }
 
-.loading-more,
-.no-more {
-  display: flex;
-  justify-content: center;
-  padding: var(--spacing-md) 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-text-secondary);
-}
 </style>

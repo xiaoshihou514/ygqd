@@ -12,7 +12,7 @@ import { useComicViewedIds } from '@/composables/useComicViewedIds'
 import MediaCollection from '@/components/MediaCollection.vue'
 import { fromComic } from '@/utils/mediaItem'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
-import VideoBrowser from '@/components/VideoBrowser.vue'
+import { useVideoFeed } from '@/composables/useVideoFeed'
 import EmptyState from '@/components/EmptyState.vue'
 
 defineOptions({ name: 'HomePage' })
@@ -22,6 +22,7 @@ const HOME_STATE_KEY = 'home_page_state_v2'
 /** 内容分段:漫画/视频/小说(小说源接入前的占位) */
 type ContentSegment = 'comic' | 'video' | 'novel'
 const segment = ref<ContentSegment>('comic')
+const videoFeed = useVideoFeed()
 const SEGMENTS: { key: ContentSegment; label: string }[] = [
   { key: 'comic', label: '漫画' },
   { key: 'video', label: '视频' },
@@ -29,6 +30,7 @@ const SEGMENTS: { key: ContentSegment; label: string }[] = [
 ]
 function switchSegment(key: ContentSegment) {
   segment.value = key
+  if (key === 'video') videoFeed.ensureLoaded()
 }
 
 const MIX_NIACG_CATEGORY = '9'
@@ -312,7 +314,18 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <VideoBrowser v-if="segment === 'video'" />
+      <MediaCollection
+        v-if="segment === 'video'"
+        :items="videoFeed.items.value"
+        density="video"
+        root-margin="400px"
+        :loading="videoFeed.loading.value"
+        :loading-more="videoFeed.loadingMore.value"
+        :has-more="videoFeed.hasNext.value"
+        :error="videoFeed.error.value"
+        @load-more="videoFeed.loadMore"
+        @retry="videoFeed.items.value.length ? videoFeed.loadMore() : videoFeed.reload()"
+      />
 
       <div v-else-if="segment === 'novel'" class="novel-entry">
         <EmptyState

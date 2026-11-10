@@ -12,7 +12,8 @@ import { comicPath } from '@/utils/comicPath'
 import { sourceLabel } from '@/config/sources'
 import type { ComicItem, FavoriteEntry, FollowedAuthor } from '@/types'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComic } from '@/utils/mediaItem'
+import { fromComic, fromVideo } from '@/utils/mediaItem'
+import { dedupeByVideoBase } from '@/utils/videoCode'
 import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -107,11 +108,6 @@ function kindLabel(kind: string): string {
   return kind === 'maker' ? '厂商' : '女优'
 }
 
-/** 视频行标题:剥中字后缀大写(与视频板块展示一致) */
-function basicVideoTitle(code: string): string {
-  return code.replace('-chinese-subtitle', '').toUpperCase()
-}
-
 function isVideoFollowed(targetId: string): boolean {
   return videoFollows.value.some((f) => f.targetId === targetId)
 }
@@ -128,6 +124,8 @@ const targetWorksPage = ref(1)
 const targetWorksHasNext = ref(false)
 const targetWorksLoading = ref(false)
 const targetWorksError = ref('')
+// 同番号变体按需求 12 口径归并(中字>有码>无码),与目标作品页一致
+const targetWorkItems = computed(() => dedupeByVideoBase(targetWorks.value).map((v) => fromVideo(v)))
 
 async function loadVideoFollows() {
   if (videoFollowsLoading.value) return
@@ -604,25 +602,19 @@ async function handleExport() {
                 <span class="works-title">{{ selectedVideoTarget.displayName }} 的作品</span>
                 <button type="button" class="works-close" @click="selectedVideoTarget = null">×</button>
               </div>
-              <LoadingSpinner v-if="targetWorksLoading" message="加载作品..." />
-              <p v-else-if="targetWorksError" class="works-error">{{ targetWorksError }}</p>
-              <div v-else-if="targetWorks.length" class="works-rows">
-                <button
-                  v-for="v in targetWorks"
-                  :key="v.code"
-                  type="button"
-                  class="work-row"
-                  @click="router.push(`/videos/${v.code}`)"
-                >
-                  <span class="work-title">{{ basicVideoTitle(v.code) }}</span>
-                  <span v-if="v.chinese" class="work-cs">中字</span>
-                </button>
-                <div v-if="targetWorksHasNext" class="works-more-row">
-                  <button type="button" class="works-more-btn" :disabled="targetWorksLoading" @click="loadTargetWorks(false)">
-                    {{ targetWorksLoading ? '加载中…' : '加载更多' }}
-                  </button>
-                </div>
-              </div>
+              <MediaCollection
+                :items="targetWorkItems"
+                density="video"
+                pager="button"
+                :loading="targetWorksLoading && !targetWorks.length"
+                :loading-more="targetWorksLoading && targetWorks.length > 0"
+                :has-more="targetWorksHasNext"
+                :error="targetWorksError"
+                end-text=""
+                empty-title="暂无作品"
+                @load-more="loadTargetWorks(false)"
+                @retry="loadTargetWorks(!targetWorks.length)"
+              />
             </template>
           </template>
         </template>
@@ -1145,68 +1137,13 @@ async function handleExport() {
   padding: 0 4px;
 }
 
-.works-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
 
-.work-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 10px var(--spacing-md);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s;
-}
 
-.work-row:hover {
-  border-color: var(--color-primary);
-}
 
-.work-title {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.work-cs {
-  flex-shrink: 0;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: #e8590c;
-  color: #fff;
-  font-size: 10px;
-}
 
-.works-more-row {
-  display: flex;
-  justify-content: center;
-  padding: var(--spacing-sm) 0;
-}
 
-.works-more-btn {
-  padding: 8px var(--spacing-lg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-primary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
 
-.works-more-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
 
 .author-chips-row {
   display: flex;

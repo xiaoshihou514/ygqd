@@ -4,7 +4,7 @@
  * -uncensored-leak-chinese-subtitle(无码中字)。
  */
 
-/** 剥全部后缀并大写:展示用基础番号(VideoBrowser/VideoCardGrid 共用) */
+/** 剥全部后缀并大写:展示用基础番号(MediaCard 适配器与各页共用) */
 export function videoBaseCode(code: string): string {
   return code
     .replace('-uncensored-leak-chinese-subtitle', '')

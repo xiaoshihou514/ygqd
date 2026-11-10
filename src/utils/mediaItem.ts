@@ -207,7 +207,8 @@ export function timelineProgressText(e: Pick<TimelineEntry, 'kind' | 'progress'>
 
 const KIND_LABEL: Record<MediaKind, string> = { comic: '漫画', video: '视频', novel: '小说' }
 
-export function fromTimeline(e: TimelineEntry): MediaItem {
+/** kindBadge:混排时间线显示「漫画/视频/小说」角标;单板块分组里可关掉 */
+export function fromTimeline(e: TimelineEntry, opts: { kindBadge?: boolean } = {}): MediaItem {
   let to: RouteLocationRaw
   let cover: MediaCover | undefined
   if (e.kind === 'comic') {
@@ -225,7 +226,7 @@ export function fromTimeline(e: TimelineEntry): MediaItem {
     title: e.title,
     subtitle: e.kind === 'video' ? videoBaseCode(e.itemId) : undefined,
     cover,
-    badges: [{ text: KIND_LABEL[e.kind], tone: 'neutral' }],
+    badges: opts.kindBadge === false ? undefined : [{ text: KIND_LABEL[e.kind], tone: 'neutral' }],
     progress: timelineProgressText(e) || undefined,
     time: e.viewedAt,
     to,
