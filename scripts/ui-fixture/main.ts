@@ -44,7 +44,7 @@ const videos: MediaItem[] = [
   ),
 )
 const novels: MediaItem[] = Array.from({ length: 5 }, (_, i) =>
-  fromNovelHit({ id: `${1000 + i}`, title: `占位小说 ${i}`, author: '作者', tags: ['甲', '乙'], views: '119' }, { rank: i + 1 }),
+  fromNovelHit({ id: `${1000 + i}`, title: `占位小说 ${i}`, author: '作者', tags: ['甲', '乙'], views: '119', favorites: '12', wordCount: '8,391字' }, { rank: i + 1 }),
 )
 const shelf = fromNovelSeries({ id: '9', title: '书架系列', author: '作者', chapters: [{ id: 'a', order: 1, title: '一' }], addedAt: 0 }, [3, 1])
 const now = Date.now()
@@ -124,6 +124,12 @@ function measure() {
       hrefs: Array.from(root.querySelectorAll('a.media-hit[href]')).map((a) => a.getAttribute('href')),
       coverRatio: cover ? +(cover.getBoundingClientRect().height / cover.getBoundingClientRect().width).toFixed(2) : 0,
       overflowX: root.scrollWidth > root.clientWidth + 1,
+      statGap: (() => {
+        const items = root.querySelectorAll('.media-stats .stat-item')
+        if (items.length < 2) return -1
+        return Math.round(items[1]!.getBoundingClientRect().left - items[0]!.getBoundingClientRect().right)
+      })(),
+      statIcons: Array.from(root.querySelector('.media-card .media-stats')?.querySelectorAll('svg') ?? []).map((g) => g.getAttribute('data-icon')),
     }
   }
   const pre = document.createElement('pre')

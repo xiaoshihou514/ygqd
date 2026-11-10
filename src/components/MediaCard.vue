@@ -30,8 +30,15 @@ const showCover = computed(() => !!props.item.cover?.src && !imgError.value)
 const tags = computed(() => (props.item.tags ?? []).slice(0, TAG_LIMIT))
 // 统计项图标化(用户反馈:♥/▶ unicode 退化恢复 SVG 图标形态)
 interface StatEntry {
-  icon: 'heart' | 'eye'
+  /** 点赞=心(点赞色) / 阅读·播放=眼睛 / 收藏=星;章节数无图标 */
+  icon?: 'heart' | 'eye' | 'star'
   text: string
+}
+const STAT_ICON_PATH: Record<NonNullable<StatEntry['icon']>, string> = {
+  heart:
+    'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z',
+  eye: 'M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z',
+  star: 'M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z',
 }
 const statEntries = computed<StatEntry[]>(() => {
   const s = props.item.stats
@@ -39,8 +46,8 @@ const statEntries = computed<StatEntry[]>(() => {
   const entries: StatEntry[] = []
   if (s.likes) entries.push({ icon: 'heart', text: formatCount(s.likes) })
   if (s.views) entries.push({ icon: 'eye', text: formatCount(s.views) })
-  if (s.favorites) entries.push({ icon: 'heart', text: formatCount(s.favorites) })
-  if (s.chapters) entries.push({ icon: 'heart', text: `${s.chapters} 章` })
+  if (s.favorites) entries.push({ icon: 'star', text: formatCount(s.favorites) })
+  if (s.chapters) entries.push({ text: `${s.chapters} 章` })
   return entries
 })
 const extraText = computed(() => (props.item.extra ?? []).join(' · '))
@@ -173,9 +180,8 @@ onBeforeUnmount(() => {
         </span>
         <span v-if="item.viewed" class="media-viewed">{{ viewedText }}</span>
         <span v-if="showStats && layout === 'grid' && item.kind === 'video'" class="media-overlay-stat">
-          <span v-for="(st, si) in statEntries" :key="si" class="stat-item">
-            <svg v-if="st.icon === 'heart'" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
-            <svg v-else width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>
+          <span v-for="(st, si) in statEntries" :key="si" class="stat-item" :class="st.icon && `stat-${st.icon}`">
+            <svg v-if="st.icon" :data-icon="st.icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path :d="STAT_ICON_PATH[st.icon]" /></svg>
             {{ st.text }}
           </span>
           <span v-if="extraText">{{ extraText }}</span>
@@ -202,9 +208,8 @@ onBeforeUnmount(() => {
           v-if="showStats && !(layout === 'grid' && item.kind === 'video')"
           class="media-stats"
         >
-          <span v-for="(st, si) in statEntries" :key="si" class="stat-item">
-            <svg v-if="st.icon === 'heart'" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
-            <svg v-else width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>
+          <span v-for="(st, si) in statEntries" :key="si" class="stat-item" :class="st.icon && `stat-${st.icon}`">
+            <svg v-if="st.icon" :data-icon="st.icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path :d="STAT_ICON_PATH[st.icon]" /></svg>
             {{ st.text }}
           </span>
           <span v-if="extraText">{{ extraText }}</span>
@@ -360,6 +365,9 @@ onBeforeUnmount(() => {
 }
 
 .media-overlay-stat {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
   position: absolute;
   right: var(--spacing-xs);
   bottom: var(--spacing-xs);
@@ -404,15 +412,27 @@ onBeforeUnmount(() => {
 .stat-item {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--spacing-xxs);
 }
 
 .stat-item svg {
   flex-shrink: 0;
-  opacity: 0.85;
+}
+
+/* 点赞心用点赞色(旧漫画卡片口径);视频封面遮罩上保持白色 */
+.media-stats .stat-heart svg {
+  color: var(--color-like);
 }
 
 .media-subtitle,
+.media-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: var(--spacing-xs);
+  row-gap: 2px;
+}
+
 .media-stats,
 .media-progress {
   font-size: var(--font-size-fine-print);
