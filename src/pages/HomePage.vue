@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchCategoryList, fetchBikaCategories, fetchBikaLeaderboard } from '@/services/api'
@@ -10,7 +9,8 @@ import { appendDistinct, interleaveSources } from '@/utils/merge'
 import { HOME_TABS, normalizeCategoryLabel, type HomeTab } from '@/config/sources'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useComicViewedIds } from '@/composables/useComicViewedIds'
-import ComicGrid from '@/components/ComicGrid.vue'
+import MediaCollection from '@/components/MediaCollection.vue'
+import { fromComic } from '@/utils/mediaItem'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import VideoBrowser from '@/components/VideoBrowser.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -90,6 +90,9 @@ const filteredItems = computed(() => {
 })
 
 const viewedIds = useComicViewedIds(filteredItems)
+const comicMediaItems = computed(() =>
+  filteredItems.value.map((c) => fromComic(c, { viewed: viewedIds.value.has(`${c.source}:${c.id}`) })),
+)
 
 /** 混合流:两个源同页并发交错;哔咔不可用时安静降级为单源 */
 async function loadMixPage(state: TabState, reset: boolean) {
@@ -188,11 +191,6 @@ async function loadNextPage() {
   }
 }
 
-const { setup: setupObserver, teardown: teardownObserver } = useInfiniteScroll({
-  target: () => document.querySelector('.scroll-sentinel'),
-  onHit: () => loadNextPage(),
-})
-
 function retry() {
   loading.value = true
   error.value = ''
@@ -236,7 +234,6 @@ async function switchTab(key: string) {
   }
   await nextTick()
   window.scrollTo(0, stateFor(key).scrollY)
-  setupObserver()
 }
 
 function saveHomeState() {
@@ -282,23 +279,19 @@ onMounted(() => {
   ready.then(() => {
     loading.value = false
     restoreHomeScroll()
-    setupObserver()
   })
 })
 
 onActivated(() => {
   restoreHomeScroll()
-  nextTick(setupObserver)
 })
 
 onDeactivated(() => {
   saveHomeState()
-  teardownObserver()
 })
 
 onUnmounted(() => {
   saveHomeState()
-  teardownObserver()
 })
 </script>
 
@@ -380,31 +373,18 @@ onUnmounted(() => {
           <button class="mix-notice-btn" @click="goToSettings">去设置</button>
         </div>
 
-        <ComicGrid :items="filteredItems" :viewed-ids="viewedIds" />
-
-        <div v-if="loadingMore" class="loading-more">
-          <LoadingSpinner message="正在加载更多..." />
-        </div>
-
-        <div
-          v-if="hasNext"
-          class="scroll-sentinel"
+        <MediaCollection
+          :items="comicMediaItems"
+          density="comic"
+          :loading-more="loadingMore"
+          :has-more="hasNext"
+          :error="error"
+          end-text="已加载全部漫画"
+          empty-title="暂无内容"
+          :empty-message="items.length ? '当前星标筛选下没有内容' : '未能获取到漫画内容'"
+          @load-more="loadNextPage"
+          @retry="loadNextPage"
         />
-
-        <div v-if="!hasNext && items.length > 0" class="no-more">
-          <span>已加载全部漫画</span>
-        </div>
-
-        <div v-if="error && items.length > 0" class="load-error">
-          <span>{{ error }}</span>
-          <button class="retry-btn" @click="loadNextPage">
-            重试
-          </button>
-        </div>
-
-        <div v-if="items.length === 0" class="home-empty">
-          <EmptyState title="暂无内容" message="未能获取到漫画内容" />
-        </div>
       </template>
       </template>
     </div>
@@ -516,30 +496,9 @@ onUnmounted(() => {
   background: transparent;
 }
 
-.loading-more {
-  padding: var(--spacing-lg) 0;
-}
 
-.scroll-sentinel {
-  height: 1px;
-}
 
-.no-more {
-  text-align: center;
-  padding: var(--spacing-lg) 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-text-muted);
-}
 
-.load-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-md) 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-error);
-}
 
 .retry-btn {
   padding: var(--spacing-xs) var(--spacing-lg);

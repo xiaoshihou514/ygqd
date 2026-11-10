@@ -16,7 +16,8 @@ import type { SourceId } from '@/config/sources'
 import { parseSearchScope } from '@/config/sources'
 import SearchForm from '@/components/SearchForm.vue'
 import SearchInput from '@/components/SearchInput.vue'
-import ComicGrid from '@/components/ComicGrid.vue'
+import MediaCollection from '@/components/MediaCollection.vue'
+import { fromComic } from '@/utils/mediaItem'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import VideoCardGrid from '@/components/VideoCardGrid.vue'
@@ -124,6 +125,9 @@ const processedItems = computed(() => {
 const visibleItems = computed(() => processedItems.value.slice(0, visibleCount.value))
 
 const hasMoreLocal = computed(() => visibleCount.value < processedItems.value.length)
+const comicMediaItems = computed(() =>
+  visibleItems.value.map((c) => fromComic(c, { viewed: viewedIds.value.has(`${c.source}:${c.id}`) })),
+)
 
 
 async function loadMore() {
@@ -161,21 +165,13 @@ const videoScroll = useInfiniteScroll({
   rootMargin: '400px',
 })
 
-const comicScroll = useInfiniteScroll({
-  target: () => (scope.value !== 'video' ? document.querySelector('.scroll-sentinel') : null),
-  onHit: () => loadMore(),
-  enabled: () => scope.value !== 'video' && (hasMoreLocal.value || hasNextPage.value),
-  rootMargin: '200px',
-})
-
+// 漫画结果的无限滚动由 MediaCollection 内部负责;此处只剩视频范围(批次 2 迁移)
 function setupObserver() {
   if (scope.value === 'video') videoScroll.setup()
-  else comicScroll.setup()
 }
 
 function teardownObserver() {
   videoScroll.teardown()
-  comicScroll.teardown()
 }
 
 watch([minLikes, sortOrder], () => {
@@ -674,22 +670,15 @@ function goToSplit() {
             </button>
           </div>
 
-          <ComicGrid v-if="visibleItems.length > 0" :items="visibleItems" :viewed-ids="viewedIds" />
-
-          <div v-if="hasMoreLocal || hasNextPage" class="scroll-sentinel" />
-
-          <div v-if="loadingMore" class="loading-more">
-            <LoadingSpinner message="加载更多..." />
-          </div>
-
-          <div v-if="!hasMoreLocal && !hasNextPage && processedItems.length > 0" class="no-more">
-            <span>已加载全部 {{ processedItems.length }} 条结果</span>
-          </div>
-
-          <EmptyState
-            v-if="processedItems.length === 0 && !loading"
-            title="未找到相关内容"
-            message="请尝试更换关键词或调整搜索范围"
+          <MediaCollection
+            :items="comicMediaItems"
+            density="comic"
+            :loading-more="loadingMore"
+            :has-more="hasMoreLocal || hasNextPage"
+            :end-text="`已加载全部 ${processedItems.length} 条结果`"
+            empty-title="未找到相关内容"
+            empty-message="请尝试更换关键词或调整搜索范围"
+            @load-more="loadMore"
           />
         </div>
       </template>
@@ -785,9 +774,6 @@ function goToSplit() {
   height: 1px;
 }
 
-.loading-more {
-  padding: var(--spacing-lg) 0;
-}
 
 .search-error-bar {
   text-align: center;
@@ -799,12 +785,6 @@ function goToSplit() {
   border-radius: var(--radius-sm);
 }
 
-.no-more {
-  text-align: center;
-  padding: var(--spacing-lg) 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-text-muted);
-}
 /* ============ 统一搜索范围(批次 1):chips/表单/结果行/加载更多 ============ */
 .scope-bar {
   display: flex;

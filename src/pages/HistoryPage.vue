@@ -11,7 +11,8 @@ import type { FavoriteEntry } from '@/types'
 import { useViewHistory } from '@/composables/useViewHistory'
 import ProxyImage from '@/components/ProxyImage.vue'
 import VideoCardGrid from '@/components/VideoCardGrid.vue'
-import ComicGrid from '@/components/ComicGrid.vue'
+import MediaCollection from '@/components/MediaCollection.vue'
+import { fromComicHistory } from '@/utils/mediaItem'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import type { ItemHistoryEntry } from '@/types'
@@ -35,7 +36,8 @@ const itemHistory = ref<ItemHistoryEntry[]>([])
 const itemLoading = ref(false)
 
 // 重构笔 4:时间线混排逻辑迁移 useTimeline(行为零变化)
-const { comicGridItems, timeline, videoEntries, novelEntries, entryPosition, openTimelineEntry, kindLabel, formatPosition } = useTimeline(history, itemHistory)
+const { timeline, videoEntries, novelEntries, entryPosition, openTimelineEntry, kindLabel, formatPosition } = useTimeline(history, itemHistory)
+const comicHistoryItems = computed(() => history.value.map(fromComicHistory))
 // —— 收藏分组(⑯ 关注页重组:收藏并入历史) ——
 const favorites = ref<FavoriteEntry[]>([])
 const favLoading = ref(false)
@@ -132,7 +134,7 @@ onMounted(async () => {
           message="查看漫画详情时会自动记录"
         />
 
-        <ComicGrid v-else :items="comicGridItems" />
+        <MediaCollection v-else :items="comicHistoryItems" density="comic" end-text="" />
       </template>
 
       <!-- 视频:封面网格(与视频板块 VideoCardGrid 统一,backend 布局建议) -->

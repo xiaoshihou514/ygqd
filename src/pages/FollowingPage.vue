@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { formatCount } from '@/utils/formatCount'
 import { videoFollow, videoFollowList, videoFollowTargets, videoFollowWorks, videoUnfollow as apiVideoUnfollow, novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
 import type { AuthorFollow, FollowTargetEntry, FollowTargetItem, NovelHit, VideoCard } from '@/types'
@@ -12,7 +11,8 @@ import { datedJsonFilename, exportJson, type ExportResult } from '@/utils/export
 import { comicPath } from '@/utils/comicPath'
 import { sourceLabel } from '@/config/sources'
 import type { ComicItem, FavoriteEntry, FollowedAuthor } from '@/types'
-import ComicGrid from '@/components/ComicGrid.vue'
+import MediaCollection from '@/components/MediaCollection.vue'
+import { fromComic } from '@/utils/mediaItem'
 import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -256,6 +256,7 @@ const allWorks = computed<ComicItem[]>(() => {
   return merged.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))
 })
 
+const allWorkItems = computed(() => allWorks.value.map((c) => fromComic(c)))
 const hasMoreWorks = computed(() =>
   followed.value.some((fa) => {
     const state = authorWorks.value[fa.author]
@@ -268,8 +269,6 @@ onMounted(async () => {
   await Promise.all([load(), loadNovelAuthors(true), loadVideoFollows()])
   if (followed.value.length > 0) {
     await loadAllAuthors()
-    await nextTick()
-    setupObserver()
   }
 })
 
@@ -365,8 +364,6 @@ async function loadAllAuthors(force = false) {
   await Promise.all(workers)
   syncing.value = false
   syncProgress.value = ''
-  await nextTick()
-  setupObserver()
 }
 
 async function loadNextPage() {
@@ -419,7 +416,6 @@ async function switchTab(tab: FollowingTab) {
   activeTab.value = tab
   await nextTick()
   window.scrollTo(0, tabScroll[tab])
-  setupObserver()
 }
 
 /** 顶部刷新:按当前视图分流 */
@@ -427,11 +423,6 @@ function handleRefresh() {
   void loadAllAuthors(true)
 }
 
-const { setup: setupObserver } = useInfiniteScroll({
-  target: () => document.querySelector('.scroll-sentinel'),
-  onHit: () => loadNextPage(),
-  enabled: () => hasMoreWorks.value && !syncing.value,
-})
 
 function goToAuthor(author: string) {
   router.push({ name: 'search', query: { keyword: author, show: 'title,text,keyboard,ftitle' } })
@@ -530,17 +521,17 @@ async function handleExport() {
               </span>
             </div>
             <p v-if="syncing && syncProgress" class="sync-progress">{{ syncProgress }}</p>
-            <ComicGrid v-if="allWorks.length" :items="allWorks" />
-            <LoadingSpinner v-else-if="syncing" message="正在加载作品..." />
-            <EmptyState v-else-if="!syncing && !allWorks.length" title="暂无作品" message="未能获取到关注作者的作品" />
-
-            <div v-if="loadingMore" class="loading-more">
-              <LoadingSpinner message="正在加载更多..." />
-            </div>
-            <div v-if="!syncing && !loadingMore && !hasMoreWorks && allWorks.length" class="no-more">
-              <span>已加载全部作品</span>
-            </div>
-            <div v-if="hasMoreWorks && !syncing" class="scroll-sentinel" />
+            <MediaCollection
+              :items="allWorkItems"
+              density="comic"
+              :loading="syncing"
+              :loading-more="loadingMore"
+              :has-more="hasMoreWorks && !syncing"
+              end-text="已加载全部作品"
+              empty-title="暂无作品"
+              empty-message="未能获取到关注作者的作品"
+              @load-more="loadNextPage"
+            />
           </template>
         </template>
 
@@ -900,20 +891,8 @@ async function handleExport() {
   padding: var(--spacing-md);
 }
 
-.loading-more {
-  padding: var(--spacing-lg) 0;
-}
 
-.scroll-sentinel {
-  height: 1px;
-}
 
-.no-more {
-  padding: var(--spacing-lg) 0;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-caption);
-  text-align: center;
-}
 
 @media (max-width: 560px) {
   .author-header {

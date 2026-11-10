@@ -25,21 +25,6 @@ export function useTimeline(
 ) {
   const router = useRouter()
 
-  /** 漫画分组网格数据(ComicGrid 形态适配) */
-  const comicGridItems = computed(() =>
-    history.value.map((h) => ({
-      source: h.source,
-      id: h.comicId,
-      title: h.title,
-      thumbnail: h.thumbnail,
-      category: '',
-      categoryId: h.categoryId,
-      tags: [] as string[],
-      likes: '',
-      link: '',
-    })),
-  )
-
   /** 三板块时间线混排:viewedAt 降序交错 */
   const timeline = computed<TimelineEntry[]>(() => {
     const comicEntries: TimelineEntry[] = history.value.map((h) => ({
@@ -132,7 +117,6 @@ export function useTimeline(
   }
 
   return {
-    comicGridItems,
     timeline,
     videoEntries,
     novelEntries,
