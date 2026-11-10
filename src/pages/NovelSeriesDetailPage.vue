@@ -76,13 +76,20 @@ function startReading() {
 }
 
 /** 关注作者:未入库浏览态的收藏动作(批次 2 关注 tab 小说分组数据源) */
+/** 未入库浏览态的关注动作(反馈在按钮内闭环,不污染页级错误) */
+const followBusy = ref(false)
+const followError = ref('')
 async function followNovelAuthor() {
   const a = series.value?.author
-  if (!a || authorFollowed.value) return
+  if (!a || authorFollowed.value || followBusy.value) return
+  followBusy.value = true
+  followError.value = ''
   try {
     await novelFollowAuthor(a, a)
   } catch (e) {
-    error.value = errorMessage(e) || '关注失败,请重试'
+    followError.value = errorMessage(e) || '关注失败,请重试'
+  } finally {
+    followBusy.value = false
   }
 }
 

@@ -198,14 +198,22 @@ function goChapter(index: number) {
   void loadPage()
 }
 
-/** 阅读中关注作者:复用关注机制(关注后「关注」tab 可跟踪新作品) */
+/** 阅读中关注作者:复用关注机制(关注后「关注」tab 可跟踪新作品)。
+ *  反馈在按钮内闭环(followError/followBusy),不污染页级阅读错误 */
+const followBusy = ref(false)
+const followError = ref('')
 async function followNovelAuthor() {
   const a = series.value?.author
-  if (!a || novelFollowedIds.value.has(a)) return
+  if (!a || novelFollowedIds.value.has(a) || followBusy.value) return
+  followBusy.value = true
+  followError.value = ''
   try {
     await novelFollowAuthor(a, a)
+    novelFollowedIds.value.add(a)
   } catch (e) {
-    error.value = errorMessage(e) || '关注失败,请重试'
+    followError.value = errorMessage(e) || '关注失败,请重试'
+  } finally {
+    followBusy.value = false
   }
 }
 
@@ -295,11 +303,11 @@ onUnmounted(() => {
         <button
           v-if="!inShelf && series?.author"
           class="hdr-btn"
-          :disabled="authorFollowed"
-          :title="authorFollowed ? '已关注该作者' : `关注 ${series.author}`"
+          :disabled="authorFollowed || followBusy"
+          :title="followError || (authorFollowed ? '已关注该作者' : `关注 ${series.author}`)"
           @click="followNovelAuthor"
         >
-          {{ authorFollowed ? '已关注' : '+ 关注作者' }}
+          {{ followError || (authorFollowed ? '已关注' : followBusy ? '关注中…' : '+ 关注作者') }}
         </button>
         <button
           class="hdr-btn"

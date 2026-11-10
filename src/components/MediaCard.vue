@@ -30,8 +30,8 @@ const showCover = computed(() => !!props.item.cover?.src && !imgError.value)
 const tags = computed(() => (props.item.tags ?? []).slice(0, TAG_LIMIT))
 // 统计项图标化(用户反馈:♥/▶ unicode 退化恢复 SVG 图标形态)
 interface StatEntry {
-  /** 点赞=心(点赞色) / 阅读·播放=眼睛 / 收藏=星;章节数无图标 */
-  icon?: 'heart' | 'eye' | 'star'
+  /** 点赞=心(点赞色) / 阅读·播放=眼睛;收藏也用红心(用户口径),章节数无图标 */
+  icon?: 'heart' | 'eye'
   text: string
 }
 // 图标规则简化(用户口径):点赞红心、收藏红心、阅读眼睛
