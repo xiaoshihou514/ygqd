@@ -46,6 +46,11 @@
   --color-tag-text: var(--color-ink-muted-48);
   --color-border: var(--color-hairline);
   --color-like: #ff4757;
+  /* 媒体卡片角标(三板块统一卡片 MediaCard;明暗两态通用) */
+  --color-badge-cs: #e8590c;
+  --color-badge-leak: #6741d9;
+  --color-badge-viewed: #9be9a8;
+  --color-scrim: rgba(0, 0, 0, 0.65);
   --color-error: #ff4757;
   --color-tab-bar-bg: rgba(255, 255, 255, 0.92);
 

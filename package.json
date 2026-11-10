@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
+    "ui:fixture": "node scripts/ui-fixture/run.mjs",
     "lint": "eslint . --fix",
     "format": "prettier --write src/",
     "tauri": "tauri",
