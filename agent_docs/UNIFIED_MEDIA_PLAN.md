@@ -158,3 +158,15 @@ frontend-dev 过目补充（已确认有效，纳入实施约束）：
 - 首页视频段切走再切回不再重新抓取最新流（数据由 useVideoFeed 保留在首页实例中）；
   需要最新数据时用错误重试或下拉刷新类操作（后续按需补「刷新」入口）。
 - 列表翻页失败不再整块替换为错误页：已有内容保留，顶部显示错误条 + 重试。
+
+## 8. 实施结果
+| 批次 | 提交 | 删除 |
+|---|---|---|
+| 0 基础 | f0f5d33 | — |
+| 1 漫画 | 7b5d065 | ComicGrid、ComicCard |
+| 2 视频 | 2aa0baa | VideoBrowser、VideoCardGrid（另删详情页失效的内嵌相关作品区） |
+| 3 小说 | c02b21f | NovelSeriesCard |
+| 4 历史行式 | bbd3eca | TimelineRow、TimelineList、Pagination |
+| 5 收尾 | 本笔 | 新组件字号/间距 token 化，ARCHITECTURE 组件章节更新 |
+
+卡片实现 7 套 → 1 套；列表编排手写 → 1 个容器；全局 `querySelector('.scroll-sentinel')` 全部消失。

@@ -40,9 +40,22 @@ Vue 页面/组件 ──invoke──▶ Rust commands ──▶ sources/* 抓取
   `/`（首页，内容分段：漫画/视频/小说）、`/search`、`/comic/:source/:categoryId/:id`、
   `/videos` 与 `/videos/:code`（视频列表/详情）、`/novels` 与 `/novels/:id`
   （小说书架/阅读器）、`/split`、`/following`、`/history`、`/settings`。
-- 首页顶部为内容分段控件：漫画段沿用源分类 tab 组；视频段内嵌 `VideoBrowser`；
+- 首页顶部为内容分段控件：漫画段沿用源分类 tab 组；视频段为最新流（`useVideoFeed`）；
   小说段为书架入口卡片。底部导航五 tab：推荐/搜索/关注/历史/设置。
 - `composables/`：本地偏好持久化（浏览已读、搜索历史、标签黑名单、主题等）。
+- **媒体列表统一体系（唯一实现，勿另起卡片/列表）**：漫画/视频/小说在推荐、榜单、
+  搜索、关注、历史、收藏、目标作品等全部场景共用
+  - `utils/mediaItem.ts`：统一条目模型 `MediaItem` 与适配函数（`fromComic`/
+    `fromComicHistory`/`fromFavorite`/`fromVideo`/`fromNovelHit`/`fromNovelSeries`/
+    `fromTimeline`）——板块差异（封面代理来源、中字/无码角标、小说占位、进度文案、
+    漫画路由 categoryId、小说点击去向）只在这里处理；
+  - `components/MediaCard.vue`：唯一卡片（grid/row 两种布局，actions 插槽；漫画长按
+    拉黑弹层 `TagBlacklistSheet.vue`）；
+  - `components/MediaCollection.vue`：唯一编排容器（骨架/空态/错误与重试/无限滚动或
+    按钮翻页）。无限滚动哨兵常驻 DOM、v-show 显隐、模板 ref，keep-alive 激活/失活
+    自动重绑/解绑；限速、去重、本地分页留在页面层。
+  - 回归护栏：`npm run ui:fixture`（真实组件 + 假数据，无头 Chromium 400/1200px 断言）。
+  方案与迁移记录见 `UNIFIED_MEDIA_PLAN.md`。
 - `components/ProxyImage.vue`：封面统一经 `fetch_image`/`fetch_video_image`
   取回二进制转 Blob URL，解决防盗链。
 - `config/sources.ts`：`SourceId`（`niacg`/`bika`）与路由参数收敛

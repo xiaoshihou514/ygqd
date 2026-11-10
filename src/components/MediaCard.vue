@@ -300,7 +300,7 @@ onBeforeUnmount(() => {
 .media-badge {
   padding: 1px 7px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-semibold);
   line-height: 1.6;
   white-space: nowrap;
@@ -337,7 +337,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: var(--color-scrim);
   color: var(--color-badge-viewed);
-  font-size: 11px;
+  font-size: var(--font-size-micro);
 }
 
 .media-overlay-stat {
@@ -348,14 +348,14 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: var(--color-scrim);
   color: var(--color-on-primary);
-  font-size: 11px;
+  font-size: var(--font-size-micro);
 }
 
 /* ───── 文字区 ───── */
 .media-body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--spacing-xxs);
   min-width: 0;
 }
 
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: var(--color-tag-bg);
   color: var(--color-tag-text);
-  font-size: 11px;
+  font-size: var(--font-size-micro);
   white-space: nowrap;
 }
 

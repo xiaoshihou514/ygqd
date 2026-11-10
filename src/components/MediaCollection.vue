@@ -177,7 +177,7 @@ onDeactivated(() => {
 /* 漫画:沿用用户习惯的 6→5→4→3→2 列密度 */
 .layout-grid.density-comic .mc-items {
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--spacing-md);
 }
 
 @media (max-width: 1200px) {
@@ -195,7 +195,7 @@ onDeactivated(() => {
 @media (max-width: 768px) {
   .layout-grid.density-comic .mc-items {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+    gap: var(--spacing-sm);
   }
 }
 
