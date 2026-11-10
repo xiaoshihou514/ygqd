@@ -630,7 +630,7 @@ async function handleExport() {
                 v-for="a in novelAuthors"
                 :key="a.authorId"
                 type="button"
-                class="novel-author-chip"
+                class="author-chip novel-author-chip"
                 :class="{ active: selectedNovelAuthor?.authorId === a.authorId }"
                 @click="selectNovelAuthor(a)"
               >
@@ -783,19 +783,6 @@ async function handleExport() {
   margin-bottom: var(--spacing-md);
 }
 
-.novel-author-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
 
 .novel-author-chip:hover,
 .novel-author-chip.active {
