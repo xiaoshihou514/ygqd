@@ -28,17 +28,24 @@ const TAG_LIMIT = 3
 
 const showCover = computed(() => !!props.item.cover?.src && !imgError.value)
 const tags = computed(() => (props.item.tags ?? []).slice(0, TAG_LIMIT))
-const statsText = computed(() => [baseStats.value, ...(props.item.extra ?? [])].filter(Boolean).join(' · '))
-const baseStats = computed(() => {
+// 统计项图标化(用户反馈:♥/▶ unicode 退化恢复 SVG 图标形态)
+interface StatEntry {
+  icon: 'heart' | 'eye'
+  text: string
+}
+const statEntries = computed<StatEntry[]>(() => {
   const s = props.item.stats
-  if (!s) return ''
-  const parts: string[] = []
-  if (s.likes) parts.push(`♥ ${formatCount(s.likes)}`)
-  if (s.views) parts.push(`▶ ${formatCount(s.views)}`)
-  if (s.favorites) parts.push(`☆ ${formatCount(s.favorites)}`)
-  if (s.chapters) parts.push(`${s.chapters} 章`)
-  return parts.join('  ')
+  if (!s) return []
+  const entries: StatEntry[] = []
+  if (s.likes) entries.push({ icon: 'heart', text: formatCount(s.likes) })
+  if (s.views) entries.push({ icon: 'eye', text: formatCount(s.views) })
+  if (s.favorites) entries.push({ icon: 'heart', text: formatCount(s.favorites) })
+  if (s.chapters) entries.push({ icon: 'heart', text: `${s.chapters} 章` })
+  return entries
 })
+const extraText = computed(() => (props.item.extra ?? []).join(' · '))
+const hasStats = computed(() => statEntries.value.length > 0 || !!extraText.value)
+const showStats = computed(() => hasStats.value && !(props.layout === 'grid' && props.item.kind === 'video'))
 const viewedText = computed(() => (props.item.kind === 'novel' ? '已读' : '已看'))
 
 // —— 点击:默认走应用内路由;有 href 的条目(漫画)保留 <a> 的中键/新窗口能力 ——
@@ -165,8 +172,13 @@ onBeforeUnmount(() => {
           >{{ b.text }}</span>
         </span>
         <span v-if="item.viewed" class="media-viewed">{{ viewedText }}</span>
-        <span v-if="statsText && layout === 'grid' && item.kind === 'video'" class="media-overlay-stat">
-          {{ statsText }}
+        <span v-if="showStats && layout === 'grid' && item.kind === 'video'" class="media-overlay-stat">
+          <span v-for="(st, si) in statEntries" :key="si" class="stat-item">
+            <svg v-if="st.icon === 'heart'" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+            <svg v-else width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>
+            {{ st.text }}
+          </span>
+          <span v-if="extraText">{{ extraText }}</span>
         </span>
       </div>
 
@@ -187,9 +199,16 @@ onBeforeUnmount(() => {
         </span>
         <span v-if="item.progress" class="media-progress">{{ item.progress }}</span>
         <span
-          v-if="statsText && !(layout === 'grid' && item.kind === 'video')"
+          v-if="showStats && !(layout === 'grid' && item.kind === 'video')"
           class="media-stats"
-        >{{ statsText }}</span>
+        >
+          <span v-for="(st, si) in statEntries" :key="si" class="stat-item">
+            <svg v-if="st.icon === 'heart'" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>
+            <svg v-else width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>
+            {{ st.text }}
+          </span>
+          <span v-if="extraText">{{ extraText }}</span>
+        </span>
       </div>
 
       <span v-if="layout === 'row' && item.time" class="media-time">{{ formatTimestamp(item.time) }}</span>
@@ -380,6 +399,17 @@ onBeforeUnmount(() => {
 .kind-video .media-title {
   font-weight: var(--font-weight-regular);
   color: var(--color-text-secondary);
+}
+
+.stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.stat-item svg {
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .media-subtitle,
