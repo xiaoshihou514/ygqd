@@ -196,6 +196,8 @@ export interface NovelSeries {
   id: string
   title: string
   author: string
+  /** 作者编号(hlib /u/{数字};关注作者用,作者名不能代替) */
+  authorId?: string
   /** 系列封面 URL(hlib 站点不提供,恒为空串;展示层走占位图标) */
   cover?: string
   /** 简介(来源页面 meta description,可能含站点文案,展示层截断) */
@@ -209,6 +211,8 @@ export interface NovelHit {
   title: string
   /** 作者(登录墙未登录时列表可能拿不到,可空) */
   author?: string
+  /** 作者编号(hlib /u/{数字}) */
+  authorId?: string
   /** 内容标签(可空,未登录时可能拿不到) */
   tags?: string[]
   /** 发布日期(简介 meta 行「YYYY/MM/DD 首发」;格式不符为空;未登录无) */

@@ -31,7 +31,7 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r))
 const port = server.address().port
 
-async function render(width) {
+async function render(width, path = 'index.html') {
   const profile = await mkdtemp(join(tmpdir(), 'ui-fixture-'))
   try {
     const dom = await new Promise((resolve, reject) =>
@@ -45,7 +45,7 @@ async function render(width) {
           `--user-data-dir=${profile}`,
           '--virtual-time-budget=10000',
           '--dump-dom',
-          `http://127.0.0.1:${port}/index.html?w=${width}`,
+          `http://127.0.0.1:${port}/${path}${path.includes('?') ? '&' : '?'}w=${width}`,
         ],
         { maxBuffer: 64 * 1024 * 1024, timeout: 90000 },
         (err, stdout) => (err ? reject(err) : resolve(stdout)),
@@ -109,6 +109,22 @@ for (const width of [400, 1200]) {
   for (const id of ['comic-grid', 'video-grid', 'novel-grid', 'row']) {
     expect(width, `${id} 无横向溢出`, r[id].overflowX, false)
   }
+}
+
+// —— 页面级:设置页(黑名单)/关注页,模拟 IPC 假数据(超长标签/作者名) ——
+for (const width of [400, 1200]) {
+  const b = await render(width, 'pages.html?page=blacklist')
+  expect(width, '设置页无横向溢出(超长黑名单词)', b.docOverflow, false)
+  expect(width, '设置页溢出元素', b.offenders.join(','), '')
+  expect(width, '黑名单网格不嵌套(两个独立区块)', b.chains.length, 2)
+  const f = await render(width, 'pages.html?page=following')
+  expect(width, '关注页无横向溢出(超长作者名)', f.docOverflow, false)
+  const groups = Object.values(f.groups || {})
+  expect(width, '关注页三组均有对象芯片', groups.length === 3 && groups.every((g) => g.chips > 0), true)
+  expect(width, '关注页三组芯片样式一致', new Set(groups.flatMap((g) => g.sig)).size, 1)
+  expect(width, '关注页三组都能 × 取消关注', groups.every((g) => g.removable > 0), true)
+  expect(width, '关注页三组默认选中一项', groups.every((g) => g.active === 1), true)
+  expect(width, '关注页旧行式/旧芯片残留', groups.reduce((n, g) => n + g.legacyRows, 0), 0)
 }
 
 server.close()

@@ -13,7 +13,9 @@ const router = useRouter()
 const series = ref<NovelSeries | null>(null)
 // 收藏 = 关注作者(复用关注机制,followed_authors 表;数据写接口已就绪)
 const authorFollowed = computed(() =>
-  !!series.value?.author && novelFollowedIds.value.has(series.value.author),
+  !!series.value?.author &&
+    (novelFollowedIds.value.has(series.value.author) ||
+      (!!series.value.authorId && novelFollowedIds.value.has(series.value.authorId))),
 )
 const inShelf = ref(false)
 // 收藏 = 关注作者(小说独立关注链 novel_follow_author;批次 2 关注 tab 数据源)
@@ -21,7 +23,8 @@ const novelFollowedIds = ref<Set<string>>(new Set())
 
 async function loadNovelFollows() {
   try {
-    novelFollowedIds.value = new Set((await novelFollowedAuthors()).map((f) => f.authorId))
+    // 编号与名字都入集合:新记录按编号命中,旧版以名字存的记录按名字命中
+    novelFollowedIds.value = new Set((await novelFollowedAuthors()).flatMap((f) => [f.authorId, f.authorName]))
   } catch { /* 关注列表拉取失败忽略 */ }
 }
 const page = ref<NovelPage | null>(null)
@@ -204,12 +207,13 @@ const followBusy = ref(false)
 const followError = ref('')
 async function followNovelAuthor() {
   const a = series.value?.author
-  if (!a || novelFollowedIds.value.has(a) || followBusy.value) return
+  if (!a || authorFollowed.value || followBusy.value) return
   followBusy.value = true
   followError.value = ''
   try {
-    await novelFollowAuthor(a, a)
-    novelFollowedIds.value.add(a)
+    await novelFollowAuthor(series.value?.authorId || a, a)
+    // 新 Set 赋值触发 computed 重算(Set.add 不是响应式变更),按钮即时变「已关注」
+    novelFollowedIds.value = new Set([...novelFollowedIds.value, a, series.value?.authorId || a])
   } catch (e) {
     followError.value = errorMessage(e) || '关注失败,请重试'
   } finally {

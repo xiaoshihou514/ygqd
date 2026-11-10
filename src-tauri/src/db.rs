@@ -282,6 +282,7 @@ pub fn novel_shelf(db: &Connection) -> Result<Vec<crate::models::NovelSeries>, S
             Ok(crate::models::NovelSeries {
                 id: r.get(0)?,
                 title: r.get(1)?,
+                author_id: String::new(),
                 author: r.get(2)?,
                 // cover/introduction 暂不入库(hlib 站点不提供封面;简介在
                 // 详情页实时获取),书架恢复时为空值

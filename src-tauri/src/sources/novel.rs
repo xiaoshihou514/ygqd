@@ -138,8 +138,27 @@ fn total_pages(doc: &Html) -> i64 {
     max
 }
 
+/// 作者链接 → (作者名, 作者编号)。只认 /u/{纯数字} 的作者页链接
+fn author_of(scope: scraper::ElementRef<'_>) -> (String, String) {
+    for a in scope.select(&sel("a[href^='/u/']")) {
+        let id = a
+            .value()
+            .attr("href")
+            .and_then(|h| h.strip_prefix("/u/"))
+            .map(|r| r.split(['/', '?', '#']).next().unwrap_or(""))
+            .unwrap_or("");
+        if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
+            return (
+                normalize_text(&a.text().collect::<String>()),
+                id.to_string(),
+            );
+        }
+    }
+    (String::new(), String::new())
+}
+
 /// 解析系列目录一页,返回(标题, 作者, 简介, 本页章节)
-fn parse_series_page(html: &str) -> (String, String, String, Vec<NovelChapter>) {
+fn parse_series_page(html: &str) -> (String, String, String, String, Vec<NovelChapter>) {
     let doc = Html::parse_document(html);
     let title = doc
         .select(&sel("h3.text-center"))
@@ -164,11 +183,7 @@ fn parse_series_page(html: &str) -> (String, String, String, Vec<NovelChapter>) 
         })
         .map(|t| normalize_text(&t))
         .unwrap_or_default();
-    let author = doc
-        .select(&sel("a[href^='/u/']"))
-        .next()
-        .map(|a| a.text().collect::<String>())
-        .unwrap_or_default();
+    let (author, author_id) = author_of(doc.root_element());
     let mut chapters = Vec::new();
     for a in doc.select(&sel("a[href^='/n/']")) {
         let Some(id) = a
@@ -203,17 +218,63 @@ fn parse_series_page(html: &str) -> (String, String, String, Vec<NovelChapter>) 
     }
     (
         normalize_text(&title),
-        normalize_text(&author),
+        author,
+        author_id,
         introduction,
         chapters,
     )
 }
 
+/// 单篇作品包装为一章的系列(标题取正文页 h3,作者取 /u/ 链接)
+async fn fetch_single_article(
+    app: &AppHandle,
+    series_id: &str,
+    article_id: &str,
+) -> Result<NovelSeries, String> {
+    let html = fetch_html(app, &format!("https://hlib.cc/n/{article_id}")).await?;
+    if is_challenge(&html) {
+        return Err("hlib 安全验证未通过:请在网关窗口完成验证/登录后重试".into());
+    }
+    let (title, author, author_id) = {
+        let doc = Html::parse_document(&html);
+        let title = doc
+            .select(&sel("h3.text-center"))
+            .next()
+            .map(|h| normalize_text(&h.text().collect::<String>()))
+            .unwrap_or_default();
+        let (author, author_id) = author_of(doc.root_element());
+        (title, author, author_id)
+    };
+    if title.is_empty() {
+        return Err("未找到作品正文(可能未登录或作品已删除)".into());
+    }
+    Ok(NovelSeries {
+        id: series_id.to_string(),
+        title: title.clone(),
+        author,
+        author_id,
+        cover: String::new(),
+        introduction: String::new(),
+        chapters: vec![NovelChapter {
+            id: article_id.to_string(),
+            order: 1,
+            title,
+        }],
+        added_at: 0,
+    })
+}
+
 /// 拉取整个系列目录(分页)入库。调用方负责入库与限速。
 pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, String> {
+    // 作者页的单篇作品(不属于任何系列)以 n_{文章编号} 表示:包装成只有一章的系列,
+    // 详情页/阅读器无需区分
+    if let Some(article) = id.strip_prefix("n_") {
+        return fetch_single_article(app, id, article).await;
+    }
     let mut all: Vec<NovelChapter> = Vec::new();
     let mut title = String::new();
     let mut author = String::new();
+    let mut author_id = String::new();
     let mut introduction = String::new();
     let mut page = 1;
     loop {
@@ -226,10 +287,11 @@ pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, Stri
         if is_challenge(&html) {
             return Err("hlib 安全验证未通过:请在网关窗口完成验证/登录后重试".into());
         }
-        let (t, a, introduction_page, chapters) = parse_series_page(&html);
+        let (t, a, aid, introduction_page, chapters) = parse_series_page(&html);
         if title.is_empty() {
             title = t;
             author = a;
+            author_id = aid;
             if introduction.is_empty() {
                 introduction = introduction_page;
             }
@@ -256,6 +318,7 @@ pub async fn fetch_series(app: &AppHandle, id: &str) -> Result<NovelSeries, Stri
         id: id.to_string(),
         title,
         author,
+        author_id,
         cover: String::new(),
         introduction,
         chapters: all,
@@ -392,6 +455,9 @@ pub struct NovelHit {
     /// 作者名(条目级 /u/ 链接文本;列表页 DOM 含该字段)
     #[serde(default)]
     pub author: String,
+    /// 作者编号(条目级 /u/{数字} 链接;关注作者用)
+    #[serde(default)]
+    pub author_id: String,
     /// 标签集合(条目级 .tags 容器的 /tag/ 链接文本)
     #[serde(default)]
     pub tags: Vec<String>,
@@ -476,11 +542,7 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
                 continue;
             }
             let title = normalize_text(&link.text().collect::<String>());
-            let author = item
-                .select(&sel("a[href^='/u/']"))
-                .next()
-                .map(|a| normalize_text(&a.text().collect::<String>()))
-                .unwrap_or_default();
+            let (author, author_id) = author_of(item);
             let tags: Vec<String> = item
                 .select(&sel(".tags a[href^='/tag/']"))
                 .map(|a| normalize_text(&a.text().collect::<String>()))
@@ -514,6 +576,7 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
                 id,
                 title: final_title,
                 author,
+                author_id,
                 tags,
                 cover: String::new(),
                 published_date,
@@ -546,6 +609,7 @@ fn extract_series(html: &str) -> Vec<NovelHit> {
             id,
             title,
             author: String::new(),
+            author_id: String::new(),
             tags: Vec::new(),
             cover: String::new(),
             published_date: None,
@@ -607,9 +671,10 @@ fn search_url(keyword: &str, page: i64, sort: Option<&str>) -> String {
 /// 榜单端点(系列排行榜;/rank/s 需登录,登录后会话 cookie 可用)
 const RANK_URL: &str = "https://hlib.cc/rank/s";
 
-/// 高级搜索的合法排序值(列表页 rp() 脚本四维实锤;非法值忽略)
+/// 搜索页的合法排序值(列表页 rp('sort', …) 五个按钮:关联度/时间/篇数/字数/收藏)。
+/// 不传 sort = 网页端搜索框提交的默认排序(表单只带 query);非法值忽略
 fn valid_sort(sort: Option<&str>) -> Option<&str> {
-    sort.filter(|s| matches!(*s, "date" | "total" | "char" | "like"))
+    sort.filter(|s| matches!(*s, "score" | "date" | "total" | "char" | "like"))
 }
 
 pub async fn search_series_page(
@@ -638,7 +703,14 @@ pub async fn author_page_works(app: &AppHandle, author_id: &str) -> Result<Vec<N
     if is_challenge(&html) {
         return Err("hlib 安全验证未通过:请先在网关窗口完成验证/登录".into());
     }
+    // 作者页若以系列条目(li + /s/ 链接)列出作品,按系列返回(可进系列详情);
+    // 否则退回 /n/ 单篇(n_ 前缀,fetch_series 包装为单章系列)
+    let series = extract_series(&html);
+    if !series.is_empty() {
+        return Ok(series);
+    }
     let doc = Html::parse_document(&html);
+    let (author, _) = author_of(doc.root_element());
     // /n/ 链接文本即作品标题;去重保持出现顺序
     let mut out: Vec<NovelHit> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -659,7 +731,8 @@ pub async fn author_page_works(app: &AppHandle, author_id: &str) -> Result<Vec<N
         out.push(NovelHit {
             id: format!("n_{id}"),
             title,
-            author: String::new(),
+            author: author.clone(),
+            author_id: author_id.to_string(),
             tags: Vec::new(),
             cover: String::new(),
             published_date: None,
@@ -1079,9 +1152,10 @@ mod tests {
             </ul>
             <a href="/n/10001"><span>#1 示例章节</span></a>
           </body></html>"#;
-        let (title, author, introduction, chapters) = parse_series_page(html);
+        let (title, author, author_id, introduction, chapters) = parse_series_page(html);
         assert_eq!(title, "示例系列标题");
         assert_eq!(author, "示例作者");
+        assert_eq!(author_id, "123");
         assert_eq!(
             introduction, "示例简介文本——来自 meta description",
             "简介应取 meta description(优先于简介 li)"
@@ -1103,5 +1177,33 @@ mod tests {
         assert_eq!(hits[0].id, "relative-1");
         assert_eq!(hits[0].title, "相对链接系列");
         assert_eq!(hits[1].id, "absolute-2");
+    }
+
+    #[test]
+    fn author_id_only_from_numeric_user_links() {
+        // 导航栏的 /u/n/{id}(作者小说列表)等非作者页链接不算;取首个 /u/{纯数字}
+        let html = r#"<div><a href="/u/n/111">列表</a><a href="/u/36084587?x=1"> 甲作者 </a><a href="/u/999">乙</a></div>"#;
+        let doc = Html::parse_document(html);
+        let (name, id) = author_of(doc.root_element());
+        assert_eq!((name.as_str(), id.as_str()), ("甲作者", "36084587"));
+        let none = Html::parse_document(r#"<a href="/u/abc">x</a>"#);
+        assert_eq!(
+            author_of(none.root_element()),
+            (String::new(), String::new())
+        );
+    }
+
+    #[test]
+    fn search_hits_carry_author_id_and_sort_whitelist() {
+        let html = r#"<ul><li class="list-group-item"><a href="/s/123">系列甲</a>
+            <a href="/u/74094590">作者甲</a></li></ul>"#;
+        let hits = extract_series(html);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].author, "作者甲");
+        assert_eq!(hits[0].author_id, "74094590");
+        // 网页端五个排序按钮均可透传;未指定时不带 sort(等同网页搜索框默认)
+        assert!(search_url("k", 1, Some("score")).ends_with("&sort=score"));
+        assert!(!search_url("k", 1, None).contains("sort="));
+        assert!(!search_url("k", 1, Some("bogus")).contains("sort="));
     }
 }

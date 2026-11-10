@@ -103,6 +103,12 @@ pub(crate) async fn novel_followed_author_works(
     state: State<'_, AppState>,
     author_id: String,
 ) -> Result<Vec<sources::novel::NovelHit>, String> {
+    // 作者页只能按编号定位;早期版本以作者名作 id 存的关注记录无法抓取
+    if author_id.is_empty() || !author_id.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(
+            "这条关注缺少作者编号(旧版本记录),请到该作者的作品详情页重新点「关注作者」".into(),
+        );
+    }
     state.hlib_throttle().await;
     let key = format!("novel_author_works_{author_id}");
     if let Some(hit) =
@@ -118,13 +124,26 @@ pub(crate) async fn novel_followed_author_works(
     res.map(|works| filter_blacklisted(&state, works))
 }
 
-/// 关注作者列表(复用漫画源 followed_authors 表;authorId 以作者名充当)
+/// 关注的小说作者(follow_target 表 source=hlib kind=author;authorId=作者编号)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AuthorFollow {
+    author_id: String,
+    author_name: String,
+}
+
 #[tauri::command]
 pub(crate) fn novel_followed_authors(
     state: State<'_, AppState>,
-) -> Result<Vec<FollowedAuthor>, String> {
+) -> Result<Vec<AuthorFollow>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follows(&conn)
+    Ok(db::follow_targets(&conn, "hlib", "author")?
+        .into_iter()
+        .map(|t| AuthorFollow {
+            author_id: t.target_id,
+            author_name: t.display_name,
+        })
+        .collect())
 }
 
 /// 添加小说系列到书架:输入 hlib 系列链接或纯 ID。
@@ -300,6 +319,10 @@ pub(crate) fn novel_follow_author(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
+    // 以编号重新关注时,清掉同名的旧记录(早期版本用作者名充当 id)
+    if author_id != author_name {
+        db::follow_target_remove(&conn, "hlib", "author", &author_name)?;
+    }
     db::follow_target_add(&conn, "hlib", "author", &author_id, &author_name)
 }
 

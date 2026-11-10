@@ -8,6 +8,6 @@ export default defineConfig({
   base: './',
   plugins: [vue()],
   resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },
-  build: { outDir: fileURLToPath(new URL('../../.scratch/ui-fixture-dist', import.meta.url)), emptyOutDir: true },
+  build: { rollupOptions: { input: { index: fileURLToPath(new URL('./index.html', import.meta.url)), pages: fileURLToPath(new URL('./pages.html', import.meta.url)) } }, outDir: fileURLToPath(new URL('../../.scratch/ui-fixture-dist', import.meta.url)), emptyOutDir: true },
   logLevel: 'warn',
 })

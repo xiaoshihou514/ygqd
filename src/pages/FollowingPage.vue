@@ -35,7 +35,6 @@ const tabScroll: Record<FollowingTab, number> = {
   'novel-authors': 0,
 }
 
-
 // —— 小说作者关注(批次 2:novel_followed_authors 列表 + 作者作品流) ——
 const novelAuthors = ref<AuthorFollow[]>([])
 const novelAuthorsLoading = ref(false)
@@ -103,10 +102,6 @@ const VIDEO_KINDS: Array<{ key: VideoKind; label: string }> = [
   { key: 'maker', label: '厂商' },
 ]
 
-function kindLabel(kind: string): string {
-  return kind === 'maker' ? '厂商' : '女优'
-}
-
 function isVideoFollowed(targetId: string): boolean {
   return videoFollows.value.some((f) => f.targetId === targetId)
 }
@@ -131,6 +126,8 @@ async function loadVideoFollows() {
   videoFollowsLoading.value = true
   try {
     videoFollows.value = await videoFollowList(videoSource.value, videoKind.value)
+    const keep = videoFollows.value.find((f) => f.targetId === selectedVideoTarget.value?.targetId)
+    if (!keep && videoFollows.value[0]) selectVideoTarget(videoFollows.value[0])
   } catch (e) {
     console.error('[following]', errorMessage(e))
   } finally {
@@ -253,7 +250,13 @@ const allWorks = computed<ComicItem[]>(() => {
   return merged.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0))
 })
 
-const allWorkItems = computed(() => allWorks.value.map((c) => fromComic(c)))
+// 关注页三组统一交互:对象芯片点选看作品(漫画多一个「全部」),× 取消关注
+const selectedComicAuthor = ref<string | null>(null)
+const allWorkItems = computed(() => {
+  const author = selectedComicAuthor.value
+  const list = author ? (authorWorks.value[author]?.items ?? []) : allWorks.value
+  return list.map((c) => fromComic(c))
+})
 const hasMoreWorks = computed(() =>
   followed.value.some((fa) => {
     const state = authorWorks.value[fa.author]
@@ -277,8 +280,6 @@ onActivated(() => {
 })
 
 /** 收藏列表:本地表立即展示,哔咔登录时后台把服务器收藏合并进来 */
-
-
 
 async function fetchAuthorPage(
   follow: FollowedAuthor,
@@ -420,7 +421,6 @@ function handleRefresh() {
   void loadAllAuthors(true)
 }
 
-
 function goToAuthor(author: string) {
   router.push({ name: 'search', query: { keyword: author, show: 'title,text,keyboard,ftitle' } })
 }
@@ -505,17 +505,32 @@ async function handleExport() {
             message="在漫画详情页点击作者旁的心形图标即可关注"
           />
           <template v-else>
-            <div class="author-chips-row">
-              <span v-for="fa in followed" :key="fa.author" class="author-chip">
-                {{ fa.author }}
-                <button
-                  type="button"
-                  class="chip-remove"
+            <div class="follow-chips" role="tablist" aria-label="关注的漫画作者">
+              <button
+                type="button"
+                class="follow-chip"
+                :class="{ active: selectedComicAuthor === null }"
+                @click="selectedComicAuthor = null"
+              >
+                全部
+              </button>
+              <button
+                v-for="fa in followed"
+                :key="fa.author"
+                type="button"
+                class="follow-chip"
+                :class="{ active: selectedComicAuthor === fa.author }"
+                @click="selectedComicAuthor = fa.author"
+              >
+                <span class="follow-chip-name">{{ fa.author }}</span>
+                <span
+                  class="follow-chip-remove"
+                  role="button"
                   title="取消关注"
                   aria-label="取消关注"
-                  @click="unfollow(fa.author)"
-                >×</button>
-              </span>
+                  @click.stop="unfollow(fa.author)"
+                >×</span>
+              </button>
             </div>
             <p v-if="syncing && syncProgress" class="sync-progress">{{ syncProgress }}</p>
             <MediaCollection
@@ -583,23 +598,36 @@ async function handleExport() {
               title="还没有关注目标"
               message="点「管理关注」添加想跟踪的厂商或女优"
             />
-            <div v-else class="follow-rows">
+            <div v-else class="follow-chips" role="tablist" aria-label="关注的厂商/女优">
               <button
                 v-for="f in videoFollows"
                 :key="f.targetId"
                 type="button"
-                class="follow-row"
-                @click="router.push(`/videos/target/${videoSource}/${videoKind}/${f.targetId}`)"
+                class="follow-chip"
+                :class="{ active: selectedVideoTarget?.targetId === f.targetId }"
+                @click="selectVideoTarget(f)"
               >
-                <span class="follow-name">{{ f.displayName }}</span>
-                <span class="follow-kind">{{ kindLabel(f.kind) }}</span>
+                <span class="follow-chip-name">{{ f.displayName }}</span>
+                <span
+                  class="follow-chip-remove"
+                  role="button"
+                  title="取消关注"
+                  aria-label="取消关注"
+                  @click.stop="unfollowVideoTarget(f)"
+                >×</span>
               </button>
             </div>
 
             <template v-if="selectedVideoTarget">
               <div class="works-header">
                 <span class="works-title">{{ selectedVideoTarget.displayName }} 的作品</span>
-                <button type="button" class="works-close" @click="selectedVideoTarget = null">×</button>
+                <button
+                  type="button"
+                  class="works-more-link"
+                  @click="router.push(`/videos/target/${videoSource}/${videoKind}/${encodeURIComponent(selectedVideoTarget.targetId)}`)"
+                >
+                  查看全部 ›
+                </button>
               </div>
               <MediaCollection
                 :items="targetWorkItems"
@@ -625,18 +653,19 @@ async function handleExport() {
             message="在小说详情页点「+ 关注作者」,即可在这里跟踪他们的作品"
           />
           <template v-else>
-            <div class="novel-author-chips">
+            <div class="follow-chips" role="tablist" aria-label="关注的小说作者">
               <button
                 v-for="a in novelAuthors"
                 :key="a.authorId"
                 type="button"
-                class="author-chip novel-author-chip"
+                class="follow-chip"
                 :class="{ active: selectedNovelAuthor?.authorId === a.authorId }"
                 @click="selectNovelAuthor(a)"
               >
-                {{ a.authorName }}
+                <span class="follow-chip-name">{{ a.authorName }}</span>
                 <span
-                  class="novel-author-remove"
+                  class="follow-chip-remove"
+                  role="button"
                   title="取消关注"
                   aria-label="取消关注"
                   @click.stop="unfollowNovelAuthor(a)"
@@ -740,7 +769,6 @@ async function handleExport() {
   outline-offset: 2px;
 }
 
-
 .sync-progress {
   margin: calc(var(--spacing-md) * -1) 0 var(--spacing-lg);
   color: var(--color-text-muted);
@@ -752,60 +780,6 @@ async function handleExport() {
   color: var(--color-error);
   font-size: var(--font-size-caption);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-@media (max-width: 560px) {
-
-}
-
-.novel-author-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-md);
-}
-
-
-.novel-author-chip:hover,
-.novel-author-chip.active {
-  border-color: var(--color-primary);
-  background: var(--color-primary-focus);
-}
-
-.novel-author-remove {
-  color: var(--color-text-muted);
-  font-size: 14px;
-  line-height: 1;
-  margin-left: 4px;
-}
-
-.novel-author-remove:hover {
-  color: var(--color-error);
-}
-
-
-
-
-
-
 
 .video-kind-row {
   display: flex;
@@ -907,41 +881,6 @@ async function handleExport() {
   cursor: default;
 }
 
-.follow-rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
-
-.follow-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-sm);
-  padding: 10px var(--spacing-md);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s;
-}
-
-.follow-row:hover {
-  border-color: var(--color-primary);
-}
-
-.follow-name {
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-text-primary);
-}
-
-.follow-kind {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
-}
-
 .works-header {
   display: flex;
   align-items: center;
@@ -955,53 +894,60 @@ async function handleExport() {
   color: var(--color-text-primary);
 }
 
-.works-close {
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-
-
-
-
-
-
-
-
-.author-chips-row {
+/* 关注对象芯片(漫画作者/厂商·女优/小说作者三组统一):点选看作品,× 取消关注 */
+.follow-chips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-md);
 }
 
-.author-chip {
+.follow-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
+  gap: var(--spacing-xxs);
+  max-width: 100%;
+  min-width: 0;
+  padding: 6px 12px 6px 14px;
   border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   background: var(--color-card-bg);
   color: var(--color-text-primary);
   font-size: var(--font-size-caption);
-}
-
-.chip-remove {
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0;
 }
 
-.chip-remove:hover {
-  color: var(--color-error);
+.follow-chip.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.follow-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.follow-chip-remove {
+  flex-shrink: 0;
+  padding: 0 2px;
+  font-size: var(--font-size-body);
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+}
+
+.follow-chip-remove:hover {
+  opacity: 1;
+}
+
+.works-more-link {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
 }
 </style>

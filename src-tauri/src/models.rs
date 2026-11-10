@@ -214,6 +214,10 @@ pub struct NovelSeries {
     pub id: String,
     pub title: String,
     pub author: String,
+    /// 作者编号(hlib /u/{数字} 链接;关注作者与作者作品流用它定位作者页,
+    /// 作者名不能代替——/u/{作者名} 不是作者页)
+    #[serde(default)]
+    pub author_id: String,
     /// 系列封面 URL(hlib 站点当前不提供系列封面,恒为空串;字段保留供
     /// 其他来源与前端占位逻辑)。展示走 fetch_image 代理(Referer 分流)
     #[serde(default)]

@@ -228,6 +228,7 @@ fn spawn_novel_selftest(app: AppHandle) {
                 let manager = probe_app.state::<GatewayManager>();
                 let manager_ref = manager.inner();
                 for (i, url) in urls.split(' ').enumerate() {
+                    let start = std::time::Instant::now();
                     let r = gateway::gateway_fetch(&probe_app, manager_ref, "hlib", url).await;
                     let body = r.unwrap_or_else(|e| format!("ERR {e}"));
                     if let Some(dir) = gateway::diag_dir() {
@@ -370,7 +371,6 @@ pub fn run() {
             commands::novel::novel_followed_authors,
             commands::novel::novel_follow_author,
             commands::novel::novel_unfollow_author,
-            commands::novel::novel_followed_authors,
             commands::novel::novel_series_info,
             commands::novel::novel_add,
             commands::novel::novel_search,

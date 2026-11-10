@@ -348,14 +348,16 @@ const novelTotalPages = ref(1)
 const novelLoadingMore = ref(false)
 const novelError = ref('')
 const novelMediaItems = computed(() => novelHits.value.map((h) => fromNovelHit(h)))
-// 高级搜索:排序四维(非法值后端忽略,透传即可)
-type NovelSort = 'date' | 'total' | 'char' | 'like'
-const novelSort = ref<NovelSort>('date')
+// 排序与网页端搜索页一致:默认(不带 sort,等同网页搜索框提交)+ 站点五个排序按钮
+type NovelSort = '' | 'score' | 'date' | 'total' | 'char' | 'like'
+const novelSort = ref<NovelSort>('')
 const NOVEL_SORTS: Array<{ key: NovelSort; label: string }> = [
-  { key: 'date', label: '最新' },
-  { key: 'total', label: '总字数' },
+  { key: '', label: '默认' },
+  { key: 'score', label: '关联度' },
+  { key: 'date', label: '时间' },
+  { key: 'total', label: '篇数' },
   { key: 'char', label: '字数' },
-  { key: 'like', label: '最多点赞' },
+  { key: 'like', label: '收藏' },
 ]
 
 const { guard: guardHlibInterval } = useHlibGuard()
@@ -369,7 +371,7 @@ async function handleNovelSearch() {
   novelHits.value = []
   try {
     await guardHlibInterval()
-    const res = await novelSearchPage(kw, 1, novelSort.value)
+    const res = await novelSearchPage(kw, 1, novelSort.value || undefined)
     novelHits.value = res.hits
     novelPageNo.value = res.page
     novelTotalPages.value = res.totalPages
@@ -395,7 +397,7 @@ async function loadMoreNovels() {
   novelError.value = ''
   try {
     await guardHlibInterval()
-    const res = await novelSearchPage(novelSearchedKw.value, novelPageNo.value + 1, novelSort.value)
+    const res = await novelSearchPage(novelSearchedKw.value, novelPageNo.value + 1, novelSort.value || undefined)
     const seen = new Set(novelHits.value.map((h) => h.id))
     novelHits.value.push(...res.hits.filter((h) => !seen.has(h.id)))
     novelPageNo.value = res.page

@@ -42,7 +42,7 @@ export const novelSearch = (keyword: string) => invoke<NovelHit[]>('novel_search
 export const novelSearchPage = (
   keyword: string,
   page: number,
-  sort?: 'date' | 'total' | 'char' | 'like',
+  sort?: 'score' | 'date' | 'total' | 'char' | 'like',
 ) => invoke<NovelSearchPage>('novel_search_page', { keyword, page, sort })
 export const novelRecommend = (page?: number) =>
   invoke<NovelLatestPage>('novel_recommend', { page })

@@ -14,7 +14,9 @@ const series = ref<NovelSeries | null>(null)
 const progress = ref<[number, number] | null>(null)
 // 收藏 = 关注作者(复用关注机制),数据写接口已就绪;移除保留(novelRemove 真实数据操作)
 const authorFollowed = computed(() =>
-  !!series.value?.author && novelFollowedIds.value.has(series.value.author),
+  !!series.value?.author &&
+    (novelFollowedIds.value.has(series.value.author) ||
+      (!!series.value.authorId && novelFollowedIds.value.has(series.value.authorId))),
 )
 const inShelf = ref(false)
 const addingShelf = ref(false)
@@ -23,7 +25,8 @@ const novelFollowedIds = ref<Set<string>>(new Set())
 
 async function loadNovelFollows() {
   try {
-    novelFollowedIds.value = new Set((await novelFollowedAuthors()).map((f) => f.authorId))
+    // 编号与名字都入集合:新记录按编号命中,旧版以名字存的记录按名字命中
+    novelFollowedIds.value = new Set((await novelFollowedAuthors()).flatMap((f) => [f.authorId, f.authorName]))
   } catch { /* 关注列表拉取失败忽略 */ }
 }
 const loading = ref(true)
@@ -85,7 +88,14 @@ async function followNovelAuthor() {
   followBusy.value = true
   followError.value = ''
   try {
-    await novelFollowAuthor(a, a)
+    // 书架里的系列是本地记录,不含作者编号:关注前从站点补取一次
+    let authorId = series.value?.authorId
+    if (!authorId && series.value) {
+      authorId = (await novelSeriesInfo(series.value.id).catch(() => null))?.authorId
+    }
+    await novelFollowAuthor(authorId || a, a)
+    // 关注成功即时反馈:按钮变「已关注」
+    novelFollowedIds.value = new Set([...novelFollowedIds.value, a, authorId || a])
   } catch (e) {
     followError.value = errorMessage(e) || '关注失败,请重试'
   } finally {
