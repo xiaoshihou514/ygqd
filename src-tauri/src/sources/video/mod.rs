@@ -89,6 +89,10 @@ pub struct VideoCard {
     pub likes: String,
     /// 是否中文字幕变体
     pub chinese: bool,
+    /// 视频时长(fs1 卡片右下遮罩 label 如 "2:51:49";missav 卡片无此
+    /// 数据为空字符串)
+    #[serde(default)]
+    pub duration: String,
 }
 
 /// 关注目标的可选条目(列表页提取;target_id 用于 follow/works)
@@ -430,6 +434,12 @@ impl VideoApi {
                 })
                 .map(absolute_url)
                 .unwrap_or_default();
+            // 时长:封面遮罩右下角的 label(如 "2:51:49")
+            let duration = card
+                .select(&sel(".absolute-bottom-right .label"))
+                .next()
+                .map(|s| s.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
             // sub-title 形如 "315 903 ❤ 1403"(svg 图标分隔的观看数与点赞数)
             let (views, likes) = card
                 .select(sub_sel)
@@ -455,6 +465,7 @@ impl VideoApi {
                 views,
                 likes,
                 chinese,
+                duration,
             });
         }
         // 同番号的普通版与中字版只留一张,优先中字
@@ -493,6 +504,7 @@ impl VideoApi {
                         views: String::new(),
                         likes: String::new(),
                         chinese: false,
+                        duration: String::new(),
                     });
                 }
             }
@@ -779,6 +791,7 @@ impl VideoApi {
                 views: String::new(),
                 likes: String::new(),
                 chinese: code.ends_with("-chinese-subtitle"),
+                duration: String::new(),
             });
         }
         // 需求 12 归并语义贯彻页内:同番号变体按优先级取一
@@ -1083,6 +1096,7 @@ mod tests {
             views: String::new(),
             likes: String::new(),
             chinese: code.contains("chinese"),
+            duration: String::new(),
         };
         // 中字优先于 fs1 首现的有码
         let out = dedupe_by_base(vec![card("mida-829"), card("mida-829-chinese-subtitle")]);
