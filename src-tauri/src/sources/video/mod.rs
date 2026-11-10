@@ -739,6 +739,27 @@ impl VideoApi {
             })
             .collect();
 
+        // 时长:卡片封面链接内的右下角角标 <a href=".../{番号}"><span class="absolute
+        // bottom-1 right-1 …">2:08:22</span>(missav 列表页实测,每卡一个)
+        let re_dur = Regex::new(
+            r#"<a[^>]*href="([^"]+)"[^>]*>\s*<span[^>]*class="[^"]*absolute[^"]*bottom-1[^"]*right-1[^"]*"[^>]*>\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*</span>"#,
+        )
+        .expect("static regex");
+        let durations: std::collections::HashMap<String, String> = re_dur
+            .captures_iter(html)
+            .filter_map(|c| {
+                let href = c.get(1)?.as_str();
+                let code = href
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()?
+                    .split(['?', '#'])
+                    .next()?
+                    .to_lowercase();
+                Some((code, c.get(2)?.as_str().to_string()))
+            })
+            .collect();
+
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for (pos, code) in anchors.iter() {
@@ -791,7 +812,7 @@ impl VideoApi {
                 views: String::new(),
                 likes: String::new(),
                 chinese: code.ends_with("-chinese-subtitle"),
-                duration: String::new(),
+                duration: durations.get(code).cloned().unwrap_or_default(),
             });
         }
         // 需求 12 归并语义贯彻页内:同番号变体按优先级取一
@@ -1578,5 +1599,31 @@ mod missav_tests {
                     panic!("giga 搜索应至少命中一路源");
                 }
             });
+    }
+
+    #[test]
+    fn missav_cards_carry_duration() {
+        // 列表页实测结构(文本用占位):封面链接内右下角时长角标
+        let html = r#"
+          <a href="https://missav.ai/dm63/ja/ssis-960-uncensored-leak" alt="x"><span class="absolute bottom-1 right-1 rounded-lg px-2 py-1 text-xs">2:08:22</span></a>
+          <a href="https://missav.ai/dm63/ja/ssis-960-uncensored-leak"><p> SSIS-960 占位标题甲 </p></a>
+          <a href="https://missav.ai/ja/snos-486" alt="y"><span class="absolute bottom-1 right-1 rounded-lg">58:07</span></a>
+          <a href="https://missav.ai/ja/snos-486"><p> SNOS-486 占位标题乙 </p></a>
+          <a href="https://missav.ai/ja/abc-001"><p> ABC-001 占位标题丙 </p></a>
+        "#;
+        let cards = VideoApi::parse_missav_search(html);
+        let dur = |c: &str| {
+            cards
+                .iter()
+                .find(|v| v.code == c)
+                .map(|v| v.duration.clone())
+        };
+        assert_eq!(dur("ssis-960-uncensored-leak").as_deref(), Some("2:08:22"));
+        assert_eq!(dur("snos-486").as_deref(), Some("58:07"));
+        assert_eq!(
+            dur("abc-001").as_deref(),
+            Some(""),
+            "无角标的卡片时长为空(前端隐藏)"
+        );
     }
 }
