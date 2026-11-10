@@ -86,7 +86,7 @@ for (const width of [400, 1200]) {
   expect(width, '小说占位', r['novel-grid'].placeholders, 5)
   expect(width, '小说榜单序号', r['novel-grid'].toneAccent, 5)
   expect(width, '小说统计项间距', r['novel-grid'].statGap, (v) => v >= 4)
-  expect(width, '小说统计图标(阅读/收藏)', (r['novel-grid'].statIcons || []).join(','), 'eye,star')
+  expect(width, '小说统计图标(阅读/收藏)', (r['novel-grid'].statIcons || []).join(','), 'eye,heart')
   expect(width, '漫画点赞图标', (r['comic-grid'].statIcons || []).join(','), 'heart')
   // 行式:6 行单列、时间、进度文案(坏 JSON 容错不出文案)
   expect(width, '行式条数', r.row.cards, 6)
