@@ -2,7 +2,6 @@
 import { errorMessage } from '@/utils/errors'
 import { useTimeline } from '@/composables/useTimeline'
 import TimelineList from '@/components/TimelineList.vue'
-import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchItemHistory, fetchFavorites, removeFavorite } from '@/services/api'
@@ -37,6 +36,7 @@ const itemLoading = ref(false)
 // 重构笔 4:时间线混排逻辑迁移 useTimeline(行为零变化)
 const { timeline, videoEntries, novelEntries, entryPosition, openTimelineEntry, kindLabel, formatPosition } = useTimeline(history, itemHistory)
 const comicHistoryItems = computed(() => history.value.map(fromComicHistory))
+const novelHistoryItems = computed(() => novelEntries.value.map((e) => fromTimeline(e, { kindBadge: false })))
 const videoHistoryItems = computed(() => videoEntries.value.map((e) => fromTimeline(e, { kindBadge: false })))
 // —— 收藏分组(⑯ 关注页重组:收藏并入历史) ——
 const favorites = ref<FavoriteEntry[]>([])
@@ -191,28 +191,14 @@ onMounted(async () => {
 
       <!-- 小说:封面网格(与漫画同一形态,用户口径「像漫画一样」) -->
       <template v-else>
-        <LoadingSpinner v-if="itemLoading" message="加载阅读记录..." />
-        <EmptyState
-          v-else-if="novelEntries.length === 0"
-          title="还没有阅读记录"
-          message="阅读小说时会自动记录进度"
+        <MediaCollection
+          :items="novelHistoryItems"
+          density="novel"
+          :loading="itemLoading"
+          end-text=""
+          empty-title="还没有阅读记录"
+          empty-message="阅读小说时会自动记录进度"
         />
-        <div v-else class="novel-grid">
-          <NovelSeriesCard
-            v-for="e in novelEntries"
-            :key="e.itemId"
-            :series="{
-              id: e.itemId,
-              title: e.title,
-              author: e.source,
-              cover: '',
-              chapters: [],
-              addedAt: e.viewedAt,
-            }"
-            :progress="null"
-            @open="router.push(`/novels/series/${e.itemId}`)"
-          />
-        </div>
       </template>
 
     </div>
@@ -257,37 +243,10 @@ onMounted(async () => {
   padding-top: var(--spacing-lg);
 }
 
-.timeline-thumb {
-  flex-shrink: 0;
-  width: 44px;
-  height: 33px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: var(--color-divider-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
-.timeline-thumb.placeholder {
-  color: var(--color-text-muted);
-}
 
-.timeline-thumb.placeholder.ph-video {
-  color: #6741d9;
-  opacity: 0.6;
-}
 
-.timeline-thumb.placeholder.ph-novel {
-  color: #8a6d2f;
-  opacity: 0.6;
-}
 
-.timeline-thumb-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
 
 .favorite-list {
   display: flex;
@@ -359,50 +318,10 @@ onMounted(async () => {
   background: rgba(232, 89, 12, 0.1);
 }
 
-.timeline-kind-badge {
-  flex-shrink: 0;
-  padding: 1px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-  background: var(--color-divider-soft);
-  color: var(--color-text-secondary);
-}
 
-.timeline-kind-badge.kind-video {
-  background: rgba(103, 65, 217, 0.14);
-  color: #6741d9;
-}
 
-.timeline-kind-badge.kind-novel {
-  background: rgba(138, 109, 47, 0.14);
-  color: #8a6d2f;
-}
 
-.timeline-title {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-caption);
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.timeline-progress {
-  flex-shrink: 0;
-  font-size: var(--font-size-fine-print);
-  color: var(--color-primary);
-}
 
-.timeline-time {
-  flex-shrink: 0;
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-muted);
-}
 
-.novel-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: var(--spacing-sm);
-}
 </style>

@@ -55,7 +55,9 @@ interface MediaItemBase {
   /** 内容标签(卡片最多显示 3 个) */
   tags?: string[]
   /** 计数(展示统一走 formatCount 中文格式) */
-  stats?: { likes?: number; views?: number; chapters?: number }
+  stats?: { likes?: number; views?: number; favorites?: number; chapters?: number }
+  /** 附加说明(字数/发布日期等站点原文),与计数同一行以「 · 」连接 */
+  extra?: string[]
   /** 进度文案(「读到第 3 章 第 2 页」「看到 12 分 5 秒」) */
   progress?: string
   /** 时间戳(历史/收藏;行式布局显示) */
@@ -150,8 +152,17 @@ export function fromVideo(v: VideoCard, opts: { watched?: boolean } = {}): Media
 
 // ───────── 小说 ─────────
 
-export function fromNovelHit(h: NovelHit, opts: { rank?: number } = {}): MediaItem {
+/**
+ * open:点击去向。发现流/榜单直接进阅读器(任务 7);搜索/关注/历史进系列详情
+ * (两种去向是现有产品行为,统一卡片不改变)
+ */
+export function fromNovelHit(
+  h: NovelHit,
+  opts: { rank?: number; open?: 'reader' | 'series' } = {},
+): MediaItem {
   const views = h.views ? parseLikes(h.views) : 0
+  const favorites = h.favorites ? parseLikes(h.favorites) : 0
+  const extra = [h.wordCount, h.publishedDate].filter((x): x is string => !!x)
   return {
     key: `novel:${h.id}`,
     kind: 'novel',
@@ -159,8 +170,9 @@ export function fromNovelHit(h: NovelHit, opts: { rank?: number } = {}): MediaIt
     subtitle: h.author || undefined,
     badges: opts.rank ? [{ text: `#${opts.rank}`, tone: 'accent' }] : undefined,
     tags: h.tags,
-    stats: views ? { views } : undefined,
-    to: `/novels/series/${h.id}`,
+    stats: views || favorites ? { views: views || undefined, favorites: favorites || undefined } : undefined,
+    extra: extra.length ? extra : undefined,
+    to: opts.open === 'reader' ? `/novels/${h.id}` : `/novels/series/${h.id}`,
   }
 }
 

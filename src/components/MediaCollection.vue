@@ -32,6 +32,8 @@ const props = withDefaults(
     /** 末尾提示;传空串不显示 */
     endText?: string
     skeletonCount?: number
+    /** 首屏加载时骨架上方的说明(如站点校验耗时预期) */
+    loadingHint?: string
     /** 无限滚动提前触发距离 */
     rootMargin?: string
   }>(),
@@ -49,6 +51,7 @@ const props = withDefaults(
     emptyMessage: '',
     endText: '没有更多了',
     skeletonCount: 12,
+    loadingHint: '',
     rootMargin: '200px',
   },
 )
@@ -110,6 +113,7 @@ onDeactivated(() => {
       <button type="button" class="mc-link-btn" @click="emit('retry')">重试</button>
     </div>
 
+    <p v-if="showSkeleton && loadingHint" class="mc-loading-hint">{{ loadingHint }}</p>
     <div v-if="showSkeleton" class="mc-items" aria-busy="true">
       <div v-for="n in (layout === 'row' ? 6 : skeletonCount)" :key="n" class="mc-skeleton">
         <div class="mc-skeleton-cover" />
@@ -342,6 +346,12 @@ onDeactivated(() => {
   display: flex;
   justify-content: center;
   padding: var(--spacing-lg) 0;
+}
+
+.mc-loading-hint {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-caption);
+  color: var(--color-text-secondary);
 }
 
 .mc-sentinel {

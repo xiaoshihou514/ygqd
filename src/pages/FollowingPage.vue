@@ -12,9 +12,8 @@ import { comicPath } from '@/utils/comicPath'
 import { sourceLabel } from '@/config/sources'
 import type { ComicItem, FavoriteEntry, FollowedAuthor } from '@/types'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComic, fromVideo } from '@/utils/mediaItem'
+import { fromComic, fromNovelHit, fromVideo } from '@/utils/mediaItem'
 import { dedupeByVideoBase } from '@/utils/videoCode'
-import NovelSeriesCard from '@/components/NovelSeriesCard.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import ProxyImage from '@/components/ProxyImage.vue'
@@ -42,6 +41,7 @@ const novelAuthors = ref<AuthorFollow[]>([])
 const novelAuthorsLoading = ref(false)
 const selectedNovelAuthor = ref<AuthorFollow | null>(null)
 const hitList = ref<NovelHit[]>([])
+const novelWorkItems = computed(() => hitList.value.map((h) => fromNovelHit(h)))
 const worksLoading = ref(false)
 const worksError = ref('')
 
@@ -72,7 +72,6 @@ async function selectNovelAuthor(author: AuthorFollow) {
   worksLoading.value = true
   try {
     hitList.value = await novelFollowedAuthorWorks(author.authorId)
-    if (!hitList.value.length) worksError.value = '该作者暂无收录作品'
   } catch (e) {
     worksError.value = errorMessage(e) || '作品加载失败,请稍后重试'
   } finally {
@@ -644,24 +643,17 @@ async function handleExport() {
                 >×</span>
               </button>
             </div>
-            <LoadingSpinner v-if="worksLoading" message="加载作品..." />
-            <p v-else-if="worksError" class="works-error">{{ worksError }}</p>
-            <div v-else-if="hitList.length" class="novel-works">
-              <NovelSeriesCard
-                v-for="h in hitList"
-                :key="h.id"
-                :series="{
-                  id: h.id,
-                  title: h.title,
-                  author: h.author ?? '',
-                  cover: '',
-                  chapters: [],
-                  addedAt: Date.now(),
-                }"
-                :progress="null"
-                @open="router.push(`/novels/series/${h.id}`)"
-              />
-            </div>
+            <MediaCollection
+              v-if="selectedNovelAuthor"
+              :items="novelWorkItems"
+              density="novel"
+              pager="none"
+              :loading="worksLoading"
+              :error="worksError"
+              end-text=""
+              empty-title="该作者暂无收录作品"
+              @retry="selectNovelAuthor(selectedNovelAuthor)"
+            />
           </template>
         </template>
 
@@ -748,11 +740,6 @@ async function handleExport() {
   outline-offset: 2px;
 }
 
-.works-count {
-  padding-right: var(--spacing-md);
-  font-size: var(--font-size-caption);
-  color: var(--color-text-muted);
-}
 
 .sync-progress {
   margin: calc(var(--spacing-md) * -1) 0 var(--spacing-lg);
@@ -766,136 +753,27 @@ async function handleExport() {
   font-size: var(--font-size-caption);
 }
 
-.following-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-}
 
-.author-card {
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-}
 
-.favorite-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-}
 
-.favorite-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
 
-.favorite-thumb {
-  width: 48px;
-  height: 64px;
-  border-radius: var(--radius-xs);
-  object-fit: cover;
-  flex-shrink: 0;
-  background: var(--color-divider-soft);
-}
 
-.favorite-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
 
-.favorite-title {
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.favorite-meta {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.author-header {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md) var(--spacing-lg);
-  cursor: default;
-}
 
-.author-name {
-  font-size: var(--font-size-body);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  flex: 1;
-}
 
-.author-meta {
-  font-size: var(--font-size-caption);
-  color: var(--color-text-muted);
-}
 
-.author-actions {
-  display: flex;
-  gap: 4px;
-}
 
-.author-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-}
 
-.author-action-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--color-text-primary);
-}
 
-.author-action-danger:hover {
-  color: var(--color-error);
-}
 
-.author-works {
-  border-top: 1px solid var(--color-hairline);
-  padding: var(--spacing-md);
-}
 
 
 
 
 @media (max-width: 560px) {
-  .author-header {
-    gap: var(--spacing-xs);
-    flex-wrap: wrap;
-  }
 
-  .author-meta {
-    order: 3;
-    width: 100%;
-  }
 }
 
 .novel-author-chips {
@@ -936,49 +814,11 @@ async function handleExport() {
   color: var(--color-error);
 }
 
-.novel-works {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
 
-.novel-work-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--spacing-sm);
-  padding: 10px var(--spacing-md);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s;
-}
 
-.novel-work-row:hover {
-  border-color: var(--color-primary);
-}
 
-.novel-work-title {
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.novel-work-author {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
-  flex-shrink: 0;
-}
 
-.works-error {
-  font-size: var(--font-size-caption);
-  color: var(--color-error);
-}
 
 .video-kind-row {
   display: flex;

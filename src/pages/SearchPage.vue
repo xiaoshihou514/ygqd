@@ -16,7 +16,7 @@ import { parseSearchScope } from '@/config/sources'
 import SearchForm from '@/components/SearchForm.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComic, fromVideo } from '@/utils/mediaItem'
+import { fromComic, fromNovelHit, fromVideo } from '@/utils/mediaItem'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
@@ -347,6 +347,7 @@ const novelPageNo = ref(1)
 const novelTotalPages = ref(1)
 const novelLoadingMore = ref(false)
 const novelError = ref('')
+const novelMediaItems = computed(() => novelHits.value.map((h) => fromNovelHit(h)))
 // 高级搜索:排序四维(非法值后端忽略,透传即可)
 type NovelSort = 'date' | 'total' | 'char' | 'like'
 const novelSort = ref<NovelSort>('date')
@@ -372,7 +373,6 @@ async function handleNovelSearch() {
     novelHits.value = res.hits
     novelPageNo.value = res.page
     novelTotalPages.value = res.totalPages
-    if (!res.hits.length) novelError.value = '没有匹配的系列'
   } catch (e) {
     novelError.value = errorMessage(e) || '搜索失败'
   } finally {
@@ -571,40 +571,23 @@ function goToSplit() {
             </button>
           </div>
         </div>
-        <p v-if="novelError" class="scope-error">{{ novelError }}</p>
-        <div v-if="novelSearching" class="scope-loading">
-          <LoadingSpinner message="正在搜索小说(经小说源连接,首次可能需要十几秒)..." />
-        </div>
-        <div v-if="novelHits.length" class="scope-rows">
-          <button
-            v-for="h in novelHits"
-            :key="h.id"
-            type="button"
-            class="scope-row"
-            @click="router.push(`/novels/series/${h.id}`)"
-          >
-            <svg class="scope-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-            </svg>
-            <span class="scope-row-main">
-              <span class="scope-row-title">{{ h.title }}</span>
-              <span v-for="tag in (h.tags ?? []).slice(0, 2)" :key="tag" class="scope-row-badge">{{ tag }}</span>
-            </span>
-            <span class="scope-row-sub">
-              {{ h.author || '未知作者' }}
-              <template v-if="h.wordCount"> · {{ h.wordCount }}</template>
-              <template v-if="h.views"> · 阅读 {{ formatCount(parseLikes(h.views)) }}</template>
-              <template v-if="h.favorites"> · 收藏 {{ formatCount(parseLikes(h.favorites)) }}</template>
-              <template v-if="h.publishedDate"> · {{ h.publishedDate }}</template>
-            </span>
-          </button>
-        </div>
-        <div v-if="novelPageNo < novelTotalPages && novelHits.length" class="scope-more-row">
-          <button type="button" class="scope-more-btn" :disabled="novelLoadingMore" @click="loadMoreNovels">
-            {{ novelLoadingMore ? `加载中…(站点限速约 3 秒/次)` : `加载更多(第 ${novelPageNo + 1}/${novelTotalPages} 页)` }}
-          </button>
-        </div>
+        <MediaCollection
+          v-if="novelSearchedKw"
+          :items="novelMediaItems"
+          density="novel"
+          pager="button"
+          :loading="novelSearching"
+          loading-hint="正在搜索小说(经小说源连接,首次可能需要十几秒)..."
+          :loading-more="novelLoadingMore"
+          loading-more-label="加载中…(站点限速约 3 秒/次)"
+          :has-more="novelPageNo < novelTotalPages"
+          :more-label="`加载更多(第 ${novelPageNo + 1}/${novelTotalPages} 页)`"
+          :error="novelError"
+          empty-title="没有匹配的系列"
+          end-text=""
+          @load-more="loadMoreNovels"
+          @retry="novelHits.length ? loadMoreNovels() : handleNovelSearch()"
+        />
       </template>
 
       <template v-if="scope === 'comic'">
@@ -664,9 +647,6 @@ function goToSplit() {
   padding-bottom: var(--spacing-xl);
 }
 
-.scope-loading {
-  padding: var(--spacing-lg) 0;
-}
 
 .scope-video-grid {
   margin-top: var(--spacing-md);
@@ -775,139 +755,23 @@ function goToSplit() {
   color: #fff;
 }
 
-.scope-search {
-  display: flex;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-sm);
-}
 
-.scope-search-wrap {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-}
 
-.scope-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 14px;
-  border: 1px solid var(--color-border, var(--color-hairline));
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-caption);
-}
 
-.scope-btn-submit {
-  padding: 8px 18px;
-  border: none;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-primary);
-  color: #fff;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
 
-.scope-btn-submit:disabled {
-  opacity: 0.5;
-}
 
-.scope-error {
-  font-size: var(--font-size-caption);
-  color: var(--color-error);
-  margin: 0 0 var(--spacing-sm);
-}
 
 /* 1920 横屏行长可读性:全宽背景下结果列限宽居中 */
-.scope-rows {
-  max-width: 1100px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
 
-.scope-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 10px var(--spacing-md);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s;
-}
 
-.scope-row:hover {
-  border-color: var(--color-primary);
-}
 
-.scope-row-icon {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  color: var(--color-text-muted);
-  opacity: 0.5;
-}
 
-.scope-row-main {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  min-width: 0;
-}
 
-.scope-row-title {
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  /* 任务 15:标题完全显示(可换行) */
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
 
-.scope-row-badge {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  background: var(--color-divider-soft);
-  color: var(--color-text-secondary);
-}
 
-.scope-row-sub {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.scope-more-row {
-  display: flex;
-  justify-content: center;
-  max-width: 1100px;
-  margin: 0 auto;
-  width: 100%;
-}
 
-.scope-more-btn {
-  padding: 8px var(--spacing-lg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-card-bg);
-  color: var(--color-primary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
 
-.scope-more-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
 
 .sort-row {
   display: flex;

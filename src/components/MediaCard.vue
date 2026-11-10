@@ -28,12 +28,14 @@ const TAG_LIMIT = 3
 
 const showCover = computed(() => !!props.item.cover?.src && !imgError.value)
 const tags = computed(() => (props.item.tags ?? []).slice(0, TAG_LIMIT))
-const statsText = computed(() => {
+const statsText = computed(() => [baseStats.value, ...(props.item.extra ?? [])].filter(Boolean).join(' · '))
+const baseStats = computed(() => {
   const s = props.item.stats
   if (!s) return ''
   const parts: string[] = []
   if (s.likes) parts.push(`♥ ${formatCount(s.likes)}`)
   if (s.views) parts.push(`▶ ${formatCount(s.views)}`)
+  if (s.favorites) parts.push(`☆ ${formatCount(s.favorites)}`)
   if (s.chapters) parts.push(`${s.chapters} 章`)
   return parts.join('  ')
 })
