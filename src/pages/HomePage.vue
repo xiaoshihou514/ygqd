@@ -221,8 +221,10 @@ async function loadBikaTabs() {
         category,
       })),
     )
-  } catch {
-    // 源不可用(未登录/网络)时不追加其分类 tab,「最新」与静态 tab 不受影响
+  } catch (e) {
+    // 源不可用(未登录/网络)时不追加其分类 tab,「最新」与静态 tab 不受影响;
+    // 诊断日志保留(用户已登录仍看不到榜单时,从这里追因)
+    console.error('[home] 哔咔分类/榜单 tab 加载失败', errorMessage(e))
   }
 }
 
