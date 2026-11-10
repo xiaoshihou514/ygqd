@@ -145,6 +145,8 @@ export interface VideoCard {
   likes: string
   /** 中文字幕变体 */
   chinese?: boolean
+  /** 时长(fs1 封面遮罩 label,如「2:51:49」;missav 列表无,为空串) */
+  duration?: string
 }
 
 export interface VideoListResult {

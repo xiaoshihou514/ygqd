@@ -56,6 +56,8 @@ interface MediaItemBase {
   tags?: string[]
   /** 计数(展示统一走 formatCount 中文格式) */
   stats?: { likes?: number; views?: number; favorites?: number; chapters?: number }
+  /** 时长(fs1 有;missav 列表无;视频卡片封面遮罩展示) */
+  duration?: string
   /** 附加说明(字数/发布日期等站点原文),与计数同一行以「 · 」连接 */
   extra?: string[]
   /** 进度文案(「读到第 3 章 第 2 页」「看到 12 分 5 秒」) */
@@ -145,6 +147,7 @@ export function fromVideo(v: VideoCard, opts: { watched?: boolean } = {}): Media
     cover: { src: v.thumbnail || videoCoverUrl(v.code), source: 'video' },
     badges: videoBadges(v.code, v.chinese),
     stats: views ? { views } : undefined,
+    duration: v.duration || undefined,
     viewed: opts.watched,
     to: `/videos/${v.code}`,
   }
