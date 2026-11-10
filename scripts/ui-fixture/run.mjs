@@ -80,6 +80,9 @@ for (const width of [400, 1200]) {
   expect(width, '视频中字角标', r['video-grid'].toneCs, 2)
   expect(width, '视频无码角标', r['video-grid'].toneLeak, 1)
   expect(width, '视频已看', r['video-grid'].viewed, 1)
+  expect(width, '视频时长徽标(空时长隐藏)', r['video-grid'].durations, 3)
+  expect(width, '视频播放量遮罩(每卡一个)', r['video-grid'].overlayStats, 6)
+  expect(width, '时长与播放量遮罩不重叠', r['video-grid'].overlayOverlap, false)
   expect(width, '视频封面 16:9', r['video-grid'].coverRatio, (v) => Math.abs(v - 0.56) < 0.03)
   expect(width, '视频列数', r['video-grid'].columns, (v) => (narrow ? v === 2 : v >= 5))
   // 小说:无封面占位 5、榜单序号 5

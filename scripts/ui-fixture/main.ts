@@ -39,7 +39,7 @@ const videos: MediaItem[] = [
   'abc-006',
 ].map((code, i) =>
   fromVideo(
-    { code, title: `占位影片标题 ${i}`, thumbnail: '/__none__.jpg', views: '315 903', likes: '', chinese: code.includes('chinese') },
+    { code, title: `占位影片标题 ${i}`, thumbnail: '/__none__.jpg', views: '315 903', likes: '', chinese: code.includes('chinese'), duration: i % 2 ? '2:51:49' : '' },
     { watched: i === 1 },
   ),
 )
@@ -124,6 +124,15 @@ function measure() {
       hrefs: Array.from(root.querySelectorAll('a.media-hit[href]')).map((a) => a.getAttribute('href')),
       coverRatio: cover ? +(cover.getBoundingClientRect().height / cover.getBoundingClientRect().width).toFixed(2) : 0,
       overflowX: root.scrollWidth > root.clientWidth + 1,
+      overlayOverlap: (() => {
+        const card = Array.from(root.querySelectorAll('.media-card')).find((c) => c.querySelector('.media-overlay-duration'))
+        const a = card?.querySelector('.media-overlay-duration')?.getBoundingClientRect()
+        const b = card?.querySelector('.media-overlay-stat')?.getBoundingClientRect()
+        if (!a || !b) return null
+        return !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+      })(),
+      durations: root.querySelectorAll('.media-overlay-duration').length,
+      overlayStats: root.querySelectorAll('.media-overlay-stat').length,
       statGap: (() => {
         const items = root.querySelectorAll('.media-stats .stat-item')
         if (items.length < 2) return -1

@@ -179,11 +179,9 @@ onBeforeUnmount(() => {
           >{{ b.text }}</span>
         </span>
         <span v-if="item.viewed" class="media-viewed">{{ viewedText }}</span>
-        <span
-                  v-if="item.duration"
-                  class="media-overlay-duration"
-                >{{ item.duration }}</span>
-        <span v-if="showStats && layout === 'grid' && item.kind === 'video'" class="media-overlay-stat">
+        <span v-if="item.duration" class="media-overlay-duration">{{ item.duration }}</span>
+        <!-- 视频网格:播放量在封面左下、时长在右下(互不遮挡) -->
+        <span v-if="hasStats && layout === 'grid' && item.kind === 'video'" class="media-overlay-stat">
           <span v-for="(st, si) in statEntries" :key="si" class="stat-item" :class="st.icon && `stat-${st.icon}`">
             <svg v-if="st.icon" :data-icon="st.icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path :d="STAT_ICON_PATH[st.icon]" /></svg>
             {{ st.text }}
@@ -370,12 +368,12 @@ onBeforeUnmount(() => {
 
 .media-overlay-duration {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  right: var(--spacing-xs);
+  bottom: var(--spacing-xs);
   padding: 1px 6px;
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.65);
-  color: #fff;
+  background: var(--color-scrim);
+  color: var(--color-on-primary);
   font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
 }
@@ -385,7 +383,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--spacing-xs);
   position: absolute;
-  right: var(--spacing-xs);
+  left: var(--spacing-xs);
   bottom: var(--spacing-xs);
   padding: 1px 6px;
   border-radius: var(--radius-sm);
