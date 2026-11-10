@@ -1,21 +1,14 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { useTimeline } from '@/composables/useTimeline'
-import TimelineList from '@/components/TimelineList.vue'
 import { computed, onActivated, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { fetchItemHistory, fetchFavorites, removeFavorite } from '@/services/api'
-import { formatTimestamp } from '@/utils/formatTime'
 import type { FavoriteEntry } from '@/types'
 import { useViewHistory } from '@/composables/useViewHistory'
-import ProxyImage from '@/components/ProxyImage.vue'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComicHistory, fromTimeline } from '@/utils/mediaItem'
-import EmptyState from '@/components/EmptyState.vue'
-import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import { fromComicHistory, fromFavorite, fromTimeline, type MediaItem } from '@/utils/mediaItem'
 import type { ItemHistoryEntry } from '@/types'
 
-const router = useRouter()
 const { history, loading, load } = useViewHistory()
 
 // 历史分组:全部(三板块时间线混排)/漫画/视频/小说
@@ -34,12 +27,14 @@ const itemHistory = ref<ItemHistoryEntry[]>([])
 const itemLoading = ref(false)
 
 // 重构笔 4:时间线混排逻辑迁移 useTimeline(行为零变化)
-const { timeline, videoEntries, novelEntries, entryPosition, openTimelineEntry, kindLabel, formatPosition } = useTimeline(history, itemHistory)
+const { timeline, videoEntries, novelEntries } = useTimeline(history, itemHistory)
+const timelineItems = computed(() => timeline.value.map((e) => fromTimeline(e)))
 const comicHistoryItems = computed(() => history.value.map(fromComicHistory))
 const novelHistoryItems = computed(() => novelEntries.value.map((e) => fromTimeline(e, { kindBadge: false })))
 const videoHistoryItems = computed(() => videoEntries.value.map((e) => fromTimeline(e, { kindBadge: false })))
 // —— 收藏分组(⑯ 关注页重组:收藏并入历史) ——
 const favorites = ref<FavoriteEntry[]>([])
+const favoriteItems = computed(() => favorites.value.map(fromFavorite))
 const favLoading = ref(false)
 
 async function loadFavorites() {
@@ -53,7 +48,13 @@ async function loadFavorites() {
   }
 }
 
-async function unfavorite(fav: FavoriteEntry) {
+/** 收藏条目 key(fav:source:comicId)反查原收藏 */
+function favoriteOf(item: MediaItem): FavoriteEntry | undefined {
+  return favorites.value.find((f) => `fav:${f.source}:${f.comicId}` === item.key)
+}
+
+async function unfavorite(fav: FavoriteEntry | undefined) {
+  if (!fav) return
   try {
     await removeFavorite(fav.source, fav.comicId)
     favorites.value = favorites.value.filter(
@@ -106,101 +107,74 @@ onMounted(async () => {
         </button>
       </div>
 
-      <!-- 全部:三板块时间线混排(viewedAt 降序交错) -->
-      <template v-if="scope === 'all'">
-        <LoadingSpinner v-if="loading || itemLoading" message="加载历史..." />
-        <EmptyState
-          v-else-if="timeline.length === 0"
-          title="还没有浏览记录"
-          message="看漫画、播放视频、读小说都会自动记录在这里"
-        />
-        <TimelineList
-          v-else
-          :entries="timeline"
-          :loading="loading || itemLoading"
-          empty-title="还没有浏览记录"
-          empty-message="看漫画、播放视频、读小说都会自动记录在这里"
-          @open="openTimelineEntry"
-        />
-      </template>
+      <!-- 全部:三板块时间线混排(viewedAt 降序交错),行式 -->
+      <MediaCollection
+        v-if="scope === 'all'"
+        :items="timelineItems"
+        layout="row"
+        :loading="loading || itemLoading"
+        end-text=""
+        empty-title="还没有浏览记录"
+        empty-message="看漫画、播放视频、读小说都会自动记录在这里"
+      />
 
-      <!-- 漫画:存量网格 -->
-      <template v-else-if="scope === 'comic'">
-        <LoadingSpinner v-if="loading" message="加载中..." />
+      <!-- 漫画 -->
+      <MediaCollection
+        v-else-if="scope === 'comic'"
+        :items="comicHistoryItems"
+        density="comic"
+        :loading="loading"
+        end-text=""
+        empty-title="还没有浏览记录"
+        empty-message="查看漫画详情时会自动记录"
+      />
 
-        <EmptyState
-          v-else-if="history.length === 0"
-          title="还没有浏览记录"
-          message="查看漫画详情时会自动记录"
-        />
+      <!-- 视频(含播放进度) -->
+      <MediaCollection
+        v-else-if="scope === 'video'"
+        :items="videoHistoryItems"
+        density="video"
+        :loading="itemLoading"
+        end-text=""
+        empty-title="还没有视频观看记录"
+        empty-message="播放视频时会自动记录"
+      />
 
-        <MediaCollection v-else :items="comicHistoryItems" density="comic" end-text="" />
-      </template>
+      <!-- 小说(含阅读进度) -->
+      <MediaCollection
+        v-else-if="scope === 'novel'"
+        :items="novelHistoryItems"
+        density="novel"
+        :loading="itemLoading"
+        end-text=""
+        empty-title="还没有阅读记录"
+        empty-message="阅读小说时会自动记录进度"
+      />
 
-      <!-- 视频:封面网格(统一卡片,含播放进度) -->
-      <template v-else-if="scope === 'video'">
-        <MediaCollection
-          :items="videoHistoryItems"
-          density="video"
-          :loading="itemLoading"
-          end-text=""
-          empty-title="还没有视频观看记录"
-          empty-message="播放视频时会自动记录"
-        />
-      </template>
-
-      <!-- 收藏:哔咔/本站收藏列表(⑯ 关注页重组迁入) -->
-      <template v-else-if="scope === 'favorites'">
-        <LoadingSpinner v-if="favLoading" message="加载收藏..." />
-        <EmptyState
-          v-else-if="!favorites.length"
-          title="还没有收藏漫画"
-          message="在漫画详情页点击「收藏」,两个来源的漫画都可以收藏"
-        />
-        <div v-else class="favorite-list">
-          <div
-            v-for="fav in favorites"
-            :key="`${fav.source}:${fav.comicId}`"
-            class="favorite-card"
-            @click="router.push(`/comic/${fav.source}/${fav.categoryId ?? 9}/${fav.comicId}`)"
+      <!-- 收藏:行式 + 取消收藏操作 -->
+      <MediaCollection
+        v-else
+        :items="favoriteItems"
+        layout="row"
+        :loading="favLoading"
+        end-text=""
+        empty-title="还没有收藏漫画"
+        empty-message="在漫画详情页点击「收藏」,两个来源的漫画都可以收藏"
+      >
+        <template #actions="{ item }">
+          <button
+            type="button"
+            class="favorite-remove"
+            title="取消收藏"
+            aria-label="取消收藏"
+            @click.stop="unfavorite(favoriteOf(item))"
           >
-            <ProxyImage
-              :src="fav.thumbnail"
-              :source="fav.source"
-              class="favorite-thumb"
-              loading="lazy"
-            />
-            <div class="favorite-info">
-              <span class="favorite-title">{{ fav.title }}</span>
-              <span class="favorite-meta">{{ fav.author || '' }} · 收藏于 {{ formatTimestamp(fav.createdAt) }}</span>
-            </div>
-            <button
-              type="button"
-              class="favorite-remove"
-              title="取消收藏"
-              aria-label="取消收藏"
-              @click.stop="unfavorite(fav)"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </template>
-
-      <!-- 小说:封面网格(与漫画同一形态,用户口径「像漫画一样」) -->
-      <template v-else>
-        <MediaCollection
-          :items="novelHistoryItems"
-          density="novel"
-          :loading="itemLoading"
-          end-text=""
-          empty-title="还没有阅读记录"
-          empty-message="阅读小说时会自动记录进度"
-        />
-      </template>
-
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+            </svg>
+          </button>
+        </template>
+      </MediaCollection>
     </div>
   </div>
 </template>
@@ -248,58 +222,12 @@ onMounted(async () => {
 
 
 
-.favorite-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
 
-.favorite-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
 
-.favorite-card:hover {
-  border-color: var(--color-primary);
-}
 
-.favorite-thumb {
-  flex-shrink: 0;
-  width: 44px;
-  height: 33px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  object-fit: cover;
-}
 
-.favorite-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 
-.favorite-title {
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.favorite-meta {
-  font-size: var(--font-size-fine-print);
-  color: var(--color-text-secondary);
-}
 
 .favorite-remove {
   flex-shrink: 0;
