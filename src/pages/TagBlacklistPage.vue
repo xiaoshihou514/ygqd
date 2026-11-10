@@ -670,6 +670,7 @@ async function handleExport() {
   border-radius: var(--radius-md);
   transition: border-color 0.2s;
   gap: var(--spacing-sm);
+  min-width: 0;
 }
 
 .tag-item:hover {
