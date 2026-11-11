@@ -262,26 +262,6 @@ fn handle_img(path_b64: &str) -> (u16, String, Vec<u8>) {
     }
 }
 
-/// 处理网关回传 POST(id + body),交给 GatewayManager
-fn handle_gwresult(query: &str, body: &str) -> (u16, Vec<u8>) {
-    // query 形如 id=g123
-    let id = query
-        .split('&')
-        .find_map(|kv| kv.strip_prefix("id="))
-        .unwrap_or("")
-        .to_string();
-    if let Some(app) = APP.get() {
-        use tauri::Manager as _;
-        app.state::<crate::gateway::GatewayManager>()
-            .resolve_reply(crate::gateway::GatewayReply {
-                id,
-                status: 200,
-                body: body.to_string(),
-            });
-    }
-    (200, b"ok".to_vec())
-}
-
 fn respond(stream: &mut TcpStream, status: u16, ct: &str, body: Vec<u8>, extra: &[(&str, &str)]) {
     let reason = match status {
         200 => "OK",
@@ -451,27 +431,6 @@ fn handle_client(mut stream: TcpStream) {
             body,
             &[("Access-Control-Allow-Origin", "*")],
         );
-    } else if path == "/gwfinish" {
-        let label = query
-            .split('&')
-            .find_map(|kv| kv.strip_prefix("label="))
-            .map(urldecode)
-            .unwrap_or_default();
-        if let Some(app) = APP.get() {
-            crate::gateway::diag(app, "[通道观测] gwfinish 经降级 fetch 通道到达");
-            let _ = crate::gateway::finish(app, &label);
-        }
-        respond(
-            &mut stream,
-            200,
-            "text/plain",
-            b"ok".to_vec(),
-            &[("Access-Control-Allow-Origin", "*")],
-        );
-    } else if path == "/gwresult" && !query.is_empty() {
-        if let Some(app) = APP.get() {
-            crate::gateway::diag(app, "[通道观测] gwresult 经降级 fetch 通道到达");
-        }
         let (status, body) = handle_gwresult(&query, &body_str);
         respond(
             &mut stream,

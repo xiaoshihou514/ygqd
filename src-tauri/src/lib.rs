@@ -1,10 +1,9 @@
 mod db;
-mod gateway;
+mod diagnostics;
 mod models;
 mod sources;
 mod stream_proxy;
 
-use gateway::GatewayManager;
 use models::Source;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
 use rusqlite::Connection;
@@ -216,84 +215,6 @@ async fn fetch_image(
 /// 小说链路无头自检(仅 debug 构建,环境变量 YGQD_SELFTEST_NOVEL=关键词 门控):
 /// 搜索 → 首条系列目录 → 首章第 1 页,diag 只记条数/字节/字段非空数,
 /// 不落正文内容。用于无界面端到端验证网关 + 会话 cookie 是否可用。
-#[cfg(debug_assertions)]
-fn spawn_novel_selftest(app: AppHandle) {
-    // 临时侦察:YGQD_TMP_FETCH=空格分隔的多 URL,逐个经网关抓取落盘
-    // (取证完成后移除)
-    if let Ok(urls) = std::env::var("YGQD_TMP_FETCH") {
-        let probe_app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(10));
-            tauri::async_runtime::block_on(async {
-                let manager = probe_app.state::<GatewayManager>();
-                let manager_ref = manager.inner();
-                for (i, url) in urls.split(' ').enumerate() {
-                    let start = std::time::Instant::now();
-                    let r = gateway::gateway_fetch(&probe_app, manager_ref, "hlib", url).await;
-                    let body = r.unwrap_or_else(|e| format!("ERR {e}"));
-                    if let Some(dir) = gateway::diag_dir() {
-                        let _ = std::fs::write(dir.join(format!("recon_{i}.html")), &body);
-                    }
-                    gateway::diag(
-                        &probe_app,
-                        &format!("[临时抓取] {i} url={url} bytes={}", body.len()),
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
-                }
-                gateway::diag(&probe_app, "[临时抓取] 完成");
-            });
-        });
-        return;
-    }
-    let Ok(keyword) = std::env::var("YGQD_SELFTEST_NOVEL") else {
-        return;
-    };
-    tauri::async_runtime::spawn(async move {
-        let log = |msg: String| gateway::diag(&app, &format!("[自检] {msg}"));
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let started = Instant::now();
-        let hits = match sources::novel::search_series(&app, &keyword).await {
-            Ok(hits) => hits,
-            Err(e) => return log(format!("novel_search FAIL: {e}")),
-        };
-        log(format!(
-            "novel_search OK 条数={} 作者非空={} 带标签={} 耗时={}s",
-            hits.len(),
-            hits.iter().filter(|h| !h.author.is_empty()).count(),
-            hits.iter().filter(|h| !h.tags.is_empty()).count(),
-            started.elapsed().as_secs()
-        ));
-        let Some(first) = hits.first() else { return };
-        let series = match sources::novel::fetch_series(&app, &first.id).await {
-            Ok(series) => series,
-            Err(e) => return log(format!("fetch_series FAIL id={}: {e}", first.id)),
-        };
-        log(format!(
-            "fetch_series OK id={} 章节数={} 标题字符数={} 作者非空={} 简介非空={} cover空={}",
-            series.id,
-            series.chapters.len(),
-            series.title.chars().count(),
-            !series.author.is_empty(),
-            !series.introduction.is_empty(),
-            series.cover.is_empty()
-        ));
-        let Some(chapter) = series.chapters.first() else {
-            return;
-        };
-        // 站点对连续抓取敏感,章节请求前留间隔
-        tokio::time::sleep(Duration::from_secs(10)).await;
-        match sources::novel::fetch_article_page(&app, &chapter.id, 1).await {
-            Ok(page) => log(format!(
-                "novel_read OK id={} 正文字符数={} 总页数={} 标题非空={}",
-                chapter.id,
-                page.text.chars().count(),
-                page.total_pages,
-                !page.title.is_empty()
-            )),
-            Err(e) => log(format!("novel_read FAIL id={}: {e}", chapter.id)),
-        }
-    });
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -301,7 +222,7 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            gateway::init_diag_dir(dir.clone());
+            diagnostics::init_diag_dir(dir.clone());
             let mut headers = HeaderMap::new();
             headers.insert(
                 USER_AGENT,
@@ -321,13 +242,10 @@ pub fn run() {
                 None
             } else {
                 Some(&address)
-            })?;
-            app.manage(GatewayManager::new());
+            })?;;
             let proxy_port = stream_proxy::spawn()?;
             stream_proxy::set_app(app.handle().clone());
-            gateway::diag(app.handle(), &format!("app setup done, proxy port={proxy_port}"));
-            #[cfg(debug_assertions)]
-            spawn_novel_selftest(app.handle().clone());
+            diagnostics::diag(app.handle(), &format!("app setup done, proxy port={proxy_port}"));
             app.manage(AppState {
                 niacg,
                 video,
@@ -348,13 +266,8 @@ pub fn run() {
             commands::video::fetch_video_list,
             commands::video::search_videos,
             commands::video::fetch_video_detail,
-            commands::gateway::gateway_fetch,
-            commands::gateway::gateway_open,
-            commands::gateway::gateway_set_visible,
-            commands::gateway::gateway_finish,
             commands::gateway::diag_read,
             commands::gateway::diag_clear,
-            commands::gateway::gateway_result,
             commands::settings::record_item_history,
             commands::settings::fetch_item_history,
             commands::video::video_follow,
@@ -362,26 +275,6 @@ pub fn run() {
             commands::video::video_follow_list,
             commands::video::video_follow_targets,
             commands::video::video_follow_works,
-            commands::novel::novel_blacklist_list,
-            commands::novel::novel_blacklist_add,
-            commands::novel::novel_blacklist_remove,
-            commands::novel::novel_recommend,
-            commands::novel::novel_ranking,
-            commands::novel::novel_followed_author_works,
-            commands::novel::novel_followed_authors,
-            commands::novel::novel_follow_author,
-            commands::novel::novel_unfollow_author,
-            commands::novel::novel_series_info,
-            commands::novel::novel_add,
-            commands::novel::novel_search,
-            commands::novel::novel_search_page,
-            commands::novel::novel_latest,
-            commands::novel::novel_shelf,
-            commands::novel::novel_remove,
-            commands::novel::novel_read,
-            commands::novel::novel_prefetch,
-            commands::novel::novel_progress,
-            commands::novel::novel_set_progress,
             commands::comic::bika_switch_like,
             commands::comic::bika_switch_favourite,
             commands::comic::fetch_favorites,

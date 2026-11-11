@@ -1,9 +1,9 @@
 //! video 域 command(重构笔 3:按源分组)
 
 use crate::db;
+use crate::diagnostics::diag;
 use crate::fetch_image_with_client;
 use crate::fetch_image_with_wreq;
-use crate::gateway;
 use crate::models::*;
 use crate::sources;
 use crate::AppState;
@@ -43,14 +43,14 @@ pub(crate) async fn search_videos(
     }
     let out = match state.video.search(&keyword, page).await {
         Ok(v) => {
-            gateway::diag(
+            diagnostics::diag(
                 &app,
                 &format!("search ok kw={keyword} items={}", v.items.len()),
             );
             v
         }
         Err(e) => {
-            gateway::diag(&app, &format!("search FAIL kw={keyword} err={e}"));
+            diagnostics::diag(&app, &format!("search FAIL kw={keyword} err={e}"));
             return Err(e);
         }
     };
@@ -94,7 +94,7 @@ pub(crate) async fn fetch_video_image(
         fetch_image_with_client(state.video.client.clone(), url.clone()).await
     };
     if let Err(e) = &result {
-        gateway::diag(&app, &format!("video image FAIL {url}: {e}"));
+        diagnostics::diag(&app, &format!("video image FAIL {url}: {e}"));
     }
     result
 }
