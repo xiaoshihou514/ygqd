@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
         />
         <div v-else class="media-placeholder">
           <svg
-            v-else-if="item.kind === 'video'"
+            v-if="item.kind === 'video'"
             class="placeholder-icon"
             viewBox="0 0 24 24"
             fill="currentColor"

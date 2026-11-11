@@ -135,6 +135,7 @@ function measure() {
   const pre = document.createElement('pre')
   pre.id = 'result'
   pre.textContent = JSON.stringify(out)
+  ;(window as any).__lastResult = out
   document.body.appendChild(pre)
 }
 

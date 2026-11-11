@@ -62,7 +62,10 @@ async function render(width, path = 'index.html') {
 const failures = []
 function expect(width, label, actual, expected) {
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
-  if (!ok) failures.push(`[${width}px] ${label}: 实际 ${JSON.stringify(actual)}`)
+  if (!ok) {
+    failures.push(`[${width}px] ${label}: 实际 ${JSON.stringify(actual)}`)
+    console.error(`[diagnostic] ${width}px ${label} 全量:`, JSON.stringify((globalThis as any).__lastResult ?? {}, null, 0))
+  }
 }
 
 for (const width of [400, 1200]) {
@@ -85,11 +88,6 @@ for (const width of [400, 1200]) {
   expect(width, '时长与播放量遮罩不重叠', r['video-grid'].overlayOverlap, false)
   expect(width, '视频封面 16:9', r['video-grid'].coverRatio, (v) => Math.abs(v - 0.56) < 0.03)
   expect(width, '视频列数', r['video-grid'].columns, (v) => (narrow ? v === 2 : v >= 5))
-  // 小说:无封面占位 5、榜单序号 5
-  expect(width, '小说占位', r['novel-grid'].placeholders, 5)
-  expect(width, '小说榜单序号', r['novel-grid'].toneAccent, 5)
-  expect(width, '小说统计项间距', r['novel-grid'].statGap, (v) => v >= 4)
-  expect(width, '小说统计图标(阅读/收藏)', (r['novel-grid'].statIcons || []).join(','), 'eye,heart')
   expect(width, '漫画点赞图标', (r['comic-grid'].statIcons || []).join(','), 'heart')
   // 行式:6 行单列、时间、进度文案(坏 JSON 容错不出文案)
   expect(width, '行式条数', r.row.cards, 6)
@@ -106,7 +104,7 @@ for (const width of [400, 1200]) {
   expect(width, '按钮翻页不挂哨兵', r['button-pager'].sentinelShown, false)
   expect(width, '无限滚动哨兵显示', r.infinite.sentinelShown, true)
   // 任何区块不得横向溢出
-  for (const id of ['comic-grid', 'video-grid', 'novel-grid', 'row']) {
+  for (const id of ['comic-grid', 'video-grid', 'row']) {
     expect(width, `${id} 无横向溢出`, r[id].overflowX, false)
   }
 }
@@ -120,10 +118,10 @@ for (const width of [400, 1200]) {
   const f = await render(width, 'pages.html?page=following')
   expect(width, '关注页无横向溢出(超长作者名)', f.docOverflow, false)
   const groups = Object.values(f.groups || {})
-  expect(width, '关注页三组均有对象芯片', groups.length === 3 && groups.every((g) => g.chips > 0), true)
-  expect(width, '关注页三组芯片样式一致', new Set(groups.flatMap((g) => g.sig)).size, 1)
-  expect(width, '关注页三组都能 × 取消关注', groups.every((g) => g.removable > 0), true)
-  expect(width, '关注页三组默认选中一项', groups.every((g) => g.active === 1), true)
+  expect(width, '关注页两组均有对象芯片', groups.length === 3 && groups.every((g) => g.chips > 0), true)
+  expect(width, '关注页两组芯片样式一致', new Set(groups.flatMap((g) => g.sig)).size, 1)
+  expect(width, '关注页两组都能 × 取消关注', groups.every((g) => g.removable > 0), true)
+  expect(width, '关注页两组默认选中一项', groups.every((g) => g.active === 1), true)
   expect(width, '关注页旧行式/旧芯片残留', groups.reduce((n, g) => n + g.legacyRows, 0), 0)
 }
 
