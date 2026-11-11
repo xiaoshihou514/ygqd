@@ -20,13 +20,12 @@ defineOptions({ name: 'HomePage' })
 const HOME_STATE_KEY = 'home_page_state_v2'
 /** 「最新」混合流固定取 niacg 的漫画分类 */
 /** 内容分段:漫画/视频/小说(小说源接入前的占位) */
-type ContentSegment = 'comic' | 'video' | 'novel'
+type ContentSegment = 'comic' | 'video'
 const segment = ref<ContentSegment>('comic')
 const videoFeed = useVideoFeed()
 const SEGMENTS: { key: ContentSegment; label: string }[] = [
   { key: 'comic', label: '漫画' },
   { key: 'video', label: '视频' },
-  { key: 'novel', label: '小说' },
 ]
 function switchSegment(key: ContentSegment) {
   segment.value = key
@@ -329,16 +328,6 @@ onUnmounted(() => {
         @retry="videoFeed.items.value.length ? videoFeed.loadMore() : videoFeed.reload()"
       />
 
-      <div v-else-if="segment === 'novel'" class="novel-entry">
-        <EmptyState
-          title="小说"
-          message="最新小说流与站内搜索,点「打开小说」开始浏览"
-        >
-          <button class="retry-btn" @click="router.push('/novels')">
-            打开小说
-          </button>
-        </EmptyState>
-      </div>
 
       <template v-else>
       <div v-if="loading" class="home-loading">

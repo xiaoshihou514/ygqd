@@ -48,21 +48,6 @@ const router = createRouter({
       component: () => import('@/pages/TargetWorksPage.vue'),
     },
     {
-      path: '/novels',
-      name: 'novels',
-      component: () => import('@/pages/NovelPage.vue'),
-    },
-    {
-      path: '/novels/series/:id',
-      name: 'novel-series-detail',
-      component: () => import('@/pages/NovelSeriesDetailPage.vue'),
-    },
-    {
-      path: '/novels/:id',
-      name: 'novel-reader',
-      component: () => import('@/pages/NovelReaderPage.vue'),
-    },
-    {
       path: '/following',
       name: 'following',
       component: () => import('@/pages/FollowingPage.vue'),
