@@ -12,13 +12,12 @@ import type { ItemHistoryEntry } from '@/types'
 const { history, loading, load } = useViewHistory()
 
 // 历史分组:全部(三板块时间线混排)/漫画/视频/小说
-type HistoryScope = 'all' | 'comic' | 'video' | 'novel' | 'favorites'
+type HistoryScope = 'all' | 'comic' | 'video' | 'favorites'
 const scope = ref<HistoryScope>('all')
 const SCOPES: Array<{ key: HistoryScope; label: string }> = [
   { key: 'all', label: '全部' },
   { key: 'comic', label: '漫画' },
   { key: 'video', label: '视频' },
-  { key: 'novel', label: '小说' },
   { key: 'favorites', label: '收藏' },
 ]
 
@@ -27,10 +26,9 @@ const itemHistory = ref<ItemHistoryEntry[]>([])
 const itemLoading = ref(false)
 
 // 重构笔 4:时间线混排逻辑迁移 useTimeline(行为零变化)
-const { timeline, videoEntries, novelEntries } = useTimeline(history, itemHistory)
+const { timeline, videoEntries } = useTimeline(history, itemHistory)
 const timelineItems = computed(() => timeline.value.map((e) => fromTimeline(e)))
 const comicHistoryItems = computed(() => history.value.map(fromComicHistory))
-const novelHistoryItems = computed(() => novelEntries.value.map((e) => fromTimeline(e, { kindBadge: false })))
 const videoHistoryItems = computed(() => videoEntries.value.map((e) => fromTimeline(e, { kindBadge: false })))
 // —— 收藏分组(⑯ 关注页重组:收藏并入历史) ——
 const favorites = ref<FavoriteEntry[]>([])
@@ -115,7 +113,7 @@ onMounted(async () => {
         :loading="loading || itemLoading"
         end-text=""
         empty-title="还没有浏览记录"
-        empty-message="看漫画、播放视频、读小说都会自动记录在这里"
+        empty-message="看漫画、播放视频都会自动记录在这里"
       />
 
       <!-- 漫画 -->
@@ -138,17 +136,6 @@ onMounted(async () => {
         end-text=""
         empty-title="还没有视频观看记录"
         empty-message="播放视频时会自动记录"
-      />
-
-      <!-- 小说(含阅读进度) -->
-      <MediaCollection
-        v-else-if="scope === 'novel'"
-        :items="novelHistoryItems"
-        density="novel"
-        :loading="itemLoading"
-        end-text=""
-        empty-title="还没有阅读记录"
-        empty-message="阅读小说时会自动记录进度"
       />
 
       <!-- 收藏:行式 + 取消收藏操作 -->

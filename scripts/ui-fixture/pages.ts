@@ -12,19 +12,13 @@ const mock: Record<string, unknown> = {
     { tag: 'averyveryverylongasciitagwithoutanyspacesatall_xxxxxxxxxxxxxxxx', mode: 'hide' },
     ...Array.from({ length: 6 }, (_, i) => ({ tag: `标签${i}`, mode: 'hide' })),
   ],
-  novel_blacklist_list: [
-    { keyword: LONG, createdAt: 0 },
-    { keyword: 'averyveryverylongasciikeywordwithoutspaces_yyyyyyyyyyyyyyyyyyyy', createdAt: 0 },
-  ],
   bika_status: { loggedIn: false, email: '' },
   bika_address: '',
   bika_addresses: [],
   diag_read: '',
   fetch_followed_authors: [{ author: LONG, followedAt: 0, lastCheckedAt: 0 }, { author: '作者乙', followedAt: 0, lastCheckedAt: 0 }],
   fetch_follows: [{ author: LONG, followedAt: 0, lastCheckedAt: 0 }, { author: '作者乙', followedAt: 0, lastCheckedAt: 0 }],
-  novel_followed_author_works: [{ id: '5', title: '作品', author: '作者乙' }],
   video_follow_works: { items: [], pagination: { hasNext: false, page: 1 } },
-  novel_followed_authors: [{ authorId: '1', authorName: LONG }, { authorId: '2', authorName: '作者乙' }],
   video_follow_list: [{ source: 'missav', kind: 'actress', targetId: LONG, displayName: LONG, followedAt: 0 }],
   video_follow_targets: [],
 }
@@ -88,7 +82,7 @@ async function measureTabs() {
       removable: document.querySelectorAll('#app .follow-chip .follow-chip-remove').length,
       active: document.querySelectorAll('#app .follow-chip.active').length,
       sig,
-      legacyRows: document.querySelectorAll('#app .follow-row, #app .author-chip, #app .novel-author-chip').length,
+      legacyRows: document.querySelectorAll('#app .follow-row, #app .author-chip').length,
     }
   }
   ;(window as any).__groups = groups

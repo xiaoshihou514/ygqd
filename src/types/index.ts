@@ -186,57 +186,10 @@ export interface VideoMetaLink {
   name: string
 }
 
-export interface NovelChapter {
-  id: string
-  order: number
-  title: string
-}
 
-export interface NovelSeries {
-  id: string
-  title: string
-  author: string
-  /** 作者编号(hlib /u/{数字};关注作者用,作者名不能代替) */
-  authorId?: string
-  /** 系列封面 URL(hlib 站点不提供,恒为空串;展示层走占位图标) */
-  cover?: string
-  /** 简介(来源页面 meta description,可能含站点文案,展示层截断) */
-  introduction?: string
-  chapters: NovelChapter[]
-  addedAt: number
-}
 
-export interface NovelHit {
-  id: string
-  title: string
-  /** 作者(登录墙未登录时列表可能拿不到,可空) */
-  author?: string
-  /** 作者编号(hlib /u/{数字}) */
-  authorId?: string
-  /** 内容标签(可空,未登录时可能拿不到) */
-  tags?: string[]
-  /** 发布日期(简介 meta 行「YYYY/MM/DD 首发」;格式不符为空;未登录无) */
-  publishedDate?: string
-  /** 字数(站点原始文本,如「8,391字」;未登录无) */
-  wordCount?: string
-  /** 阅读量(站点原始文本,如「119」;未登录无) */
-  views?: string
-  /** 收藏量(站点原始文本;未登录无) */
-  favorites?: string
-}
 
-/** 小说搜索分页结果(站点每页 30 条,热门词可达数百页) */
-export interface NovelSearchPage {
-  hits: NovelHit[]
-  page: number
-  totalPages: number
-}
 
-/** 小说关注作者(后端 novel_followed_authors 返回;authorId 以作者名充当标识) */
-export interface AuthorFollow {
-  authorId: string
-  authorName: string
-}
 
 /** 视频关注条目(video_follow_list;follow_target 统一表) */
 export interface FollowTargetEntry {
@@ -255,12 +208,6 @@ export interface FollowTargetItem {
   workCount?: number
 }
 
-/** 发现流最新系列的一页(首页第 1 页不带参数,深页走 ?p=;空页后端抛错终止) */
-export interface NovelLatestPage {
-  hits: NovelHit[]
-  page: number
-  totalPages: number
-}
 
 /** 全局历史条目(item_history 表;视频/小说写入,漫画走存量 view_history) */
 export interface ItemHistoryEntry {
@@ -275,15 +222,4 @@ export interface ItemHistoryEntry {
   thumbnail?: string
 }
 
-/** 小说关键词黑名单条目(novel_blacklist_list;标题子串匹配,按创建倒序) */
-export interface NovelBlacklistEntry {
-  keyword: string
-  createdAt: number
-}
 
-export interface NovelPage {
-  title: string
-  author: string
-  text: string
-  totalPages: number
-}

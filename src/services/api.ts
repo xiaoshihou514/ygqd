@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { BikaRankTT, SourceId } from '@/config/sources'
-import type { AuthorFollow, BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowTargetEntry, FollowTargetItem, FollowedAuthor, ItemHistoryEntry, NovelBlacklistEntry, NovelHit, NovelLatestPage, NovelPage, NovelSearchPage, NovelSeries, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
+import type { BikaAccountStatus, BlacklistEntry, CategoryListResult, ComicDetail, ComicImagesResult, ComicItem, FavoriteEntry, FollowTargetEntry, FollowTargetItem, FollowedAuthor, ItemHistoryEntry, SearchParams, SearchResult, VideoDetail, VideoListResult, ViewHistoryEntry } from '../types'
 
 export const fetchCategoryList = (source: SourceId, category: string, page: number) => invoke<CategoryListResult>('fetch_category', { source, category, page })
 export const fetchBikaCategories = () => invoke<string[]>('fetch_bika_categories')
@@ -36,32 +36,6 @@ export const gatewayOpen = (label: string) => invoke<void>('gateway_open', { lab
 export const fetchVideoList = (page = 1) => invoke<VideoListResult>('fetch_video_list', { page })
 export const searchVideos = (keyword: string, page = 1) => invoke<VideoListResult>('search_videos', { keyword, page })
 export const fetchVideoDetail = (code: string) => invoke<VideoDetail>('fetch_video_detail', { code })
-export const novelAdd = (input: string) => invoke<NovelSeries>('novel_add', { input })
-export const novelSeriesInfo = (id: string) => invoke<NovelSeries>('novel_series_info', { id })
-export const novelSearch = (keyword: string) => invoke<NovelHit[]>('novel_search', { keyword })
-export const novelSearchPage = (
-  keyword: string,
-  page: number,
-  sort?: 'score' | 'date' | 'total' | 'char' | 'like',
-) => invoke<NovelSearchPage>('novel_search_page', { keyword, page, sort })
-export const novelRecommend = (page?: number) =>
-  invoke<NovelLatestPage>('novel_recommend', { page })
-export const novelRanking = (period: 'day' | 'week' | 'month', page?: number) =>
-  invoke<NovelLatestPage>('novel_ranking', { period, page })
-export const novelFollowAuthor = (authorId: string, authorName: string) =>
-  invoke<void>('novel_follow_author', { authorId, authorName })
-export const novelUnfollowAuthor = (authorId: string) =>
-  invoke<void>('novel_unfollow_author', { authorId })
-export const novelFollowedAuthors = () =>
-  invoke<AuthorFollow[]>('novel_followed_authors')
-export const novelFollowedAuthorWorks = (authorId: string) =>
-  invoke<NovelHit[]>('novel_followed_author_works', { authorId })
-export const novelBlacklistList = () =>
-  invoke<NovelBlacklistEntry[]>('novel_blacklist_list')
-export const novelBlacklistAdd = (keyword: string) =>
-  invoke<void>('novel_blacklist_add', { keyword })
-export const novelBlacklistRemove = (keyword: string) =>
-  invoke<void>('novel_blacklist_remove', { keyword })
 export const recordItemHistory = (
   source: string,
   kind: string,
@@ -86,14 +60,6 @@ export const videoFollowWorks = (
   targetId: string,
   page?: number,
 ) => invoke<VideoListResult>('video_follow_works', { source, kind, targetId, page })
-export const novelLatest = (page?: number) =>
-  invoke<NovelLatestPage>('novel_latest', { page })
-export const novelShelf = () => invoke<NovelSeries[]>('novel_shelf')
-export const novelRemove = (id: string) => invoke<void>('novel_remove', { id })
-export const novelRead = (chapterId: string, page: number) => invoke<NovelPage>('novel_read', { chapterId, page })
-export const novelPrefetch = (chapterId: string, page: number) => invoke<void>('novel_prefetch', { chapterId, page })
-export const novelProgress = (seriesId: string) => invoke<[number, number] | null>('novel_progress', { seriesId })
-export const novelSetProgress = (seriesId: string, chapterOrder: number, page: number, title?: string) => invoke<void>('novel_set_progress', { seriesId, chapterOrder, page, title })
 export const recordVideoWatched = (code: string) => invoke<void>('record_video_watched', { code })
 export const fetchVideoWatchedIds = (codes: string[]) => invoke<string[]>('fetch_video_watched_ids', { codes })
 export const fetchComicViewedIds = (source: SourceId, ids: string[]) => invoke<string[]>('fetch_comic_viewed_ids', { source, ids })

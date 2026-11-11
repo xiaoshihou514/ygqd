@@ -10,8 +10,6 @@ import type { SourceId } from '@/config/sources'
 import type {
   ComicItem,
   FavoriteEntry,
-  NovelHit,
-  NovelSeries,
   VideoCard,
   ViewHistoryEntry,
 } from '@/types'
@@ -20,7 +18,7 @@ import { comicPath } from '@/utils/comicPath'
 import { parseLikes } from '@/utils/likes'
 import { videoBaseCode } from '@/utils/videoCode'
 
-export type MediaKind = 'comic' | 'video' | 'novel'
+export type MediaKind = 'comic' | 'video'
 
 /** 角标色调:accent=强调(分类/榜单序号),cs=中字,leak=无码,neutral=中性 */
 export type MediaBadgeTone = 'accent' | 'cs' | 'leak' | 'neutral'
@@ -159,42 +157,8 @@ export function fromVideo(v: VideoCard, opts: { watched?: boolean } = {}): Media
  * open:点击去向。发现流/榜单直接进阅读器(任务 7);搜索/关注/历史进系列详情
  * (两种去向是现有产品行为,统一卡片不改变)
  */
-export function fromNovelHit(
-  h: NovelHit,
-  opts: { rank?: number; open?: 'reader' | 'series' } = {},
-): MediaItem {
-  const views = h.views ? parseLikes(h.views) : 0
-  const favorites = h.favorites ? parseLikes(h.favorites) : 0
-  const extra = [h.wordCount, h.publishedDate].filter((x): x is string => !!x)
-  return {
-    key: `novel:${h.id}`,
-    kind: 'novel',
-    title: h.title,
-    subtitle: h.author || undefined,
-    badges: opts.rank ? [{ text: `#${opts.rank}`, tone: 'accent' }] : undefined,
-    tags: h.tags,
-    stats: views || favorites ? { views: views || undefined, favorites: favorites || undefined } : undefined,
-    extra: extra.length ? extra : undefined,
-    to: opts.open === 'reader' ? `/novels/${h.id}` : `/novels/series/${h.id}`,
-  }
-}
 
 /** 书架/历史里的系列(progress=[章节序, 页码]) */
-export function fromNovelSeries(
-  s: NovelSeries,
-  progress?: [number, number] | null,
-): MediaItem {
-  return {
-    key: `novel:${s.id}`,
-    kind: 'novel',
-    title: s.title,
-    subtitle: s.author || undefined,
-    // hlib 不提供系列封面(cover 恒为空),卡片走书本图标占位
-    stats: s.chapters.length ? { chapters: s.chapters.length } : undefined,
-    progress: progress ? `读到第 ${progress[0]} 章` : undefined,
-    to: `/novels/series/${s.id}`,
-  }
-}
 
 // ───────── 全局历史时间线 ─────────
 
@@ -202,12 +166,6 @@ export function fromNovelSeries(
 export function timelineProgressText(e: Pick<TimelineEntry, 'kind' | 'progress'>): string {
   if (!e.progress) return ''
   try {
-    if (e.kind === 'novel') {
-      const p = JSON.parse(e.progress) as { chapter?: number; page?: number }
-      return [p.chapter ? `读到第 ${p.chapter} 章` : '', p.page ? `第 ${p.page} 页` : '']
-        .filter(Boolean)
-        .join(' ')
-    }
     if (e.kind === 'video') {
       const pos = (JSON.parse(e.progress) as { position?: number }).position
       if (typeof pos === 'number' && pos > 0) {
@@ -220,7 +178,7 @@ export function timelineProgressText(e: Pick<TimelineEntry, 'kind' | 'progress'>
   return ''
 }
 
-const KIND_LABEL: Record<MediaKind, string> = { comic: '漫画', video: '视频', novel: '小说' }
+const KIND_LABEL: Record<MediaKind, string> = { comic: '漫画', video: '视频' }
 
 /** kindBadge:混排时间线显示「漫画/视频/小说」角标;单板块分组里可关掉 */
 export function fromTimeline(e: TimelineEntry, opts: { kindBadge?: boolean } = {}): MediaItem {
@@ -229,11 +187,9 @@ export function fromTimeline(e: TimelineEntry, opts: { kindBadge?: boolean } = {
   if (e.kind === 'comic') {
     to = comicPath({ source: e.source as SourceId, categoryId: e.categoryId ?? 9, id: e.itemId })
     cover = e.thumbnail ? { src: e.thumbnail, source: e.source as SourceId } : undefined
-  } else if (e.kind === 'video') {
+  } else {
     to = `/videos/${e.itemId}`
     cover = { src: e.thumbnail || videoCoverUrl(e.itemId), source: 'video' }
-  } else {
-    to = `/novels/series/${e.itemId}`
   }
   return {
     key: `${e.kind}:${e.source}:${e.itemId}:${e.viewedAt}`,

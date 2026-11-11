@@ -2,8 +2,6 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
-import { novelBlacklistList, novelBlacklistAdd, novelBlacklistRemove } from '@/services/api'
-import type { NovelBlacklistEntry } from '@/types'
 import { useTheme } from '@/composables/useTheme'
 import {
   bikaLogin,
@@ -22,48 +20,6 @@ import type { BlacklistMode } from '@/types'
 const { entries, count, add, remove, updateMode } = useTagBlacklist()
 const { current, setTheme } = useTheme()
 
-// —— 小说关键词黑名单(批次 2 需求 5:子串匹配,后端过滤) ——
-const novelKeywords = ref<NovelBlacklistEntry[]>([])
-const novelKeywordInput = ref('')
-const novelAdding = ref(false)
-const novelError = ref('')
-
-async function loadNovelBlacklist() {
-  try {
-    novelKeywords.value = await novelBlacklistList()
-  } catch (e) {
-    console.error('[novel-blacklist]', errorMessage(e))
-  }
-}
-
-async function addNovelKeyword() {
-  const kw = novelKeywordInput.value.trim()
-  if (!kw || novelAdding.value) return
-  if (novelKeywords.value.some((e) => e.keyword === kw)) {
-    novelError.value = '该关键词已在黑名单中'
-    return
-  }
-  novelAdding.value = true
-  novelError.value = ''
-  try {
-    await novelBlacklistAdd(kw)
-    novelKeywords.value = [{ keyword: kw, createdAt: Date.now() }, ...novelKeywords.value]
-    novelKeywordInput.value = ''
-  } catch (e) {
-    novelError.value = errorMessage(e) || '添加失败'
-  } finally {
-    novelAdding.value = false
-  }
-}
-
-async function removeNovelKeyword(kw: string) {
-  try {
-    await novelBlacklistRemove(kw)
-    novelKeywords.value = novelKeywords.value.filter((e) => e.keyword !== kw)
-  } catch (e) {
-    novelError.value = errorMessage(e) || '移除失败'
-  }
-}
 
 const themeOptions = [
   { value: 'light' as const, label: '明亮' },
@@ -106,7 +62,6 @@ onMounted(async () => {
   } catch {
     // ignore address failures
   }
-  void loadNovelBlacklist()
 })
 
 async function handleSyncAddresses() {
@@ -472,40 +427,6 @@ async function handleExport() {
 
       <div class="section-divider" />
 
-      <div class="theme-section">
-        <h2 class="section-title">小说关键词黑名单</h2>
-        <p class="page-desc">
-          添加关键词到黑名单后，标题包含该关键词的小说都会被过滤隐藏（子串匹配，与漫画标签的精确匹配不同）。
-        </p>
-
-        <div class="add-bar">
-          <div class="input-wrap">
-            <input
-              v-model="novelKeywordInput"
-              type="text"
-              class="add-input"
-              placeholder="屏蔽包含此关键词的小说"
-              autocomplete="off"
-            />
-          </div>
-          <button type="submit" class="add-btn" :disabled="novelAdding" @click.prevent="addNovelKeyword">
-            {{ novelAdding ? '添加中…' : '添加' }}
-          </button>
-        </div>
-        <p v-if="novelError" class="add-error">{{ novelError }}</p>
-
-        <div v-if="novelKeywords.length" class="tag-grid">
-          <div v-for="e in novelKeywords" :key="e.keyword" class="tag-item">
-            <span class="tag-name">{{ e.keyword }}</span>
-            <button type="button" class="tag-remove" title="移除" aria-label="移除" @click="removeNovelKeyword(e.keyword)">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>

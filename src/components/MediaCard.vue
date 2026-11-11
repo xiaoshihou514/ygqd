@@ -53,7 +53,7 @@ const statEntries = computed<StatEntry[]>(() => {
 const extraText = computed(() => (props.item.extra ?? []).join(' · '))
 const hasStats = computed(() => statEntries.value.length > 0 || !!extraText.value)
 const showStats = computed(() => hasStats.value && !(props.layout === 'grid' && props.item.kind === 'video'))
-const viewedText = computed(() => (props.item.kind === 'novel' ? '已读' : '已看'))
+const viewedText = computed(() => '已看')
 
 // —— 点击:默认走应用内路由;有 href 的条目(漫画)保留 <a> 的中键/新窗口能力 ——
 const suppressClick = ref(false)
@@ -145,20 +145,6 @@ onBeforeUnmount(() => {
           @error="imgError = true"
         />
         <div v-else class="media-placeholder">
-          <svg
-            v-if="item.kind === 'novel'"
-            class="placeholder-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-          </svg>
           <svg
             v-else-if="item.kind === 'video'"
             class="placeholder-icon"

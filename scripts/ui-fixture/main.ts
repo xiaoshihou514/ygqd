@@ -7,8 +7,6 @@ import MediaCollection from '@/components/MediaCollection.vue'
 import {
   fromComic,
   fromFavorite,
-  fromNovelHit,
-  fromNovelSeries,
   fromTimeline,
   fromVideo,
   type MediaItem,
@@ -43,30 +41,23 @@ const videos: MediaItem[] = [
     { watched: i === 1 },
   ),
 )
-const novels: MediaItem[] = Array.from({ length: 5 }, (_, i) =>
-  fromNovelHit({ id: `${1000 + i}`, title: `占位小说 ${i}`, author: '作者', tags: ['甲', '乙'], views: '119', favorites: '12', wordCount: '8,391字' }, { rank: i + 1 }),
-)
-const shelf = fromNovelSeries({ id: '9', title: '书架系列', author: '作者', chapters: [{ id: 'a', order: 1, title: '一' }], addedAt: 0 }, [3, 1])
 const now = Date.now()
 const timeline: MediaItem[] = [
   fromTimeline({ kind: 'comic', source: 'niacg', itemId: 'c1', title: '历史漫画', viewedAt: now, categoryId: 3 }),
   fromTimeline({ kind: 'video', source: 'fs1', itemId: 'abc-001', title: '历史影片', viewedAt: now - 1000, progress: '{"position":725}' }),
-  fromTimeline({ kind: 'novel', source: 'hlib', itemId: '77', title: '历史小说', viewedAt: now - 2000, progress: '{"chapter":3,"page":2}' }),
   fromTimeline({ kind: 'video', source: 'fs1', itemId: 'abc-009', title: '坏进度', viewedAt: now - 3000, progress: 'not-json' }),
   fromFavorite({ source: 'bika', comicId: 'f1', title: '收藏漫画', thumbnail: '', categoryId: 5, author: '', createdAt: now }),
-  shelf,
 ]
 
 const sections: Array<{ id: string; props: Record<string, unknown> }> = [
   { id: 'comic-grid', props: { items: comics, density: 'comic' } },
   { id: 'video-grid', props: { items: videos, density: 'video' } },
-  { id: 'novel-grid', props: { items: novels, density: 'novel' } },
   { id: 'row', props: { items: timeline, layout: 'row' } },
   { id: 'skeleton', props: { items: [], loading: true, density: 'comic' } },
   { id: 'empty', props: { items: [], emptyTitle: '空态标题' } },
   { id: 'error-full', props: { items: [], error: '整块错误' } },
-  { id: 'error-bar', props: { items: novels.slice(0, 2), error: '部分失败', density: 'novel' } },
-  { id: 'button-pager', props: { items: novels.slice(0, 2), pager: 'button', hasMore: true, moreLabel: '加载更多(第 2/3 页)' } },
+  { id: 'error-bar', props: { items: videos.slice(0, 2), error: '部分失败', density: 'video' } },
+  { id: 'button-pager', props: { items: videos.slice(0, 2), pager: 'button', hasMore: true, moreLabel: '加载更多(第 2/3 页)' } },
   { id: 'infinite', props: { items: videos.slice(0, 2), pager: 'infinite', hasMore: true } },
 ]
 

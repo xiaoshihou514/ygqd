@@ -2,11 +2,10 @@
 import { errorMessage } from '@/utils/errors'
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { novelAdd, novelSearchPage, searchComics, searchVideos } from '@/services/api'
-import type { ComicItem, NovelHit, SearchParams, SearchResult, VideoCard } from '@/types'
+import { searchComics, searchVideos } from '@/services/api'
+import type { ComicItem, SearchParams, SearchResult, VideoCard } from '@/types'
 import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
-import { useHlibGuard } from '@/composables/useHlibGuard'
 import { formatCount } from '@/utils/formatCount'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useSearchHistory } from '@/composables/useSearchHistory'
@@ -16,7 +15,7 @@ import { parseSearchScope } from '@/config/sources'
 import SearchForm from '@/components/SearchForm.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComic, fromNovelHit, fromVideo } from '@/utils/mediaItem'
+import { fromComic, fromVideo } from '@/utils/mediaItem'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
@@ -272,18 +271,16 @@ function clearSavedState() {
 }
 
 // ============ 统一搜索:范围 chips(漫画默认=现有流程;视频/小说=并入) ============
-type SearchScope2 = 'comic' | 'video' | 'novel'
+type SearchScope2 = 'comic' | 'video'
 const scope = ref<SearchScope2>('comic')
 const SCOPES: Array<{ key: SearchScope2; label: string }> = [
   { key: 'comic', label: '漫画' },
   { key: 'video', label: '视频' },
-  { key: 'novel', label: '小说' },
 ]
 
 // 三个范围共用一个关键词:在任一范围搜过的词,切到其它范围自动用同一个词搜
 const sharedKeyword = ref((route.query.keyword as string | undefined) ?? '')
 const videoSearchedKw = ref('')
-const novelSearchedKw = ref('')
 
 watch(scope, (s) => {
   const kw = sharedKeyword.value.trim()
@@ -292,7 +289,6 @@ watch(scope, (s) => {
     void handleVideoSearch()
     return
   }
-  if (s === 'novel' && novelSearchedKw.value !== kw) void handleNovelSearch()
 })
 
 // —— 视频范围 ——
@@ -340,74 +336,8 @@ async function handleVideoSearch() {
   }
 }
 
-// —— 小说范围(3 秒限速:同站点反爬闸) ——
-const novelSearching = ref(false)
-const novelHits = ref<NovelHit[]>([])
-const novelPageNo = ref(1)
-const novelTotalPages = ref(1)
-const novelLoadingMore = ref(false)
-const novelError = ref('')
-const novelMediaItems = computed(() => novelHits.value.map((h) => fromNovelHit(h)))
-// 排序与网页端搜索页一致:默认(不带 sort,等同网页搜索框提交)+ 站点五个排序按钮
-type NovelSort = '' | 'score' | 'date' | 'total' | 'char' | 'like'
-const novelSort = ref<NovelSort>('')
-const NOVEL_SORTS: Array<{ key: NovelSort; label: string }> = [
-  { key: '', label: '默认' },
-  { key: 'score', label: '关联度' },
-  { key: 'date', label: '时间' },
-  { key: 'total', label: '篇数' },
-  { key: 'char', label: '字数' },
-  { key: 'like', label: '收藏' },
-]
 
-const { guard: guardHlibInterval } = useHlibGuard()
 
-async function handleNovelSearch() {
-  const kw = sharedKeyword.value.trim()
-  if (!kw || novelSearching.value || novelLoadingMore.value) return
-  novelError.value = ''
-  novelSearching.value = true
-  novelSearchedKw.value = kw
-  novelHits.value = []
-  try {
-    await guardHlibInterval()
-    const res = await novelSearchPage(kw, 1, novelSort.value || undefined)
-    novelHits.value = res.hits
-    novelPageNo.value = res.page
-    novelTotalPages.value = res.totalPages
-  } catch (e) {
-    novelError.value = errorMessage(e) || '搜索失败'
-  } finally {
-    novelSearching.value = false
-  }
-}
-
-function setNovelSort(key: NovelSort) {
-  novelSort.value = key
-  // 已有搜索词时改排序即重搜(排序变化影响结果序)
-  if (novelSearchedKw.value && novelHits.value.length) {
-    sharedKeyword.value = novelSearchedKw.value
-    void handleNovelSearch()
-  }
-}
-
-async function loadMoreNovels() {
-  if (novelLoadingMore.value || novelPageNo.value >= novelTotalPages.value) return
-  novelLoadingMore.value = true
-  novelError.value = ''
-  try {
-    await guardHlibInterval()
-    const res = await novelSearchPage(novelSearchedKw.value, novelPageNo.value + 1, novelSort.value || undefined)
-    const seen = new Set(novelHits.value.map((h) => h.id))
-    novelHits.value.push(...res.hits.filter((h) => !seen.has(h.id)))
-    novelPageNo.value = res.page
-    novelTotalPages.value = res.totalPages
-  } catch (e) {
-    novelError.value = errorMessage(e) || '加载更多失败'
-  } finally {
-    novelLoadingMore.value = false
-  }
-}
 
 async function handleSearch(params: SearchParams, likesFilter: number, order: string) {
   addHistory(params.keyword)
@@ -550,47 +480,6 @@ function goToSplit() {
         />
       </template>
 
-      <template v-else-if="scope === 'novel'">
-        <SearchInput
-          v-model="sharedKeyword"
-          history-key="niacg-novel-search-history"
-          placeholder="搜索小说(书名/作者)…"
-          :loading="novelSearching || novelLoadingMore"
-          @search="handleNovelSearch"
-        />
-        <div class="sort-row" role="group" aria-label="排序方式">
-          <span class="sort-label">排序</span>
-          <div class="sort-chips">
-            <button
-              v-for="s in NOVEL_SORTS"
-              :key="s.key"
-              type="button"
-              class="sort-chip"
-              :class="{ active: novelSort === s.key }"
-              @click="setNovelSort(s.key)"
-            >
-              {{ s.label }}
-            </button>
-          </div>
-        </div>
-        <MediaCollection
-          v-if="novelSearchedKw"
-          :items="novelMediaItems"
-          density="novel"
-          pager="button"
-          :loading="novelSearching"
-          loading-hint="正在搜索小说(经小说源连接,首次可能需要十几秒)..."
-          :loading-more="novelLoadingMore"
-          loading-more-label="加载中…(站点限速约 3 秒/次)"
-          :has-more="novelPageNo < novelTotalPages"
-          :more-label="`加载更多(第 ${novelPageNo + 1}/${novelTotalPages} 页)`"
-          :error="novelError"
-          empty-title="没有匹配的系列"
-          end-text=""
-          @load-more="loadMoreNovels"
-          @retry="novelHits.length ? loadMoreNovels() : handleNovelSearch()"
-        />
-      </template>
 
       <template v-if="scope === 'comic'">
       <div v-if="!hasSearched" class="search-intro">

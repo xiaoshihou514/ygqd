@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { formatCount } from '@/utils/formatCount'
-import { videoFollow, videoFollowList, videoFollowTargets, videoFollowWorks, videoUnfollow as apiVideoUnfollow, novelFollowedAuthors, novelFollowedAuthorWorks, novelUnfollowAuthor as apiNovelUnfollow } from '@/services/api'
-import type { AuthorFollow, FollowTargetEntry, FollowTargetItem, NovelHit, VideoCard } from '@/types'
+import { videoFollow, videoFollowList, videoFollowTargets, videoFollowWorks, videoUnfollow as apiVideoUnfollow } from '@/services/api'
+import type { FollowTargetEntry, FollowTargetItem, VideoCard } from '@/types'
 import { ref, computed, onActivated, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
@@ -12,7 +12,7 @@ import { comicPath } from '@/utils/comicPath'
 import { sourceLabel } from '@/config/sources'
 import type { ComicItem, FavoriteEntry, FollowedAuthor } from '@/types'
 import MediaCollection from '@/components/MediaCollection.vue'
-import { fromComic, fromNovelHit, fromVideo } from '@/utils/mediaItem'
+import { fromComic, fromVideo } from '@/utils/mediaItem'
 import { dedupeByVideoBase } from '@/utils/videoCode'
 import EmptyState from '@/components/EmptyState.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
@@ -24,7 +24,6 @@ const { followed, loading: loadingFollows, load, unfollow } = useFollowedAuthors
 const tabs = [
   { key: 'authors', label: '漫画作者' },
   { key: 'videos', label: '视频' },
-  { key: 'novel-authors', label: '小说作者' },
 ] as const
 type FollowingTab = (typeof tabs)[number]['key']
 
@@ -32,67 +31,9 @@ const activeTab = ref<FollowingTab>('authors')
 const tabScroll: Record<FollowingTab, number> = {
   authors: 0,
   videos: 0,
-  'novel-authors': 0,
 }
 
-// —— 小说作者关注(批次 2:novel_followed_authors 列表 + 作者作品流) ——
-const novelAuthors = ref<AuthorFollow[]>([])
-const novelAuthorsLoading = ref(false)
-const selectedNovelAuthor = ref<AuthorFollow | null>(null)
-const hitList = ref<NovelHit[]>([])
-const novelWorkItems = computed(() => hitList.value.map((h) => fromNovelHit(h)))
-const worksLoading = ref(false)
-const worksError = ref('')
 
-async function loadNovelAuthors(showWorks = false) {
-  if (novelAuthorsLoading.value) return
-  novelAuthorsLoading.value = true
-  try {
-    novelAuthors.value = await novelFollowedAuthors()
-    if (showWorks && novelAuthors.value.length > 0) {
-      await selectNovelAuthor(novelAuthors.value[0]!)
-    } else {
-      selectedNovelAuthor.value = null
-      hitList.value = []
-    }
-  } catch (e) {
-    console.error('[following]', errorMessage(e))
-  } finally {
-    novelAuthorsLoading.value = false
-  }
-}
-
-/** 作者作品流:hlib 作者页抓取(站点敏感,加载中提示等待) */
-async function selectNovelAuthor(author: AuthorFollow) {
-  if (worksLoading.value) return
-  selectedNovelAuthor.value = author
-  hitList.value = []
-  worksError.value = ''
-  worksLoading.value = true
-  try {
-    hitList.value = await novelFollowedAuthorWorks(author.authorId)
-  } catch (e) {
-    worksError.value = errorMessage(e) || '作品加载失败,请稍后重试'
-  } finally {
-    worksLoading.value = false
-  }
-}
-
-function unfollowNovelAuthor(author: AuthorFollow) {
-  selectedNovelAuthor.value = null
-  hitList.value = []
-  void (async () => {
-    try {
-      await apiNovelUnfollow(author.authorId)
-      novelAuthors.value = novelAuthors.value.filter((a) => a.authorId !== author.authorId)
-      if (selectedNovelAuthor.value?.authorId === author.authorId) {
-        selectedNovelAuthor.value = null
-      }
-    } catch (e) {
-      console.error('[following]', errorMessage(e))
-    }
-  })()
-}
 
 // —— 视频关注(批次 3:厂商/女优 chips + 关注列表 + 管理关注 + 作品流) ——
 type VideoKind = 'actress' | 'maker'
@@ -266,7 +207,7 @@ const hasMoreWorks = computed(() =>
 
 onMounted(async () => {
   // 任务 6:三源并行加载(首条出现时间优化)
-  await Promise.all([load(), loadNovelAuthors(true), loadVideoFollows()])
+  await Promise.all([load(), loadVideoFollows()])
   if (followed.value.length > 0) {
     await loadAllAuthors()
   }
@@ -275,7 +216,6 @@ onMounted(async () => {
 // 任务 2:keep-alive 返回时静默刷新(当前 tab 数据,滚动位置由组件状态保留)
 onActivated(() => {
   if (activeTab.value === 'authors') void loadAllAuthors(true)
-  if (activeTab.value === 'novel-authors') void loadNovelAuthors(true)
   if (activeTab.value === 'videos') void loadVideoFollows()
 })
 
@@ -406,9 +346,6 @@ async function loadNextPage() {
 }
 
 async function switchTab(tab: FollowingTab) {
-  if (tab === 'novel-authors' && !novelAuthors.value.length && !novelAuthorsLoading.value) {
-    void loadNovelAuthors(true)
-  }
   if (tab === activeTab.value) return
   tabScroll[activeTab.value] = window.scrollY
   activeTab.value = tab
@@ -643,46 +580,6 @@ async function handleExport() {
                 @retry="loadTargetWorks(!targetWorks.length)"
               />
             </template>
-          </template>
-        </template>
-        <template v-else-if="activeTab === 'novel-authors'">
-          <LoadingSpinner v-if="novelAuthorsLoading" message="加载关注的小说作者..." />
-          <EmptyState
-            v-else-if="!novelAuthors.length"
-            title="还没有关注的小说作者"
-            message="在小说详情页点「+ 关注作者」,即可在这里跟踪他们的作品"
-          />
-          <template v-else>
-            <div class="follow-chips" role="tablist" aria-label="关注的小说作者">
-              <button
-                v-for="a in novelAuthors"
-                :key="a.authorId"
-                type="button"
-                class="follow-chip"
-                :class="{ active: selectedNovelAuthor?.authorId === a.authorId }"
-                @click="selectNovelAuthor(a)"
-              >
-                <span class="follow-chip-name">{{ a.authorName }}</span>
-                <span
-                  class="follow-chip-remove"
-                  role="button"
-                  title="取消关注"
-                  aria-label="取消关注"
-                  @click.stop="unfollowNovelAuthor(a)"
-                >×</span>
-              </button>
-            </div>
-            <MediaCollection
-              v-if="selectedNovelAuthor"
-              :items="novelWorkItems"
-              density="novel"
-              pager="none"
-              :loading="worksLoading"
-              :error="worksError"
-              end-text=""
-              empty-title="该作者暂无收录作品"
-              @retry="selectNovelAuthor(selectedNovelAuthor)"
-            />
           </template>
         </template>
 
