@@ -68,7 +68,7 @@ function expect(width, label, actual, expected) {
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
   if (!ok) {
     failures.push(`[${width}px] ${label}: 实际 ${JSON.stringify(actual)}`)
-    console.error(`[diagnostic] ${width}px ${label}:`, JSON.stringify(lastRender, null, 0))
+    console.error(`[diagnostic] ${width}px ${label}:`, JSON.stringify(lastRender, null, 0).slice(0, 600))
   }
 }
 
