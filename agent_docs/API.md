@@ -69,16 +69,6 @@
 - 元数据与播放优先走 fs1；fs1 失效时由 missav 直连（TLS 指纹模拟）兜底，
   `provider` 字段标明实际来源（`fs1` / `missav`）。
 
-## 小说（hlib 源，经 WebView 网关）
-
-| Command | 参数 | 返回值 |
-|---|---|---|
-| `novel_add` | `input` | `NovelSeries`（输入 hlib 系列链接或纯 ID；入库书架；首次会弹网关窗口，需用户完成一次登录/安全验证） |
-| `novel_search` | `keyword` | `NovelHit[]`（站内搜索，端点自适应；首次需网关验证/登录） |
-| `novel_latest` | — | `NovelHit[]`（首页最新系列，发现页用） |
-| `novel_shelf` | — | `NovelSeries[]`（本地书架） |
-| `novel_remove` | `id` | `void`（移出书架） |
-| `novel_series_info` | `id` | `NovelSeries`（按 ID 抓取系列信息含章节列表/简介，**不入库**——浏览漏斗用；首次弹网关验证/登录） |
 | `video_follow` | `source, kind, targetId, displayName` | `void`（关注视频目标；source: fs1/missav，kind: maker/actress） |
 | `video_unfollow` | `source, kind, targetId` | `void`（取消关注） |
 | `video_follow_list` | `source, kind` | `FollowTargetEntry[]`（关注列表，按关注时间倒序） |
@@ -86,21 +76,11 @@
 | `video_follow_works` | `source, kind, targetId, page?` | `VideoListResult`（关注对象的作品流，复用视频列表解析） |
 | `record_item_history` | `source, kind, itemId, title, progress?` | `void`（记录全局历史；视频/小说写入 item_history，漫画走 record_history 存量） |
 | `fetch_item_history` | `source?, kind?, limit?` | `ItemHistoryEntry[]`（全局历史查询；source/kind 可选过滤，None=全板块时间线；ItemHistoryEntry 含 progress JSON） |
-| `novel_search_page` | `keyword`, `page?` | `NovelSearchPage`（分页搜索：hits + page + totalPages；page 不传视为第 1 页。真端点 /s/search?query=，需登录） |
-| `novel_latest` | `page?` | `NovelLatestPage`（发现流最新系列分页：hits + page + totalPages；page 不传视为第 1 页，深页走全站 ?p= 机制） |
-| `novel_read` | `chapterId`, `page` | `NovelPage`（读取章节某页正文；未登录/未验证时返回引导错误） |
-| `novel_progress` | `seriesId` | `[chapterOrder, page] | null`（阅读进度，无记录返回 `null`；`chapterOrder` 为源站目录「#N」的原样章节序号、非数组下标，续读按 order 精确匹配章节；`page` 为章节正文页码，从 1 开始） |
-| `novel_set_progress` | `seriesId`, `chapterOrder`, `page` | `void`（写入阅读进度） |
 
-## 网关（WebView 网关窗口，当前仅服务 hlib）
+## 网关（已随小说板块删除）
 
-| Command | 参数 | 返回值 |
-|---|---|---|
-| `gateway_fetch` | `label`, `url` | `string`（经网关抓取页面文本，自动处理 Cloudflare 挑战；主窗口前端未直接使用，hlib 抓取在 Rust 侧调用） |
-| `gateway_open` | `label` | `void`（打开/创建网关窗口，供用户登录站点或完成人机验证） |
-| `gateway_finish` | `label` | `void`（用户点网关内「完成返回」后隐藏网关、主窗口回前台） |
-| `gateway_set_visible` | `label`, `visible` | `void`（显示/隐藏网关窗口；主窗口前端未直接使用） |
-| `gateway_result` | `result` | `void`（网关 webview 内 JS 的回传通道，经本地回环代理转交；**不暴露给主窗口前端**） |
+网关系 command（gateway_fetch/open/finish/set_visible/result）随小说板块
+删除移除（T-2 登记的 GatewayActivity overlay 保留，见 ARCHITECTURE.md）。
 
 ## 诊断
 
@@ -111,8 +91,7 @@
 
 ## 共享数据模型
 
-共享的数据模型定义在 `src/types/index.ts` 和 `src-tauri/src/models.rs`（视频模型在
-`src-tauri/src/sources/video.rs`，小说搜索结果在 `src-tauri/src/sources/novel.rs`）。
+共享的数据模型定义在 `src/types/index.ts` 和 `src-tauri/src/models.rs`（视频模型在 `src-tauri/src/sources/video/`）。
 Rust 模型使用 `#[serde(rename_all = "camelCase")]` 保持与 TypeScript 字段一致。
 
 | Rust 类型 | TypeScript 类型 | 说明 |
@@ -121,11 +100,6 @@ Rust 模型使用 `#[serde(rename_all = "camelCase")]` 保持与 TypeScript 字�
 | `VideoCard` | `VideoCard` | `code` 为番号（小写），是视频详情的 id；中字变体带 `-chinese-subtitle` 后缀 |
 | `VideoListResult` | `VideoListResult` | `{ items: VideoCard[], pagination }` |
 | `VideoDetail` | `VideoDetail` | `m3u8` 为本地流代理地址（见 `fetch_video_detail` 说明）；`provider` 区分 fs1/missav |
-| `NovelHit` | `NovelHit` | `{ id, title, author?, tags? }`，搜索/发现页条目（author/tags 为 2024-11 扩展，hlib 列表页 DOM 含作者与标签元素） |
-| `NovelSearchPage` | `NovelSearchPage` | `{ hits, page, totalPages }`——搜索结果的一页（hlib 每页 30 条） |
-| `NovelLatestPage` | `NovelLatestPage` | `{ hits, page, totalPages }`——发现流最新系列的一页 |
-| `NovelSeries` | `NovelSeries` | `{ id, title, author, chapters: NovelChapter[], addedAt, cover?, introduction? }`——cover 恒空(hlib 不提供系列封面)、introduction 来源页 meta description |
-| `NovelPage` | `NovelPage` | `{ title, author, text, totalPages }` |
 
 翻页基准提醒：漫画系命令（`fetch_category` / `search_comics` / `fetch_comic_images` /
 `fetch_bika_leaderboard`）`page` 从 0 开始，Rust 侧内部 +1 转成源站页码；视频系命令

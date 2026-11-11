@@ -12,18 +12,15 @@ macOS/Windows 分发。
 
 内容源与板块：
 
-| 板块 | niacg (ACG) | bika (哔咔) | fs1 / missav | hlib.cc |
+| 板块 | niacg (ACG) | bika (哔咔) | fs1 / missav |
 |---|---|---|---|---|
 | 漫画 | HTML 抓取 | PicaAPI JSON | — | — |
 | 视频 | — | — | fs1 直连 + missav 指纹直连 | — |
-| 小说 | — | — | — | WebView 网关抓取 |
 
 - niacg：HTML 直出，无需登录；两次搜索强制间隔 5.2 秒，否则拿到空结果提示页。
 - bika：需账号登录（设置页登录，凭据与 token 存 `ygqd.db`，401 自动重登）。
 - 视频：元数据与播放优先 fs1（reqwest 直连）；missav 按 TLS 指纹拦截通用客户端，
   用 wreq 模拟 Chrome 指纹直连兜底（构建需 `ANDROID_NDK_HOME`，见「开发命令」）。
-- 小说：hlib.cc 全站 CF 挑战 + 登录墙，必须经 WebView 网关（用户首次点一次验证，
-  cookie 持久化），站点对连续抓取敏感，章节间隔 ≥ 10 秒。
 
 ## 架构分层
 
@@ -38,7 +35,7 @@ Vue 页面/组件 ──invoke──▶ Rust commands ──▶ sources/* 抓取
 - `services/api.ts`：**唯一的 Tauri IPC 封装层**，页面与组件不直接调 `invoke`。
 - `pages/` + `router/index.ts`：路由为
   `/`（首页，内容分段：漫画/视频/小说）、`/search`、`/comic/:source/:categoryId/:id`、
-  `/videos` 与 `/videos/:code`（视频列表/详情）、`/novels` 与 `/novels/:id`
+  `/videos` 与 `/videos/:code`（视频列表/详情）、`/videos` 系列
   （小说书架/阅读器）、`/split`、`/following`、`/history`、`/settings`。
 - 首页顶部为内容分段控件：漫画段沿用源分类 tab 组；视频段为最新流（`useVideoFeed`）；
   小说段为书架入口卡片。底部导航五 tab：推荐/搜索/关注/历史/设置。
@@ -46,7 +43,7 @@ Vue 页面/组件 ──invoke──▶ Rust commands ──▶ sources/* 抓取
 - **媒体列表统一体系（唯一实现，勿另起卡片/列表）**：漫画/视频/小说在推荐、榜单、
   搜索、关注、历史、收藏、目标作品等全部场景共用
   - `utils/mediaItem.ts`：统一条目模型 `MediaItem` 与适配函数（`fromComic`/
-    `fromComicHistory`/`fromFavorite`/`fromVideo`/`fromNovelHit`/`fromNovelSeries`/
+    `fromComicHistory`/`fromFavorite`/`fromVideo`/
     `fromTimeline`）——板块差异（封面代理来源、中字/无码角标、小说占位、进度文案、
     漫画路由 categoryId、小说点击去向）只在这里处理；
   - `components/MediaCard.vue`：唯一卡片（grid/row 两种布局，actions 插槽；漫画长按
@@ -77,11 +74,8 @@ Vue 页面/组件 ──invoke──▶ Rust commands ──▶ sources/* 抓取
   SQLite 连接 `Mutex`、300 秒 TTL 进程内缓存、niacg 搜索限速闸）。
 - `sources/` 按源分模块：`niacg.rs`（scraper 解析 HTML）、`bika.rs`
   （PicaAPI 客户端，HMAC-SHA256 请求签名）、`video.rs`（fs1 + missav，
-  详情页 Dean Edwards packer 解码提取 m3u8）、`novel.rs`（hlib，经网关抓取）。
+  详情页 Dean Edwards packer 解码提取 m3u8）。
   新增源在此目录加模块，并在 `lib.rs` 命令里加分发分支、前端 `api.ts` 加封装。
-- `gateway.rs`：WebView 网关（当前仅 hlib 使用）。内嵌 webview 用真浏览器网络栈
-  完成 CF 挑战与登录；抓取结果经本地回环 HTTP（`POST /gwresult`）回传——远程页
-  没有 Tauri IPC 桥，invoke 方案不可行。
 - `stream_proxy.rs`：本地回环 HTTP 代理（仅 127.0.0.1）。三个职责：
   ① HLS 转发（m3u8 文本重写子地址为代理地址；分片带站点 Referer 转发；
   Range 透传；已取分片缓存为插入序，超限约 96MB 时批量淘汰最旧一半，
@@ -99,8 +93,8 @@ Vue 页面/组件 ──invoke──▶ Rust commands ──▶ sources/* 抓取
 | `favorites` | (source, comic_id)；bika 源收藏同时同步服务器 |
 | `view_history` | (source, comic_id)；漫画与通用浏览记录 |
 | `video_watched` | code；视频已看记录 |
-| `novel_series` / `novel_progress` | 书架与阅读进度（章节序 + 页码） |
-| `followed_authors` / `tag_blacklist` | 关注作者 / 标签黑名单（mode 区分） |
+| `novel_series` / `novel_progress` | **已废弃保留**（小说板块删除后不再读写；用户设备存量数据不动，留恢复余地） |
+| `follow_target` / `tag_blacklist` / `item_history` | 关注目标（漫画作者+视频厂商/女优）/ 标签黑名单（mode 区分）/ 全局历史时间线 |
 | `bika_account` / `bika_address` | 哔咔凭据 / 分流地址（单行） |
 
 ## 关键约定
@@ -163,3 +157,20 @@ CI 为 GitHub Actions 双流水线（`.github/workflows/`）：Android Nightly�
 编译核对；expert 复审的 c879957 版本（MissavMeta 结构化）为准。
 
 **记录日期**：2026-11-09（重构批次收官，lead 裁决方案 1 搁置）
+
+### T-2 GatewayActivity overlay 保留（无消费方，随小说板块删除登记）
+
+**现状**：`android-overlay/GatewayActivity.kt` 及其注册链
+（`apply-android-overlay.mjs` 注入 AndroidManifest、nightly workflow
+的 overlay 校验步骤）为 WebView 网关的 Android 宿主通道。小说板块
+删除（`gateway.rs` 移除）后网关无消费方——视频 fs1/missav 已 wreq
+指纹直连、哔咔/niacg 亦 reqwest 直连。
+
+**保留理由**：删除涉及 Android 构建链（overlay 注入脚本 + workflow
+校验步骤 + AndroidManifest 注册）且不影响功能；未来网关复用（其他
+CF 严防站点接入）时可恢复。
+
+**恢复路径**：参见 git 历史 `2a98ac3` 之前的 `gateway.rs`（WebView
+网关实现）与本文件早前版本的网关章节描述。
+
+**记录日期**：2026-11-11（小说板块删除收官，lead 批准保留登记）
