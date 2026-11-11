@@ -53,23 +53,28 @@ async function render(width, path = 'index.html') {
     )
     const m = /<pre id="result">([^<]*)<\/pre>/.exec(dom)
     if (!m) throw new Error(`宽度 ${width}:未取到 #result`)
-    return JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+    const r = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+    const mg = /<pre id="groups-result">([^<]*)<\/pre>/.exec(dom)
+    if (mg) r.groupsFromPage = JSON.parse(mg[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))
+    return r
   } finally {
     await rm(profile, { recursive: true, force: true })
   }
 }
 
 const failures = []
+let lastRender = null
 function expect(width, label, actual, expected) {
   const ok = typeof expected === 'function' ? expected(actual) : actual === expected
   if (!ok) {
     failures.push(`[${width}px] ${label}: 实际 ${JSON.stringify(actual)}`)
-    console.error(`[diagnostic] ${width}px ${label} 全量:`, JSON.stringify((globalThis as any).__lastResult ?? {}, null, 0))
+    console.error(`[diagnostic] ${width}px ${label}:`, JSON.stringify(lastRender, null, 0))
   }
 }
 
 for (const width of [400, 1200]) {
   const r = await render(width)
+  lastRender = r
   const narrow = width === 400
   console.log(`[${width}px] 实际视口宽度 ${r.width}`)
   // 漫画网格:8 卡、6→2 列断点、已读 2、外链保留(中键/新窗口)
@@ -90,10 +95,10 @@ for (const width of [400, 1200]) {
   expect(width, '视频列数', r['video-grid'].columns, (v) => (narrow ? v === 2 : v >= 5))
   expect(width, '漫画点赞图标', (r['comic-grid'].statIcons || []).join(','), 'heart')
   // 行式:6 行单列、时间、进度文案(坏 JSON 容错不出文案)
-  expect(width, '行式条数', r.row.cards, 6)
+  expect(width, '行式条数', r.row.cards, 4)
   expect(width, '行式单列', r.row.columns, 1)
-  expect(width, '行式时间(书架条目无时间)', r.row.times, 5)
-  expect(width, '行式进度文案', r.row.progress.join('|'), '看到 12 分 5 秒|读到第 3 章 第 2 页|读到第 3 章')
+  expect(width, '行式时间(书架条目无时间)', r.row.times, 4)
+  expect(width, '行式进度文案', r.row.progress.join('|'), '看到 12 分 5 秒')
   // 状态
   expect(width, '骨架', r.skeleton.skeleton, 12)
   expect(width, '骨架时无卡片', r.skeleton.cards, 0)
@@ -114,10 +119,10 @@ for (const width of [400, 1200]) {
   const b = await render(width, 'pages.html?page=blacklist')
   expect(width, '设置页无横向溢出(超长黑名单词)', b.docOverflow, false)
   expect(width, '设置页溢出元素', b.offenders.join(','), '')
-  expect(width, '黑名单网格不嵌套(两个独立区块)', b.chains.length, 2)
+  expect(width, '黑名单网格不嵌套(小说区已随板块删除,单区块)', b.chains.length, 1)
   const f = await render(width, 'pages.html?page=following')
   expect(width, '关注页无横向溢出(超长作者名)', f.docOverflow, false)
-  const groups = Object.values(f.groups || {})
+  const groups = f.groupsFromPage || []
   expect(width, '关注页两组均有对象芯片', groups.length === 3 && groups.every((g) => g.chips > 0), true)
   expect(width, '关注页两组芯片样式一致', new Set(groups.flatMap((g) => g.sig)).size, 1)
   expect(width, '关注页两组都能 × 取消关注', groups.every((g) => g.removable > 0), true)

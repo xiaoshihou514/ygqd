@@ -86,6 +86,10 @@ async function measureTabs() {
     }
   }
   ;(window as any).__groups = groups
+  const gpre = document.createElement('pre')
+  gpre.id = 'groups-result'
+  gpre.textContent = JSON.stringify(Object.values(groups))
+  document.body.appendChild(gpre)
   measure()
 }
 

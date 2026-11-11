@@ -215,8 +215,12 @@ onMounted(async () => {
 
 // 任务 2:keep-alive 返回时静默刷新(当前 tab 数据,滚动位置由组件状态保留)
 onActivated(() => {
-  if (activeTab.value === 'authors') void loadAllAuthors(true)
-  if (activeTab.value === 'videos') void loadVideoFollows()
+  const savedY = window.scrollY
+  if (activeTab.value === 'authors') {
+    void loadAllAuthors(true).then(() => nextTick(() => window.scrollTo(0, savedY)))
+  } else if (activeTab.value === 'videos') {
+    void loadVideoFollows().then(() => nextTick(() => window.scrollTo(0, savedY)))
+  }
 })
 
 /** 收藏列表:本地表立即展示,哔咔登录时后台把服务器收藏合并进来 */

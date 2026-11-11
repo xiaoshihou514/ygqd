@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
 import { useTimeline } from '@/composables/useTimeline'
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref } from 'vue'
 import { fetchItemHistory, fetchFavorites, removeFavorite } from '@/services/api'
 import type { FavoriteEntry } from '@/types'
 import { useViewHistory } from '@/composables/useViewHistory'
@@ -74,10 +74,13 @@ async function loadItemHistory() {
   }
 }
 
-// 任务 2:keep-alive 返回时静默刷新(数据更新,滚动位置保留)
+// 任务 2:keep-alive 返回时静默刷新(数据更新);
+// 统合回归修复:刷新导致高度变化会被浏览器 clamp scrollY——刷新后恢复
 onActivated(() => {
+  const savedY = window.scrollY
   void loadItemHistory()
   void loadFavorites()
+  void nextTick(() => window.scrollTo(0, savedY))
 })
 
 onMounted(async () => {
