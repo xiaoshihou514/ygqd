@@ -206,18 +206,13 @@ onDeactivated(() => {
   }
 }
 
-/* 视频/小说:auto-fill(视频 16:9 卡更宽) */
+/* 视频:auto-fill(16:9 卡更宽) */
 .layout-grid.density-video .mc-items {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 }
 
-.layout-grid.density-novel .mc-items {
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-}
-
 @media (max-width: 480px) {
-  .layout-grid.density-video .mc-items,
-  .layout-grid.density-novel .mc-items {
+  .layout-grid.density-video .mc-items {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--spacing-xs);
   }

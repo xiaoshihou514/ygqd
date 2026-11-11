@@ -346,7 +346,7 @@ async function handleExport() {
             </template>
           </div>
         </div>
-        <p class="page-desc">视频/小说加载失败时,这里的日志可用于定位问题。</p>
+        <p class="page-desc">视频加载失败时,这里的日志可用于定位问题。</p>
         <pre v-if="diagOpen" class="diag-text">{{ diagText }}</pre>
       </div>
 
