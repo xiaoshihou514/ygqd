@@ -202,6 +202,12 @@ async function injectSkinControls() {
     .media-seek-indicator[data-direction] {
       justify-self: center !important;
     }
+    /* 任务 2:控制区安全留白(两侧+底部,系统导航键/手势条不遮挡快进快退) */
+    .media-controls {
+      padding-left: max(8px, env(safe-area-inset-left)) !important;
+      padding-right: max(8px, env(safe-area-inset-right)) !important;
+      padding-bottom: max(6px, env(safe-area-inset-bottom)) !important;
+    }
     .skin-skip-btn {
       display: inline-flex;
       align-items: center;

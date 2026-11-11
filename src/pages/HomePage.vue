@@ -75,7 +75,8 @@ const minLikes = ref(0)
 const { filterItems } = useTagBlacklist()
 
 const needsLogin = computed(() =>
-  activeTab.value.source === 'bika' && error.value.includes('登录'),
+  (activeTab.value.source === 'bika' && error.value.includes('登录')) ||
+  error.value.startsWith('哔咔分类/榜单加载失败'),
 )
 
 const filteredItems = computed(() => {
@@ -195,6 +196,7 @@ async function loadNextPage() {
 function retry() {
   loading.value = true
   error.value = ''
+  void loadBikaTabs()
   loadFirstPage()
 }
 
@@ -220,10 +222,14 @@ async function loadBikaTabs() {
         category,
       })),
     )
+    // 成功后清除 loadBikaTabs 自己设置的失败提示(不影响其它 tab 的错误)
+    if (error.value.startsWith('哔咔分类/榜单加载失败')) error.value = ''
   } catch (e) {
-    // 源不可用(未登录/网络)时不追加其分类 tab,「最新」与静态 tab 不受影响;
-    // 诊断日志保留(用户已登录仍看不到榜单时,从这里追因)
-    console.error('[home] 哔咔分类/榜单 tab 加载失败', errorMessage(e))
+    // 失败必弹(用户第二次反馈看不到榜单,静默吞错导致无法定位):
+    // 页级错误条提示 + 诊断日志。「最新」与静态 tab 不受影响。
+    const msg = errorMessage(e)
+    error.value = `哔咔分类/榜单加载失败:${msg}。请在设置中检查哔咔登录状态后重试`
+    console.error('[home] 哔咔分类/榜单 tab 加载失败', msg)
   }
 }
 
