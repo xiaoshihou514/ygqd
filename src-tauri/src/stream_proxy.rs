@@ -20,7 +20,7 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Mutex, OnceLock},
     time::Duration,
 };
 
@@ -397,7 +397,6 @@ fn handle_client(mut stream: TcpStream) {
     if content_length > 0 && reader.read_exact(&mut body_bytes).is_err() {
         return;
     }
-    let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
     // 解析路径与 query
     let target = request_line
@@ -405,10 +404,7 @@ fn handle_client(mut stream: TcpStream) {
         .nth(1)
         .unwrap_or("")
         .to_string();
-    let (path, query) = match target.split_once('?') {
-        Some((p, q)) => (p.to_string(), q.to_string()),
-        None => (target.clone(), String::new()),
-    };
+    let path = target.split('?').next().unwrap_or("").to_string();
 
     if let Some(rest) = path.strip_prefix("/hls/") {
         let (status, ct, body, _) = handle_hls(rest, range.as_deref());
@@ -428,14 +424,6 @@ fn handle_client(mut stream: TcpStream) {
             &mut stream,
             status,
             &ct,
-            body,
-            &[("Access-Control-Allow-Origin", "*")],
-        );
-        let (status, body) = handle_gwresult(&query, &body_str);
-        respond(
-            &mut stream,
-            status,
-            "text/plain",
             body,
             &[("Access-Control-Allow-Origin", "*")],
         );

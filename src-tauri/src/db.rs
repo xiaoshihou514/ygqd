@@ -271,73 +271,12 @@ pub fn is_favorite(db: &Connection, source: Source, comic_id: &str) -> Result<bo
     Ok(count > 0)
 }
 
-pub fn novel_shelf(db: &Connection) -> Result<Vec<crate::models::NovelSeries>, String> {
-    let mut s = db
-        .prepare(
-            "SELECT id,title,author,chapters,added_at FROM novel_series ORDER BY added_at DESC",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = s
-        .query_map([], |r| {
-            Ok(crate::models::NovelSeries {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                author_id: String::new(),
-                author: r.get(2)?,
-                // cover/introduction 暂不入库(hlib 站点不提供封面;简介在
-                // 详情页实时获取),书架恢复时为空值
-                cover: String::new(),
-                introduction: String::new(),
-                chapters: serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or_default(),
-                added_at: r.get(4)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<_, _>>()
-        .map_err(|e| e.to_string())?;
-    Ok(rows)
-}
-
-pub fn novel_upsert(db: &Connection, series: &crate::models::NovelSeries) -> Result<(), String> {
-    let chapters = serde_json::to_string(&series.chapters).map_err(|e| e.to_string())?;
-    db.execute(
-        "INSERT INTO novel_series VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET title=?2,author=?3,chapters=?4",
-        params![series.id, series.title, series.author, chapters, now()],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 pub fn novel_remove(db: &Connection, id: &str) -> Result<(), String> {
     db.execute("DELETE FROM novel_series WHERE id=?1", [id])
         .map_err(|e| e.to_string())?;
     db.execute("DELETE FROM novel_progress WHERE series_id=?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-pub fn novel_progress(db: &Connection, series_id: &str) -> Result<Option<(i64, i64)>, String> {
-    db.query_row(
-        "SELECT chapter_order,page FROM novel_progress WHERE series_id=?1",
-        [series_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )
-    .map(Some)
-    .or_else(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => Ok(None),
-        other => Err(other),
-    })
-    .map_err(|e: rusqlite::Error| e.to_string())
-}
-
-/// 系列标题查询(时间线条目展示用;书架未收录返回 None)
-pub fn novel_series_title(db: &Connection, series_id: &str) -> Option<String> {
-    db.query_row(
-        "SELECT title FROM novel_series WHERE id=?1",
-        params![series_id],
-        |r| r.get::<_, String>(0),
-    )
-    .ok()
 }
 
 pub fn novel_set_progress(
@@ -352,7 +291,6 @@ pub fn novel_set_progress(
         params![series_id, chapter_order, page, now()],
     )
     .map_err(|e| e.to_string())?;
-    // 双写全局时间线(批次 4):progress 表保精确续读,item_history 保
     // 时间线;item_id 用系列,progress JSON 记章节与页码
     let progress_json = format!("{{\"chapter\":{},\"page\":{}}}", chapter_order, page);
     // 标题:B2 修复——前端传入(前端持有 series.title)优先,查表兜底,
@@ -360,7 +298,6 @@ pub fn novel_set_progress(
     let title = title_hint
         .filter(|t| !t.is_empty())
         .map(str::to_string)
-        .or_else(|| novel_series_title(db, series_id))
         .unwrap_or_else(|| format!("系列 {series_id}"));
     item_history_record(
         db,

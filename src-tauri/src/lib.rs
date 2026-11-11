@@ -15,7 +15,7 @@ use std::{
     sync::{Mutex, RwLock},
     time::{Duration, Instant},
 };
-use tauri::{ipc::Response, AppHandle, Manager, State};
+use tauri::{ipc::Response, Manager, State};
 
 const BASE: &str = "https://www.niacg.com";
 /// niacg 限制两次搜索至少间隔 5 秒,违反时返回无结果的提示页
@@ -25,7 +25,6 @@ mod commands;
 struct AppState {
     niacg: reqwest::Client,
     video: VideoApi,
-    proxy_port: u16,
     /// 哔咔客户端在切换分流地址时整体重建,读锁短持有,clone 后异步使用
     bika: RwLock<BikaApi>,
     bika_token: Mutex<Option<String>>,
@@ -33,8 +32,6 @@ struct AppState {
     cache: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
     /// niacg 搜索全局限速:串行化并保证间隔,避免触发 5 秒限制拿到空结果
     niacg_search_gate: tokio::sync::Mutex<Instant>,
-    /// hlib 抓取全局限速:shared.rs 的 RateGate 统一封装(对齐站点「连续抓取敏感」)
-    hlib_gate: crate::sources::shared::RateGate,
 }
 impl AppState {
     /// 连接互斥锁的短路封装(P2 样板收敛:30+ 处 command 的
@@ -87,21 +84,9 @@ impl AppState {
         }
         serde_json::from_value(v.clone()).ok()
     }
-    /// TTL 参数化的缓存读取(批次 2 访问预算:手动刷新数据 30 分钟)
-    fn cached_ttl<T: serde::de::DeserializeOwned>(&self, key: &str, ttl: Duration) -> Option<T> {
-        let cache = self.cache.lock().ok()?;
-        let (at, v) = cache.get(key)?;
-        if at.elapsed() > ttl {
-            return None;
-        }
-        serde_json::from_value(v.clone()).ok()
-    }
 
     /// hlib 抓取统一闸:串行化并保证间隔(对齐站点反爬敏感度)。
     /// 与 niacg_search_gate 同架构;锁跨 await 持有(串行化语义)。
-    async fn hlib_throttle(&self) {
-        self.hlib_gate.throttle().await;
-    }
     fn put<T: serde::Serialize>(&self, key: String, value: &T) {
         if let Ok(v) = serde_json::to_value(value) {
             if let Ok(mut c) = self.cache.lock() {
@@ -249,13 +234,11 @@ pub fn run() {
             app.manage(AppState {
                 niacg,
                 video,
-                proxy_port,
                 bika: RwLock::new(bika),
                 bika_token: Mutex::new(None),
                 db: Mutex::new(conn),
                 cache: Mutex::new(HashMap::new()),
                 niacg_search_gate: tokio::sync::Mutex::new(Instant::now() - Duration::from_secs(3600)),
-            hlib_gate: crate::sources::shared::RateGate::new(std::time::Duration::from_secs(3)),
             });
             Ok(())
         })

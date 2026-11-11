@@ -18,10 +18,6 @@ pub fn init_diag_dir(dir: std::path::PathBuf) {
 /// (release 无法 run-as/logcat,应用内读取是唯一通道)。
 /// 只用 setup 缓存的目录,任何线程(含 Android 主线程回调)调用都安全;
 /// 未登记时静默丢弃。
-/// diag.log 所在目录访问(DIAG_DIR 缓存;未登记返回 None)
-pub fn diag_dir() -> Option<&'static std::path::PathBuf> {
-    DIAG_DIR.get()
-}
 
 pub fn diag(_app: &AppHandle, msg: &str) {
     let Some(dir) = DIAG_DIR.get() else {
@@ -41,3 +37,5 @@ pub fn diag(_app: &AppHandle, msg: &str) {
         .as_secs();
     let _ = writeln!(f, "{ts} {msg}");
 }
+
+// tauri 宏重导出(generate_handler 跨模块引用需要)
