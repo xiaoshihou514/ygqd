@@ -3,7 +3,7 @@ import { errorMessage } from '@/utils/errors'
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { searchComics, searchVideos } from '@/services/api'
-import { useVideoSearchScope } from '@/composables/useVideoSearchScope'
+import { useVideoSearchScope, VIDEO_SORTS } from '@/composables/useVideoSearchScope'
 import type { ComicItem, SearchParams, SearchResult, VideoCard } from '@/types'
 import { interleaveSources } from '@/utils/merge'
 import { parseLikes } from '@/utils/likes'
@@ -284,6 +284,7 @@ const sharedKeyword = ref((route.query.keyword as string | undefined) ?? '')
 // 重构笔 4c:视频范围状态机迁移 useVideoSearchScope(哨兵重绑回调参数化)
 const {
   videoSearchedKw, videoItems, videoPage, videoHasNext, videoSearching, videoError, videoMediaItems,
+  videoSort, setVideoSort,
   handleVideoSearch, loadMoreVideos,
 } = useVideoSearchScope(sharedKeyword, () => {})
 
