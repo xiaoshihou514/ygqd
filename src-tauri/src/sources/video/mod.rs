@@ -345,11 +345,13 @@ impl VideoApi {
         &self,
         keyword: &str,
         page: i32,
+        sort: Option<&str>,
     ) -> Result<(Vec<VideoCard>, bool), String> {
         let encoded = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect::<String>();
+        let sort_seg = sort.map(|s| format!("&sort={s}")).unwrap_or_default();
         let html = self
             .missav_get(&format!(
-                "https://missav.ai/dm539/ja/search/{encoded}?page={page}"
+                "https://missav.ai/dm539/ja/search/{encoded}?page={page}{sort_seg}"
             ))
             .await?;
         let mut cards = Self::parse_missav_search(&html);
@@ -595,12 +597,20 @@ impl VideoApi {
 
     /// 按关键词搜索:fs1 与 missav(直连)并发请求并合并,同基础番号
     /// 以 fs1 为准(fs1 有完整元数据);两路均失败时返回错误。
-    pub async fn search(&self, keyword: &str, page: i32) -> Result<VideoListResult, String> {
-        let (fs1_res, missav_res) = tokio::join!(self.search_fs1(keyword, page), async {
-            self.search_missav(keyword, page)
-                .await
-                .unwrap_or((Vec::new(), false))
-        });
+    pub async fn search(
+        &self,
+        keyword: &str,
+        page: i32,
+        sort: Option<&str>,
+    ) -> Result<VideoListResult, String> {
+        let (fs1_res, missav_res) = tokio::join!(
+            self.search_fs1(keyword, page, sort),
+            async {
+                self.search_missav(keyword, page, sort)
+                    .await
+                    .unwrap_or((Vec::new(), false))
+            }
+        );
         let fs1_has_next = matches!(&fs1_res, Ok(r) if r.items.len() >= 24);
         let (missav, missav_has_next) = missav_res;
         let mut all: Vec<VideoCard> = match fs1_res {
@@ -626,10 +636,27 @@ impl VideoApi {
         })
     }
 
-    /// fs1 侧搜索(番号/日文词;中文词在 fs1 索引中常无结果)
-    async fn search_fs1(&self, keyword: &str, page: i32) -> Result<VideoListResult, String> {
+    /// fs1 侧搜索(番号/日文词;中文词在 fs1 索引中常无结果)。
+    /// sort: None=默认;Some 支持 post_date(最近更新)/video_viewed
+    /// (最多观看)/most_favourited(最高收藏)/post_date_and_popularity
+    /// (近期最佳)——排序时走 KVS async 块形态(返回卡片片段,无分页
+    /// 导航,has_next 按卡片数推断,仅首页语义)。
+    async fn search_fs1(
+        &self,
+        keyword: &str,
+        page: i32,
+        sort: Option<&str>,
+    ) -> Result<VideoListResult, String> {
         let encoded: String = url::form_urlencoded::byte_serialize(keyword.as_bytes()).collect();
-        let html = self.get(&format!("/search/{encoded}/{page}/")).await?;
+        let html = match sort {
+            None => self.get(&format!("/search/{encoded}/{page}/")).await?,
+            Some(s) => {
+                let url = format!(
+                    "/search/{encoded}/?mode=async&function=get_block&block_id=list_videos_videos_list_search_result&sort_by={s}"
+                );
+                self.get(&url).await?
+            }
+        };
         let items = Self::parse_cards(&html);
         Ok(VideoListResult {
             pagination: PaginationInfo {
@@ -1486,7 +1513,7 @@ mod tests {
                     .expect("cover status");
                 println!("cover fetch: {}", cover.status());
 
-                let search = api.search_fs1("ssis", 1).await.expect("search");
+                let search = api.search_fs1("ssis", 1, None).await.expect("search");
                 println!("search_fs1[ssis]: {} cards", search.items.len());
                 assert!(!search.items.is_empty());
                 assert!(search.items.iter().all(|c| c.code.starts_with("ssis-")));
@@ -1531,7 +1558,7 @@ mod missav_tests {
                 let api = VideoApi::new().expect("video client");
 
                 // 1) 直连搜索(中文词兜底路径)
-                let (cards, has_next) = api.search_missav("ssis", 1).await.expect("missav search");
+                let (cards, has_next) = api.search_missav("ssis", 1, None).await.expect("missav search");
                 println!("missav search: {} cards has_next={has_next}", cards.len());
                 assert!(!cards.is_empty(), "missav 搜索不应为空");
 
@@ -1562,8 +1589,8 @@ mod missav_tests {
             .block_on(async {
                 let api = VideoApi::new().expect("video client");
                 for kw in ["giga", "中文字幕"] {
-                    let fs1 = api.search_fs1(kw, 1).await;
-                    let missav = api.search_missav(kw, 1).await;
+                    let fs1 = api.search_fs1(kw, 1, None).await;
+                    let missav = api.search_missav(kw, 1, None).await;
                     let full = api.search(kw, 1).await.expect("search");
                     println!(
                         "[{kw}] fs1={} missav={} search()={} has_next={}",

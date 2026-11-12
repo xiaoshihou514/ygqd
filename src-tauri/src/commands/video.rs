@@ -28,19 +28,25 @@ pub(crate) async fn fetch_video_list(
     Ok(out)
 }
 
-/// 视频搜索(番号/标题),page 从 1 开始
+/// 视频搜索(番号/标题),page 从 1 开始。
+/// sort 可选:released_at(发行日期)/published_at(最近更新)/views
+/// (总观看数,missav)/video_viewed(最多观看,fs1)/saved(收藏,missav)
+/// 等站点原生维度;不传为各源默认排序。fs1 排序时走 KVS async 块
+/// (无分页导航),missav 全维度支持。
 #[tauri::command]
 pub(crate) async fn search_videos(
     app: AppHandle,
     state: State<'_, AppState>,
     keyword: String,
     page: i32,
+    sort: Option<String>,
 ) -> Result<VideoListResult, String> {
-    let key = format!("video:search-{keyword}-{page}");
+    let sort_ref = sort.as_deref();
+    let key = format!("video:search-{keyword}-{page}-{sort:?}");
     if let Some(v) = state.cached(&key) {
         return Ok(v);
     }
-    let out = match state.video.search(&keyword, page).await {
+    let out = match state.video.search(&keyword, page, sort_ref).await {
         Ok(v) => {
             diag(
                 &app,
