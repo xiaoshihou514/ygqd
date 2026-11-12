@@ -23,3 +23,15 @@
 
 - [ ] 每轮开工前 git fetch + git log HEAD..FETCH_HEAD 核对与远程的差距
       (SSH 通道间歇会导致回避 pull,本地 main 落后的累积教训)
+
+## 操作禁令(2026-11-12 force push 事故后新增)
+
+- **共享工作区禁用 `git commit --amend`**:amend 的改写对象是当前
+  HEAD,而 HEAD 可能是他人刚推送的提交(本机 fetch 视野之外)——
+  fmt 修正/补充改动一律做**新提交**
+- **禁用 `git push -f`**(唯一例外:经 lead 批准的历史重写,需明确
+  通报全部组员)
+- **push 前必 fetch**:核对远程 HEAD 是否前进(`git fetch origin &&
+  git log HEAD..origin/main --oneline`),有新提交先 rebase 再推
+- **python 批量编辑后必须 cargo fmt + 编译核对**:正则清理的误删
+  (如 path 变量定义被 split_once 清理误删)靠编译护栏兜底,不靠目测
