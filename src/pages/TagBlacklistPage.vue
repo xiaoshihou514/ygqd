@@ -2,6 +2,8 @@
 import { errorMessage } from '@/utils/errors'
 import { computed, onMounted, ref } from 'vue'
 import { useTagBlacklist } from '@/composables/useTagBlacklist'
+import { useFollowedAuthors } from '@/composables/useFollowedAuthors'
+import { videoFollowList, novelFollowedAuthorsReadonly } from '@/services/api'
 import { useTheme } from '@/composables/useTheme'
 import {
   bikaLogin,
@@ -217,14 +219,28 @@ async function handleExport() {
   exporting.value = true
   exportStatus.value = ''
   try {
+    // 统一导出(用户需求:关注和设置统一用设置的导出按钮导出)
+    const followedApi = useFollowedAuthors()
+    await followedApi.load()
+    const [targetsActress, targetsMaker, novelAuthors] = await Promise.all([
+      videoFollowList('missav', 'actress').catch(() => []),
+      videoFollowList('missav', 'maker').catch(() => []),
+      novelFollowedAuthorsReadonly().catch(() => []),
+    ])
     const result = await exportJson({
-      filename: datedJsonFilename('ygqd-blacklist'),
-      title: 'ygqd 黑名单备份',
+      filename: datedJsonFilename('ygqd-backup'),
+      title: 'ygqd 统一备份(黑名单 + 关注数据)',
       data: {
-        format: 'ygqd.blacklist',
+        format: 'ygqd.backup',
         version: 1,
         exportedAt: new Date().toISOString(),
-        entries: entries.value,
+        blacklist: { entries: entries.value },
+        follows: {
+          comicAuthors: followedApi.followed.value,
+          videoTargetsActress: targetsActress,
+          videoTargetsMaker: targetsMaker,
+          novelAuthors,
+        },
       },
     })
     exportStatus.value = EXPORT_MESSAGES[result]

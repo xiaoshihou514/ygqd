@@ -603,14 +603,11 @@ impl VideoApi {
         page: i32,
         sort: Option<&str>,
     ) -> Result<VideoListResult, String> {
-        let (fs1_res, missav_res) = tokio::join!(
-            self.search_fs1(keyword, page, sort),
-            async {
-                self.search_missav(keyword, page, sort)
-                    .await
-                    .unwrap_or((Vec::new(), false))
-            }
-        );
+        let (fs1_res, missav_res) = tokio::join!(self.search_fs1(keyword, page, sort), async {
+            self.search_missav(keyword, page, sort)
+                .await
+                .unwrap_or((Vec::new(), false))
+        });
         let fs1_has_next = matches!(&fs1_res, Ok(r) if r.items.len() >= 24);
         let (missav, missav_has_next) = missav_res;
         let mut all: Vec<VideoCard> = match fs1_res {
@@ -1558,7 +1555,10 @@ mod missav_tests {
                 let api = VideoApi::new().expect("video client");
 
                 // 1) 直连搜索(中文词兜底路径)
-                let (cards, has_next) = api.search_missav("ssis", 1, None).await.expect("missav search");
+                let (cards, has_next) = api
+                    .search_missav("ssis", 1, None)
+                    .await
+                    .expect("missav search");
                 println!("missav search: {} cards has_next={has_next}", cards.len());
                 assert!(!cards.is_empty(), "missav 搜索不应为空");
 

@@ -373,28 +373,6 @@ const EXPORT_MESSAGES: Record<ExportResult, string> = {
   cancelled: '',
 }
 
-async function handleExport() {
-  if (exporting.value) return
-  exporting.value = true
-  exportStatus.value = ''
-  try {
-    const result = await exportJson({
-      filename: datedJsonFilename('ygqd-followed-authors'),
-      title: 'ygqd 关注作者备份',
-      data: {
-        format: 'ygqd.followed-authors',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        followedAuthors: followed.value,
-      },
-    })
-    exportStatus.value = EXPORT_MESSAGES[result]
-  } catch {
-    exportStatus.value = '导出失败，请稍后重试'
-  } finally {
-    exporting.value = false
-  }
-}
 
 </script>
 
@@ -410,9 +388,6 @@ async function handleExport() {
             @click="handleRefresh"
           >
             刷新
-          </button>
-          <button class="action-btn" :disabled="exporting" @click="handleExport">
-            {{ exporting ? '导出中' : '导出' }}
           </button>
         </div>
       </div>

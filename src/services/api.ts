@@ -48,6 +48,8 @@ export const fetchItemHistory = (source?: string, kind?: string, limit?: number)
   invoke<ItemHistoryEntry[]>('fetch_item_history', { source, kind, limit })
 export const videoFollow = (source: string, kind: string, targetId: string, displayName: string) =>
   invoke<void>('video_follow', { source, kind, targetId, displayName })
+export const novelFollowedAuthorsReadonly = () =>
+  invoke<{ authorId: string; authorName: string }[]>('novel_followed_authors')
 export const videoUnfollow = (source: string, kind: string, targetId: string) =>
   invoke<void>('video_unfollow', { source, kind, targetId })
 export const videoFollowList = (source: string, kind: string) =>
