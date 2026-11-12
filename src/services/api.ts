@@ -34,7 +34,7 @@ export const removeBlacklistEntry = (tag: string) => invoke<void>('remove_blackl
 export const updateBlacklistEntry = (tag: string, mode: string) => invoke<void>('update_blacklist', { tag, mode })
 export const gatewayOpen = (label: string) => invoke<void>('gateway_open', { label })
 export const fetchVideoList = (page = 1) => invoke<VideoListResult>('fetch_video_list', { page })
-export const searchVideos = (keyword: string, page = 1) => invoke<VideoListResult>('search_videos', { keyword, page })
+export const searchVideos = (keyword: string, page?: number, sort?: string) => invoke<VideoListResult>('search_videos', { keyword, page })
 export const fetchVideoDetail = (code: string) => invoke<VideoDetail>('fetch_video_detail', { code })
 export const recordItemHistory = (
   source: string,

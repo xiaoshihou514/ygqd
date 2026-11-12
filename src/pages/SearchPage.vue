@@ -415,6 +415,21 @@ function goToSplit() {
           :loading="videoSearching"
           @search="handleVideoSearch"
         />
+        <div class="sort-row" role="group" aria-label="排序方式">
+          <span class="sort-label">排序</span>
+          <div class="sort-chips">
+            <button
+              v-for="s in VIDEO_SORTS"
+              :key="s.key"
+              type="button"
+              class="sort-chip"
+              :class="{ active: videoSort === s.key }"
+              @click="setVideoSort(s.key)"
+            >
+              {{ s.label }}
+            </button>
+          </div>
+        </div>
         <MediaCollection
           v-if="videoSearchedKw"
           :items="videoMediaItems"
