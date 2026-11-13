@@ -1,9 +1,9 @@
 /**
  * 三板块统一条目模型(MediaCard / MediaCollection 唯一入参形态)。
  *
- * 漫画/视频/小说/历史/收藏的数据源各不相同,全部经本文件的适配函数转换后再交给
- * 卡片——板块差异(封面代理来源、中字/无码角标、小说无封面占位、历史进度文案、
- * 漫画路由四段)只在这里落定,卡片与容器不再按数据源分支。
+ * 漫画/视频/历史/收藏的数据源各不相同,全部经本文件的适配函数转换后再交给
+ * 卡片——板块差异(封面代理来源、中字/无码角标、历史进度文案、漫画路由四段)
+ * 只在这里落定,卡片与容器不再按数据源分支。
  */
 import type { RouteLocationRaw } from 'vue-router'
 import type { SourceId } from '@/config/sources'
@@ -44,9 +44,9 @@ interface MediaItemBase {
   key: string
   kind: MediaKind
   title: string
-  /** 副标题:视频=基础番号;小说/漫画=作者 */
+  /** 副标题:视频=基础番号;漫画=作者 */
   subtitle?: string
-  /** 封面;缺失时卡片按 kind 显示占位(小说书本图标 + 标题) */
+  /** 封面;缺失时卡片按 kind 显示占位(图标 + 标题) */
   cover?: MediaCover
   /** 封面角标(分类/中字/无码/榜单序号) */
   badges?: MediaBadge[]
@@ -151,15 +151,6 @@ export function fromVideo(v: VideoCard, opts: { watched?: boolean } = {}): Media
   }
 }
 
-// ───────── 小说 ─────────
-
-/**
- * open:点击去向。发现流/榜单直接进阅读器(任务 7);搜索/关注/历史进系列详情
- * (两种去向是现有产品行为,统一卡片不改变)
- */
-
-/** 书架/历史里的系列(progress=[章节序, 页码]) */
-
 // ───────── 全局历史时间线 ─────────
 
 /** 历史进度 JSON → 文案(损坏忽略) */
@@ -180,7 +171,7 @@ export function timelineProgressText(e: Pick<TimelineEntry, 'kind' | 'progress'>
 
 const KIND_LABEL: Record<MediaKind, string> = { comic: '漫画', video: '视频' }
 
-/** kindBadge:混排时间线显示「漫画/视频/小说」角标;单板块分组里可关掉 */
+/** kindBadge:混排时间线显示「漫画/视频」角标;单板块分组里可关掉 */
 export function fromTimeline(e: TimelineEntry, opts: { kindBadge?: boolean } = {}): MediaItem {
   let to: RouteLocationRaw
   let cover: MediaCover | undefined

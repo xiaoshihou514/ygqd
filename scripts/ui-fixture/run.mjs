@@ -108,6 +108,11 @@ for (const width of [400, 1200]) {
   expect(width, '按钮翻页', r['button-pager'].moreBtn, 1)
   expect(width, '按钮翻页不挂哨兵', r['button-pager'].sentinelShown, false)
   expect(width, '无限滚动哨兵显示', r.infinite.sentinelShown, true)
+  // 封面链路:成功图解码后显示 <img>、失败图回落占位、无残留加载骨架、同 url 并发去重只取一次
+  expect(width, '封面成功显示', r.images.imgs, 2)
+  expect(width, '封面失败回落占位', r.images.placeholders, 1)
+  expect(width, '封面无残留加载骨架', r['video-grid'].pending + r.images.pending, 0)
+  expect(width, '同 url 并发去重', r.imageCalls['/ok.png'], 1)
   // 任何区块不得横向溢出
   for (const id of ['comic-grid', 'video-grid', 'row']) {
     expect(width, `${id} 无横向溢出`, r[id].overflowX, false)
@@ -117,13 +122,16 @@ for (const width of [400, 1200]) {
 // —— 页面级:设置页(黑名单)/关注页,模拟 IPC 假数据(超长标签/作者名) ——
 for (const width of [400, 1200]) {
   const b = await render(width, 'pages.html?page=blacklist')
+  lastRender = b
   expect(width, '设置页无横向溢出(超长黑名单词)', b.docOverflow, false)
   expect(width, '设置页溢出元素', b.offenders.join(','), '')
   expect(width, '黑名单网格不嵌套(小说区已随板块删除,单区块)', b.chains.length, 1)
   const f = await render(width, 'pages.html?page=following')
+  lastRender = f
   expect(width, '关注页无横向溢出(超长作者名)', f.docOverflow, false)
-  const groups = f.groupsFromPage || []
-  expect(width, '关注页两组均有对象芯片', groups.length === 3 && groups.every((g) => g.chips > 0), true)
+  // 窄屏档在 iframe 内渲染,只回传 #result;groups 从 #result.groups 兜底
+  const groups = f.groupsFromPage || Object.values(f.groups || {})
+  expect(width, '关注页两组均有对象芯片', groups.length === 2 && groups.every((g) => g.chips > 0), true)
   expect(width, '关注页两组芯片样式一致', new Set(groups.flatMap((g) => g.sig)).size, 1)
   expect(width, '关注页两组都能 × 取消关注', groups.every((g) => g.removable > 0), true)
   expect(width, '关注页两组默认选中一项', groups.every((g) => g.active === 1), true)

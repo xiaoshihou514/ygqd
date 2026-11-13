@@ -53,6 +53,13 @@ async function start() {
         pre.id = 'result'
         pre.textContent = inner.textContent
         document.body.appendChild(pre)
+        const innerGroups = frame.contentDocument?.getElementById('groups-result')
+        if (innerGroups) {
+          const gpre = document.createElement('pre')
+          gpre.id = 'groups-result'
+          gpre.textContent = innerGroups.textContent
+          document.body.appendChild(gpre)
+        }
       }
     }, 200)
     return
@@ -71,7 +78,7 @@ async function start() {
 /** 关注页:逐个切 tab,记录每组的对象芯片数量与样式签名(统一性断言) */
 async function measureTabs() {
   const groups: Record<string, unknown> = {}
-  const tabs = Array.from(document.querySelectorAll('#app [role="tab"].content-tab')) as HTMLElement[]
+  const tabs = Array.from(document.querySelectorAll('#app [aria-label="关注视图"] [role="tab"]')) as HTMLElement[]
   for (const t of tabs) {
     t.click()
     await new Promise((r) => setTimeout(r, 1200))
@@ -86,11 +93,12 @@ async function measureTabs() {
     }
   }
   ;(window as any).__groups = groups
+  // 先测量再挂 groups-result:不折行的 <pre> 长 JSON 会把文档撑宽,污染 docOverflow
+  measure()
   const gpre = document.createElement('pre')
   gpre.id = 'groups-result'
   gpre.textContent = JSON.stringify(Object.values(groups))
   document.body.appendChild(gpre)
-  measure()
 }
 
 /** 页面内任何元素超出视口右缘(含被 overflow 隐藏前的内容宽度)即记为溢出 */
@@ -119,7 +127,8 @@ function measure() {
     docOverflow: document.documentElement.scrollWidth > vw + 1,
     offenders: [...new Set(offenders)].slice(0, 30),
     controls,
-    chains: Array.from(document.querySelectorAll('.tag-grid')).map((g) => { const out: string[] = []; let e: HTMLElement | null = g as HTMLElement; while (e && e.id !== 'app') { out.push(`${e.className.split(' ')[0] || e.tagName}:${Math.round(e.getBoundingClientRect().width)}/${getComputedStyle(e).display}`); e = e.parentElement } return out.join(' < ') }),
+    // 黑名单列表容器(设置页 iOS 分组列表化后为 .tag-row 的父级):应只有一个,不嵌套
+    chains: [...new Set(Array.from(document.querySelectorAll('.tag-row')).map((r) => r.parentElement).filter(Boolean))].map((g) => { const out: string[] = []; let e: HTMLElement | null = g as HTMLElement; while (e && e.id !== 'app') { out.push(`${e.className.split(' ')[0] || e.tagName}:${Math.round(e.getBoundingClientRect().width)}/${getComputedStyle(e).display}`); e = e.parentElement } return out.join(' < ') }),
     groups: (window as any).__groups,
     unknownCmds: [...new Set((window as any).__unknownCmds || [])],
   })

@@ -49,7 +49,28 @@ const timeline: MediaItem[] = [
   fromFavorite({ source: 'bika', comicId: 'f1', title: '收藏漫画', thumbnail: '', categoryId: 5, author: '', createdAt: now }),
 ]
 
+// 封面加载链路:模拟 IPC——'/ok.png' 返回 1×1 PNG,其余失败;统计每个 url 的调用次数(去重断言)
+const PNG_1PX = Uint8Array.from(
+  atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+  (c) => c.charCodeAt(0),
+).buffer
+const imageCalls: Record<string, number> = {}
+;(window as any).__TAURI_INTERNALS__ = {
+  invoke: async (cmd: string, args: { url?: string } = {}) => {
+    if (cmd !== 'fetch_video_image' && cmd !== 'fetch_image') throw new Error(`fixture: ${cmd}`)
+    const url = args.url ?? ''
+    imageCalls[url] = (imageCalls[url] ?? 0) + 1
+    if (url === '/ok.png') return PNG_1PX.slice(0)
+    throw new Error('fixture: 404')
+  },
+  transformCallback: () => 0,
+}
+const imageItems: MediaItem[] = ['img-001', 'img-002', 'img-003'].map((code, i) =>
+  fromVideo({ code, title: `封面链路 ${i}`, thumbnail: i < 2 ? '/ok.png' : '/__none__.jpg', views: '', likes: '', duration: '' }),
+)
+
 const sections: Array<{ id: string; props: Record<string, unknown> }> = [
+  { id: 'images', props: { items: imageItems, density: 'video' } },
   { id: 'comic-grid', props: { items: comics, density: 'comic' } },
   { id: 'video-grid', props: { items: videos, density: 'video' } },
   { id: 'row', props: { items: timeline, layout: 'row' } },
@@ -110,6 +131,8 @@ function measure() {
       toneLeak: root.querySelectorAll('.media-badge.tone-leak').length,
       toneAccent: root.querySelectorAll('.media-badge.tone-accent').length,
       placeholders: root.querySelectorAll('.media-placeholder').length,
+      imgs: root.querySelectorAll('.media-cover img').length,
+      pending: root.querySelectorAll('.proxy-pending').length,
       progress: Array.from(root.querySelectorAll('.media-progress')).map((e) => e.textContent?.trim()),
       times: root.querySelectorAll('.media-time').length,
       hrefs: Array.from(root.querySelectorAll('a.media-hit[href]')).map((a) => a.getAttribute('href')),
@@ -132,6 +155,7 @@ function measure() {
       statIcons: Array.from(root.querySelector('.media-card .media-stats')?.querySelectorAll('svg') ?? []).map((g) => g.getAttribute('data-icon')),
     }
   }
+  out.imageCalls = imageCalls
   const pre = document.createElement('pre')
   pre.id = 'result'
   pre.textContent = JSON.stringify(out)
