@@ -16,7 +16,7 @@ const props = withDefaults(
   defineProps<{
     items: MediaItem[]
     layout?: 'grid' | 'row'
-    /** 网格密度口径:comic 沿用 6→2 列断点;video/novel 用 auto-fill。缺省按首条 kind */
+    /** 网格密度口径:comic 沿用 6→2 列断点;video 用 auto-fill。缺省按首条 kind */
     density?: MediaKind
     /** 首屏加载(无数据时显示骨架) */
     loading?: boolean
@@ -34,7 +34,7 @@ const props = withDefaults(
     skeletonCount?: number
     /** 首屏加载时骨架上方的说明(如站点校验耗时预期) */
     loadingHint?: string
-    /** 无限滚动提前触发距离 */
+    /** 无限滚动提前触发距离(默认 400px,与各页口径一致,约半屏预取) */
     rootMargin?: string
   }>(),
   {
@@ -52,7 +52,7 @@ const props = withDefaults(
     endText: '没有更多了',
     skeletonCount: 12,
     loadingHint: '',
-    rootMargin: '200px',
+    rootMargin: '400px',
   },
 )
 const emit = defineEmits<{ loadMore: []; retry: []; open: [item: MediaItem] }>()
@@ -134,7 +134,8 @@ onDeactivated(() => {
       </slot>
     </template>
 
-    <div v-else class="mc-items">
+    <!-- 追加/移除条目淡入淡出(仅透明度,无 move/FLIP;首屏不做逐卡动画,整块淡入) -->
+    <TransitionGroup v-else tag="div" name="mc-item" class="mc-items mc-content">
       <MediaCard
         v-for="item in items"
         :key="item.key"
@@ -146,7 +147,7 @@ onDeactivated(() => {
           <slot name="actions" v-bind="slotProps" />
         </template>
       </MediaCard>
-    </div>
+    </TransitionGroup>
 
     <div v-if="loadingMore && items.length > 0" class="mc-loading-more">
       <LoadingSpinner :message="loadingMoreLabel" />
@@ -225,10 +226,21 @@ onDeactivated(() => {
 
 /* ───── 骨架 ───── */
 .mc-skeleton {
+  position: relative;
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
   overflow: hidden;
   background: var(--color-card-bg);
+}
+
+/* 扫光:每张骨架一个伪元素,只动 transform(合成层),与 ProxyImage 加载占位同一口径 */
+.mc-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--color-skeleton-highlight), transparent);
+  transform: translateX(-100%);
+  animation: mc-shimmer calc(var(--duration-slow) * 4) var(--ease-standard) infinite;
 }
 
 .layout-row .mc-skeleton {
@@ -240,14 +252,7 @@ onDeactivated(() => {
 
 .mc-skeleton-cover,
 .mc-skeleton-line {
-  background: linear-gradient(
-    90deg,
-    var(--color-divider-soft) 25%,
-    var(--color-canvas) 50%,
-    var(--color-divider-soft) 75%
-  );
-  background-size: 200% 100%;
-  animation: mc-shimmer 1.5s infinite;
+  background: var(--color-skeleton);
 }
 
 .mc-skeleton-cover {
@@ -284,19 +289,47 @@ onDeactivated(() => {
 }
 
 @keyframes mc-shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-
-  100% {
-    background-position: 200% 0;
+  to {
+    transform: translateX(100%);
   }
 }
 
+/* ───── 条目进出场 ───── */
+.mc-content {
+  animation: mc-fade-in var(--duration-base) var(--ease-out);
+}
+
+@keyframes mc-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.mc-item-enter-active {
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+.mc-item-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-in);
+}
+
+.mc-item-enter-from,
+.mc-item-leave-to {
+  opacity: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .mc-skeleton-cover,
-  .mc-skeleton-line {
+  .mc-skeleton::after {
+    display: none;
+  }
+
+  .mc-content {
     animation: none;
+  }
+
+  .mc-item-enter-active,
+  .mc-item-leave-active {
+    transition: none;
   }
 }
 
@@ -316,24 +349,40 @@ onDeactivated(() => {
 
 .mc-link-btn {
   flex-shrink: 0;
+  /* 触控目标 44px,负外边距抵消,不撑高错误条 */
+  min-height: 44px;
+  margin-block: calc(-1 * var(--spacing-sm));
+  padding: 0 var(--spacing-xs);
   color: var(--color-primary);
   background: transparent;
   font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
 }
 
 .mc-retry,
 .mc-more-btn {
-  padding: 8px 22px;
+  min-height: 44px;
+  padding: 0 var(--spacing-lg);
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-pill);
   background: var(--color-card-bg);
   color: var(--color-primary);
   font-size: var(--font-size-caption);
   cursor: pointer;
+  transition:
+    border-color var(--duration-base) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
 }
 
-.mc-more-btn:hover {
-  border-color: var(--color-primary);
+.mc-retry {
+  margin-top: var(--spacing-md);
+}
+
+@media (hover: hover) {
+  .mc-retry:hover,
+  .mc-more-btn:hover {
+    border-color: var(--color-primary);
+  }
 }
 
 .mc-more-row,
