@@ -1,20 +1,17 @@
-//! 诊断日志读取/清空 command(小说板块删除后,gateway 域仅存诊断)
+//! 诊断日志读取/清空 command(小说板块删除后,gateway 域仅存诊断)。
+//! 文件读写在 tokio 线程池执行,不占主线程。
 
-use tauri::AppHandle;
+use crate::diagnostics;
 
 /// 读取诊断日志(应用内查看)
-#[tauri::command]
-pub(crate) fn diag_read(app: AppHandle) -> Result<String, String> {
-    use tauri::Manager as _;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(std::fs::read_to_string(dir.join("diag.log")).unwrap_or_default())
+#[tauri::command(async)]
+pub(crate) fn diag_read() -> Result<String, String> {
+    Ok(diagnostics::read_all())
 }
 
 /// 清空诊断日志
-#[tauri::command]
-pub(crate) fn diag_clear(app: AppHandle) -> Result<(), String> {
-    use tauri::Manager as _;
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(dir.join("diag.log"));
+#[tauri::command(async)]
+pub(crate) fn diag_clear() -> Result<(), String> {
+    diagnostics::clear();
     Ok(())
 }

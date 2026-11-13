@@ -1,17 +1,17 @@
 //! video 域 command(重构笔 3:按源分组)
+//!
+//! 只读抓取类 command 统一经 `state.cache.get_or_fetch`(300 秒缓存 +
+//! 并发合并);纯数据库 command 标注 `async`,由 tokio 线程池执行而非主线程。
 
 use crate::db;
 use crate::diagnostics::diag;
-use crate::fetch_image_with_client;
-use crate::fetch_image_with_wreq;
 use crate::sources;
-use crate::AppState;
+use crate::sources::video::{VideoDetail, VideoListResult};
+use crate::stream_proxy;
+use crate::{fetch_image_with_client, fetch_image_with_wreq, AppState};
 use tauri::ipc::Response;
 use tauri::AppHandle;
 use tauri::State;
-
-use crate::sources::video::{VideoDetail, VideoListResult};
-use crate::stream_proxy;
 
 /// 视频列表(fs1 最新上市),page 从 1 开始
 #[tauri::command]
@@ -19,13 +19,10 @@ pub(crate) async fn fetch_video_list(
     page: i32,
     state: State<'_, AppState>,
 ) -> Result<VideoListResult, String> {
-    let key = format!("video:list-{page}");
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let out = state.video.list(page).await?;
-    state.put(key, &out);
-    Ok(out)
+    state
+        .cache
+        .get_or_fetch(format!("video:list-{page}"), state.video.list(page))
+        .await
 }
 
 /// 视频搜索(番号/标题),page 从 1 开始。
@@ -41,26 +38,21 @@ pub(crate) async fn search_videos(
     page: i32,
     sort: Option<String>,
 ) -> Result<VideoListResult, String> {
-    let sort_ref = sort.as_deref();
     let key = format!("video:search-{keyword}-{page}-{sort:?}");
-    if let Some(v) = state.cached(&key) {
-        return Ok(v);
-    }
-    let out = match state.video.search(&keyword, page, sort_ref).await {
-        Ok(v) => {
-            diag(
-                &app,
-                &format!("search ok kw={keyword} items={}", v.items.len()),
-            );
-            v
-        }
-        Err(e) => {
-            diag(&app, &format!("search FAIL kw={keyword} err={e}"));
-            return Err(e);
-        }
-    };
-    state.put(key, &out);
-    Ok(out)
+    state
+        .cache
+        .get_or_fetch(key, async {
+            let result = state.video.search(&keyword, page, sort.as_deref()).await;
+            match &result {
+                Ok(v) => diag(
+                    &app,
+                    &format!("search ok kw={keyword} items={}", v.items.len()),
+                ),
+                Err(e) => diag(&app, &format!("search FAIL kw={keyword} err={e}")),
+            }
+            result
+        })
+        .await
 }
 
 /// 视频详情(元数据与播放优先走 fs1,不可用时由 missav 直连兜底)
@@ -69,18 +61,14 @@ pub(crate) async fn fetch_video_detail(
     state: State<'_, AppState>,
     code: String,
 ) -> Result<VideoDetail, String> {
-    let key = format!("video:detail-{code}");
-    if let Some(mut v) = state.cached::<VideoDetail>(&key) {
-        // 缓存存原始地址;代理端口每次启动随机,读取时重新包装
-        v.m3u8 = stream_proxy::hls_url(&v.m3u8);
-        return Ok(v);
-    }
-    let out = state.video.detail(&code).await?;
+    // 缓存存原始地址;代理端口每次启动随机,读取时再包装
+    let mut detail = state
+        .cache
+        .get_or_fetch(format!("video:detail-{code}"), state.video.detail(&code))
+        .await?;
     // 播放器只接触本地代理地址(CDN 校验 Referer/拒绝浏览器 TLS,直连必 403)
-    let mut playable = out.clone();
-    playable.m3u8 = stream_proxy::hls_url(&out.m3u8);
-    state.put(key, &out);
-    Ok(playable)
+    detail.m3u8 = stream_proxy::hls_url(&detail.m3u8);
+    Ok(detail)
 }
 
 /// 视频封面按图床分流:fourhoi(missav 卡片封面)防盗链仅放行白名单
@@ -104,24 +92,22 @@ pub(crate) async fn fetch_video_image(
     result
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn record_video_watched(code: String, state: State<'_, AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::record_video_watched(&conn, &code)
+    state.with_db(|c| db::record_video_watched(c, &code))
 }
 
 /// 批量查询视频已看集合(入集中已看的 code)
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn fetch_video_watched_ids(
     codes: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::video_watched_ids(&conn, &codes)
+    state.with_db(|c| db::video_watched_ids(c, &codes))
 }
 
 /// 关注/取关视频目标(厂商/女优;source: fs1|missav, kind: maker|actress)
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn video_follow(
     source: String,
     kind: String,
@@ -129,30 +115,27 @@ pub(crate) fn video_follow(
     display_name: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follow_target_add(&conn, &source, &kind, &target_id, &display_name)
+    state.with_db(|c| db::follow_target_add(c, &source, &kind, &target_id, &display_name))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn video_unfollow(
     source: String,
     kind: String,
     target_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follow_target_remove(&conn, &source, &kind, &target_id)
+    state.with_db(|c| db::follow_target_remove(c, &source, &kind, &target_id))
 }
 
 /// 关注目标列表(按来源+类型过滤)
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn video_follow_list(
     source: String,
     kind: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<db::FollowTargetEntry>, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    db::follow_targets(&conn, &source, &kind)
+    state.with_db(|c| db::follow_targets(c, &source, &kind))
 }
 
 /// 可关注目标列表(fs1 女优 / missav 厂商 / missav 女优排行)
@@ -178,7 +161,7 @@ pub(crate) async fn video_follow_works(
     target_id: String,
     page: Option<i32>,
     state: State<'_, AppState>,
-) -> Result<sources::video::VideoListResult, String> {
+) -> Result<VideoListResult, String> {
     let page = page.unwrap_or(1).max(1);
     match (source.as_str(), kind.as_str()) {
         ("fs1", "actress") => state.video.fs1_model_works(&target_id, page).await,

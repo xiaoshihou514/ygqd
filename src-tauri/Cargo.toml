@@ -29,3 +29,16 @@ hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.23.1"
 
+# 发布构建:单编译单元 + thin LTO 换更小更快的 .so/可执行文件;
+# strip 去符号表(JNI 导出在 .dynsym,不受影响);panic 维持默认 unwind
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+strip = true
+
+# 开发构建:依赖(scraper/regex/rustls 等)开优化,本 crate 保持 opt-level 0
+# 以维持增量编译速度;调试期 HTML 解析与 TLS 握手不再明显卡顿
+[profile.dev.package."*"]
+opt-level = 2
+
