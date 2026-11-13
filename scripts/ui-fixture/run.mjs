@@ -108,6 +108,11 @@ for (const width of [400, 1200]) {
   expect(width, '按钮翻页', r['button-pager'].moreBtn, 1)
   expect(width, '按钮翻页不挂哨兵', r['button-pager'].sentinelShown, false)
   expect(width, '无限滚动哨兵显示', r.infinite.sentinelShown, true)
+  // 封面链路:成功图解码后显示 <img>、失败图回落占位、无残留加载骨架、同 url 并发去重只取一次
+  expect(width, '封面成功显示', r.images.imgs, 2)
+  expect(width, '封面失败回落占位', r.images.placeholders, 1)
+  expect(width, '封面无残留加载骨架', r['video-grid'].pending + r.images.pending, 0)
+  expect(width, '同 url 并发去重', r.imageCalls['/ok.png'], 1)
   // 任何区块不得横向溢出
   for (const id of ['comic-grid', 'video-grid', 'row']) {
     expect(width, `${id} 无横向溢出`, r[id].overflowX, false)
