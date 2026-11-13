@@ -1,26 +1,30 @@
 /**
  * 时间展示格式化(两个语义独立,不合并):
- * - formatRelativeTime:相对时间(「X 分钟前」)——关注页
- * - formatTimestamp:绝对时间(「MM-DD HH:mm」)——历史页
+ * - formatRelativeTime:相对时间(「X 分钟前」)
+ * - formatTimestamp:绝对时间(「MM-DD HH:mm」)——历史页/卡片行布局
  */
 
-/** 相对时间:分钟/小时/天前 */
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+
+/** 相对时间:刚刚/分钟/小时/天前(未来时间戳——设备时钟回拨等——按「刚刚」处理) */
 export function formatRelativeTime(ms: number): string {
-  const diff = Date.now() - ms
-  const mins = Math.floor(diff / 60000)
-  if (mins < 60) return `${mins} 分钟前`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours} 小时前`
-  const days = Math.floor(hours / 24)
-  return `${days} 天前`
+  if (!Number.isFinite(ms)) return ''
+  const diff = Math.max(0, Date.now() - ms)
+  if (diff < MINUTE) return '刚刚'
+  if (diff < HOUR) return `${Math.floor(diff / MINUTE)} 分钟前`
+  if (diff < DAY) return `${Math.floor(diff / HOUR)} 小时前`
+  return `${Math.floor(diff / DAY)} 天前`
 }
 
-/** 绝对时间:MM-DD HH:mm */
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** 绝对时间:MM-DD HH:mm(非今年的记录前置年份避免跨年歧义;非法时间戳返回空串) */
 export function formatTimestamp(ts: number): string {
+  if (!Number.isFinite(ts)) return ''
   const d = new Date(ts)
-  const M = String(d.getMonth() + 1).padStart(2, '0')
-  const D = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  return `${M}-${D} ${hh}:${mm}`
+  if (Number.isNaN(d.getTime())) return ''
+  const md = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return d.getFullYear() === new Date().getFullYear() ? md : `${d.getFullYear()}-${md}`
 }
