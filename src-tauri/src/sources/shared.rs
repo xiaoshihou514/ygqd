@@ -1,36 +1,5 @@
-//! 跨源共享工具(重构提取):限速闸、percent 解码、UA 常量、
-//! 网络错误中文化、日志摘要截断、短列表保序去重。
-
-use std::time::{Duration, Instant};
-
-// ── 限速闸(niacg/hlib 双源同构提取) ──
-
-/// 串行限速闸:内部记上次放行时刻,`throttle` 保证相邻放行间隔不小于
-/// 设定值。锁跨 await 持有(串行化语义),多任务共享同一闸即全局限速。
-pub struct RateGate {
-    last: tokio::sync::Mutex<Instant>,
-    min_interval: Duration,
-}
-
-impl RateGate {
-    /// 创建即视为「刚放行过」(减去一个间隔),首个请求无需等待前置冷却
-    pub fn new(min_interval: Duration) -> Self {
-        Self {
-            last: tokio::sync::Mutex::new(Instant::now() - min_interval),
-            min_interval,
-        }
-    }
-
-    /// 保证距上次放行至少 min_interval;不足则异步等待补齐
-    pub async fn throttle(&self) {
-        let mut last = self.last.lock().await;
-        let elapsed = last.elapsed();
-        if elapsed < self.min_interval {
-            tokio::time::sleep(self.min_interval - elapsed).await;
-        }
-        *last = Instant::now();
-    }
-}
+//! 跨源共享工具:percent 解码、UA 常量、HTTP 状态文案、日志摘要截断、
+//! 短列表保序去重。(RateGate 已删除:限速闸由 lib.rs 的 niacg_search_gate 承担)
 
 // ── 静态正则/选择器:一律 `std::sync::LazyLock` 静态量,首次使用编译、
 // 之后复用(解析热路径每条目都会命中,禁止在函数体内 `Regex::new`) ──
@@ -157,14 +126,5 @@ mod tests {
             http_status_error("niacg", StatusCode::IM_A_TEAPOT),
             "niacg请求失败（418）"
         );
-    }
-
-    #[tokio::test]
-    async fn rate_gate_throttles() {
-        let gate = RateGate::new(Duration::from_millis(50));
-        let start = Instant::now();
-        gate.throttle().await;
-        gate.throttle().await;
-        assert!(start.elapsed() >= Duration::from_millis(50));
     }
 }
