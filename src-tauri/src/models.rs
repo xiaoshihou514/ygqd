@@ -1,3 +1,7 @@
+//! IPC 共享数据模型(与前端 `src/types/index.ts` 一一对应)。
+//!
+//! 字段经 `rename_all = "camelCase"` 序列化,线上字段名即契约,不可改名。
+
 use serde::{Deserialize, Serialize};
 
 /// 漫画源标识。IPC 与 SQLite 中均以小写字符串("niacg"/"bika")表示
@@ -8,27 +12,34 @@ pub enum Source {
     Bika,
 }
 
-impl std::fmt::Display for Source {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl Source {
+    /// 稳定的小写标识(IPC、SQLite 与 Display 共用)
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Source::Niacg => "niacg",
             Source::Bika => "bika",
-        })
+        }
+    }
+}
+
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
 impl rusqlite::ToSql for Source {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(rusqlite::types::ToSqlOutput::Owned(
-            rusqlite::types::Value::Text(self.to_string()),
+        // 静态串借用绑定,免每次绑定参数分配 String
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(
+            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
         ))
     }
 }
 
 impl rusqlite::types::FromSql for Source {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        let text = value.as_str()?;
-        match text {
+        match value.as_str()? {
             "niacg" => Ok(Source::Niacg),
             "bika" => Ok(Source::Bika),
             other => Err(rusqlite::types::FromSqlError::Other(
@@ -38,6 +49,7 @@ impl rusqlite::types::FromSql for Source {
     }
 }
 
+/// 列表/搜索结果中的一部漫画(卡片数据)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComicItem {
@@ -54,6 +66,7 @@ pub struct ComicItem {
     pub link: String,
 }
 
+/// 漫画详情页数据
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComicDetail {
@@ -77,6 +90,7 @@ pub struct ComicDetail {
     pub is_favourite: bool,
 }
 
+/// 漫画章节
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Episode {
@@ -84,6 +98,7 @@ pub struct Episode {
     pub title: String,
 }
 
+/// 一页章节图片及其分页
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComicImagesResult {
@@ -91,6 +106,7 @@ pub struct ComicImagesResult {
     pub pagination: PaginationInfo,
 }
 
+/// 分页信息
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaginationInfo {
@@ -100,6 +116,7 @@ pub struct PaginationInfo {
     pub has_prev: bool,
 }
 
+/// 搜索结果页
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
@@ -108,6 +125,7 @@ pub struct SearchResult {
     pub page_url_template: Option<String>,
 }
 
+/// 分类列表页
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CategoryListResult {
@@ -115,6 +133,7 @@ pub struct CategoryListResult {
     pub pagination: PaginationInfo,
 }
 
+/// 已关注的哔咔作者(存于 follow_target;last_checked_at 与 followed_at 同值,兼容旧接口)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowedAuthor {
@@ -123,6 +142,7 @@ pub struct FollowedAuthor {
     pub last_checked_at: i64,
 }
 
+/// 漫画浏览记录(view_history 行)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ViewHistoryEntry {
@@ -135,6 +155,7 @@ pub struct ViewHistoryEntry {
     pub viewed_at: i64,
 }
 
+/// 标签黑名单条目(mode 区分屏蔽方式)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlacklistEntry {
@@ -143,6 +164,7 @@ pub struct BlacklistEntry {
     pub created_at: i64,
 }
 
+/// 浏览记录写入参数(时间戳由后端补全)
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordHistory {
@@ -154,6 +176,7 @@ pub struct RecordHistory {
     pub author: String,
 }
 
+/// 哔咔登录状态(不含密码与 token)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BikaAccountStatus {
@@ -161,6 +184,7 @@ pub struct BikaAccountStatus {
     pub email: String,
 }
 
+/// 本地收藏条目(favorites 行)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FavoriteEntry {
@@ -188,6 +212,7 @@ pub struct RecordFavorite {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::{types::FromSql, ToSql};
 
     /// IPC 与 SQLite 都以既有的小写串表示,序列化值不可变动
     #[test]
@@ -205,46 +230,55 @@ mod tests {
         assert!(serde_json::from_str::<Source>("\"xxx\"").is_err());
         assert_eq!(Source::Bika.to_string(), "bika");
     }
-}
 
-/// 小说系列(书架条目),chapters 为 JSON 存 SQLite
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct NovelSeries {
-    pub id: String,
-    pub title: String,
-    pub author: String,
-    /// 作者编号(hlib /u/{数字} 链接;关注作者与作者作品流用它定位作者页,
-    /// 作者名不能代替——/u/{作者名} 不是作者页)
-    #[serde(default)]
-    pub author_id: String,
-    /// 系列封面 URL(hlib 站点当前不提供系列封面,恒为空串;字段保留供
-    /// 其他来源与前端占位逻辑)。展示走 fetch_image 代理(Referer 分流)
-    #[serde(default)]
-    pub cover: String,
-    /// 系列简介(来源页 meta description;可能含站点文案,前端截断展示)
-    #[serde(default)]
-    pub introduction: String,
-    pub chapters: Vec<NovelChapter>,
-    pub added_at: i64,
-}
+    /// SQLite 绑定/读取与序列化使用同一组字符串
+    #[test]
+    fn source_sql_roundtrip_matches_wire_strings() {
+        for source in [Source::Niacg, Source::Bika] {
+            let out = source.to_sql().unwrap();
+            let rusqlite::types::ToSqlOutput::Borrowed(value) = out else {
+                panic!("expected borrowed text");
+            };
+            assert_eq!(value.as_str().unwrap(), source.as_str());
+            assert_eq!(Source::column_result(value).unwrap(), source);
+        }
+        assert!(Source::column_result(rusqlite::types::ValueRef::Text(b"x")).is_err());
+    }
 
-/// 系列中的一个章节
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NovelChapter {
-    /// /n/{id} 的文章 id
-    pub id: String,
-    pub order: i64,
-    pub title: String,
-}
-
-/// 文章单页解析结果
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NovelPage {
-    pub title: String,
-    pub author: String,
-    pub text: String,
-    pub total_pages: i64,
+    /// 线上字段名是前端契约(src/types/index.ts),逐字锁定
+    #[test]
+    fn wire_field_names_are_camel_case() {
+        let entry = FavoriteEntry {
+            source: Source::Bika,
+            comic_id: "c".into(),
+            title: "t".into(),
+            thumbnail: "th".into(),
+            category_id: 1,
+            author: "a".into(),
+            created_at: 2,
+        };
+        assert_eq!(
+            serde_json::to_string(&entry).unwrap(),
+            r#"{"source":"bika","comicId":"c","title":"t","thumbnail":"th","categoryId":1,"author":"a","createdAt":2}"#
+        );
+        let pagination = PaginationInfo {
+            current: 1,
+            total: 3,
+            has_next: true,
+            has_prev: false,
+        };
+        assert_eq!(
+            serde_json::to_string(&pagination).unwrap(),
+            r#"{"current":1,"total":3,"hasNext":true,"hasPrev":false}"#
+        );
+        let followed = FollowedAuthor {
+            author: "a".into(),
+            followed_at: 1,
+            last_checked_at: 1,
+        };
+        assert_eq!(
+            serde_json::to_string(&followed).unwrap(),
+            r#"{"author":"a","followedAt":1,"lastCheckedAt":1}"#
+        );
+    }
 }
