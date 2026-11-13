@@ -4,14 +4,19 @@
     <meta charset="UTF-8">
     <link rel="icon" href="/icon.png" type="image/png">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- CSS 加载前的默认画布/原生控件即跟随系统明暗,冷启动暗色下不闪白 -->
+    <meta name="color-scheme" content="light dark">
     <title>niacg</title>
     <script>
-      (function() {
-        var theme = localStorage.getItem('niacg-theme') || 'system';
-        if (theme === 'dark') {
-          document.documentElement.classList.add('dark');
-        } else if (theme === 'light') {
-          document.documentElement.classList.add('light');
+      // 首帧前应用显式主题(与 useTheme 同一存储键),避免先按系统配色渲染再跳变
+      (function () {
+        try {
+          var theme = localStorage.getItem('niacg-theme');
+          if (theme === 'dark' || theme === 'light') {
+            document.documentElement.classList.add(theme);
+          }
+        } catch (e) {
+          // 存储不可用:跟随系统(variables.css 媒体查询)
         }
       })();
     </script>

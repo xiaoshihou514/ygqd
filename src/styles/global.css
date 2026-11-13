@@ -12,6 +12,13 @@ html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* 横竖屏切换时 WebView 不自行放大字号 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* 去掉 Android WebView 点按时的蓝/灰色块,按压反馈统一走 --press-scale */
+  -webkit-tap-highlight-color: transparent;
+  /* 回弹/越界区域与页面同色,避免露出白底 */
+  background-color: var(--color-bg);
 }
 
 body {
@@ -23,6 +30,10 @@ body {
   background-color: var(--color-bg);
   color: var(--color-text-primary);
   min-height: 100vh;
+}
+
+::selection {
+  background-color: color-mix(in srgb, var(--color-accent) 28%, transparent);
 }
 
 a {
@@ -45,27 +56,63 @@ button {
   font-size: inherit;
   border: none;
   background: none;
+  /* 取消双击缩放判定,点按即时响应 */
+  touch-action: manipulation;
   transition: var(--transition-press);
 }
 
-button:active {
-  transform: scale(0.95);
+/*
+ * 全局按压反馈:零特异性(:where),组件自己声明 transform(定位用 translate、
+ * 自定义按压等)时以组件为准,不会被这里覆盖而跳位。
+ */
+:where(button:not(:disabled):active) {
+  transform: scale(var(--press-scale));
+}
+
+:where(button:disabled) {
+  cursor: default;
+}
+
+/* 键盘/遥控焦点环(触屏点按不触发 :focus-visible);零特异性,组件可覆盖 */
+:where(a, button, [role='button'], [tabindex]:not([tabindex='-1'])):where(:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 input,
-select {
+select,
+textarea {
   font-family: inherit;
   font-size: inherit;
 }
 
-.page-enter-active,
-.page-leave-active {
-  transition: opacity 0.2s ease;
+/* ============================================
+   页面切换(App.vue <transition name="page">)
+   旧页立即退出(不占位、不延迟),新页轻微上浮淡入;
+   只动 opacity/transform。
+   ============================================ */
+
+.page-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
 }
 
-.page-enter-from,
-.page-leave-to {
+.page-enter-from {
   opacity: 0;
+  transform: translateY(var(--spacing-xs));
+}
+
+.page-leave-active {
+  display: none;
+}
+
+/* 切换主题时临时关闭过渡,避免全屏颜色逐个渐变闪烁(useTheme 负责加/去) */
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
 }
 
 .container {
@@ -78,4 +125,16 @@ select {
   padding-top: calc(var(--nav-height) + var(--spacing-sm));
   padding-bottom: calc(var(--tab-bar-total-height) + var(--spacing-sm));
   min-height: 100vh;
+}
+
+/* 系统「减少动态效果」:动画/过渡近乎瞬时完成(保留结束态与 transitionend 事件) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
