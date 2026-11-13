@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 三板块统一卡片(漫画/视频/小说;推荐/搜索/榜单/历史/关注/收藏共用)。
+// 统一媒体卡片(漫画/视频;推荐/搜索/榜单/历史/关注/收藏共用)。
 // 入参只认 MediaItem(utils/mediaItem.ts 的适配函数负责板块差异),卡片内不按数据源分支,
 // 只按 kind 决定封面比例与占位图标。视觉按 DESIGN.md store-utility-card:
 // canvas 底、hairline 细边、--radius-lg、无阴影。
@@ -53,7 +53,6 @@ const statEntries = computed<StatEntry[]>(() => {
 const extraText = computed(() => (props.item.extra ?? []).join(' · '))
 const hasStats = computed(() => statEntries.value.length > 0 || !!extraText.value)
 const showStats = computed(() => hasStats.value && !(props.layout === 'grid' && props.item.kind === 'video'))
-const viewedText = computed(() => '已看')
 
 // —— 点击:默认走应用内路由;有 href 的条目(漫画)保留 <a> 的中键/新窗口能力 ——
 const suppressClick = ref(false)
@@ -164,7 +163,7 @@ onBeforeUnmount(() => {
             :class="`tone-${b.tone}`"
           >{{ b.text }}</span>
         </span>
-        <span v-if="item.viewed" class="media-viewed">{{ viewedText }}</span>
+        <span v-if="item.viewed" class="media-viewed">已看</span>
         <span v-if="item.duration" class="media-overlay-duration">{{ item.duration }}</span>
         <!-- 视频网格:播放量在封面左下、时长在右下(互不遮挡) -->
         <span v-if="hasStats && layout === 'grid' && item.kind === 'video'" class="media-overlay-stat">
@@ -192,10 +191,7 @@ onBeforeUnmount(() => {
           <span v-for="t in tags" :key="t" class="media-tag">{{ t }}</span>
         </span>
         <span v-if="item.progress" class="media-progress">{{ item.progress }}</span>
-        <span
-          v-if="showStats && !(layout === 'grid' && item.kind === 'video')"
-          class="media-stats"
-        >
+        <span v-if="showStats" class="media-stats">
           <span v-for="(st, si) in statEntries" :key="si" class="stat-item" :class="st.icon && `stat-${st.icon}`">
             <svg v-if="st.icon" :data-icon="st.icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path :d="STAT_ICON_PATH[st.icon]" /></svg>
             {{ st.text }}
@@ -227,11 +223,23 @@ onBeforeUnmount(() => {
   border: 1px solid var(--color-hairline);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  transition: border-color 0.2s;
+  /* 长网格:卡片内部排版/绘制与外部隔离,追加条目时不牵动已渲染卡片 */
+  contain: content;
+  transition:
+    transform var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard);
 }
 
-.media-card:hover {
-  border-color: var(--color-text-muted);
+/* 悬停描边只给可悬停设备(触屏上 :hover 会粘滞) */
+@media (hover: hover) {
+  .media-card:hover {
+    border-color: var(--color-text-muted);
+  }
+}
+
+/* 按压反馈:整卡轻微缩放;点操作按钮(actions 插槽)时不缩整卡 */
+.media-card:has(> .media-hit:active) {
+  transform: scale(var(--press-scale));
 }
 
 .media-hit {
@@ -239,6 +247,7 @@ onBeforeUnmount(() => {
   color: inherit;
   text-decoration: none;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .media-hit:focus-visible {
@@ -251,7 +260,7 @@ onBeforeUnmount(() => {
   position: relative;
   flex-shrink: 0;
   overflow: hidden;
-  background: var(--color-divider-soft);
+  background: var(--color-skeleton);
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
