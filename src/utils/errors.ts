@@ -1,7 +1,6 @@
 /** 常见底层错误(reqwest/wreq/serde 原文多为英文)→ 面向用户的中文文案。
  *  已含中文的错误(Rust 侧主动构造的提示)原样透传,不做改写。 */
 const FRIENDLY_RULES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^401\b/, '登录已失效,请重新登录'],
   [/timed? ?out|timeout|deadline has elapsed/i, '网络请求超时,请检查网络后重试'],
   [/dns error|failed to lookup address|name or service not known|no address associated|nodename nor servname/i, '无法解析服务器地址,请检查网络连接'],
   [/connection refused|connection reset|connection closed|connection aborted|broken pipe|network is unreachable|host is unreachable|error sending request|tcp connect error|tls|handshake|certificate/i, '网络连接失败,请检查网络或稍后重试'],
@@ -30,6 +29,8 @@ function rawMessage(e: unknown): string {
  *  (调用方 `errorMessage(e) || '加载失败'` 的兜底文案得以生效)。 */
 export function errorMessage(e: unknown): string {
   const msg = rawMessage(e).trim()
+  // Rust 侧以 "401" 前缀标记登录失效(可能带中文说明),须先于中文透传处理
+  if (/^401\b/.test(msg)) return msg.replace(/^401\b[\s:：]*/, '') || '登录已失效,请重新登录'
   if (!msg || CJK_RE.test(msg)) return msg
   for (const [re, friendly] of FRIENDLY_RULES) {
     if (re.test(msg)) return friendly
