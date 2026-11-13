@@ -6,7 +6,7 @@ if (typeof navigator !== 'undefined') {
   _isAndroid =
     isMobileLib() ||
     /android/i.test(navigator.userAgent) ||
-    (navigator as any).userAgentData?.platform === 'Android'
+    (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform === 'Android'
 }
 
 export function useUserAgent() {
