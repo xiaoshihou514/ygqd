@@ -411,7 +411,14 @@ pub(crate) async fn remove_favorite(
 /// 返回本次同步新增的条数
 #[tauri::command]
 pub(crate) async fn sync_bika_favorites(state: State<'_, AppState>) -> Result<usize, String> {
-    let count = || state.with_db(|c| Ok(db::favorites(c)?.len()));
+    // 只取条数,不必把整表读出来
+    let count = || {
+        state.with_db(|c| {
+            c.query_row("SELECT COUNT(*) FROM favorites", [], |r| r.get::<_, i64>(0))
+                .map(|n| n as usize)
+                .map_err(|e| e.to_string())
+        })
+    };
     let before = count()?;
     let bika = state.bika_snapshot();
     let mut page = 1;
