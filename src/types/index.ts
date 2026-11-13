@@ -59,11 +59,6 @@ export interface SearchParams {
   tempid?: string
 }
 
-export interface CategoryOption {
-  id: number
-  label: string
-}
-
 export interface ParsedTitle {
   author: string
   workName: string
@@ -186,11 +181,6 @@ export interface VideoMetaLink {
   name: string
 }
 
-
-
-
-
-
 /** 视频关注条目(video_follow_list;follow_target 统一表) */
 export interface FollowTargetEntry {
   source: string
@@ -208,7 +198,6 @@ export interface FollowTargetItem {
   workCount?: number
 }
 
-
 /** 全局历史条目(item_history 表;视频/小说写入,漫画走存量 view_history) */
 export interface ItemHistoryEntry {
   source: string
@@ -221,5 +210,3 @@ export interface ItemHistoryEntry {
   /** 封面(视频为 fourhoi 构造 URL;漫画存量自带;小说无) */
   thumbnail?: string
 }
-
-

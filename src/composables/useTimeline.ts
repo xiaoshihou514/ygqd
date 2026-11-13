@@ -66,8 +66,10 @@ export function useTimeline(
 
   /** 视频条目的播放位置(progress JSON 解析) */
   function entryPosition(e: TimelineEntry): number | undefined {
+    if (!e.progress) return undefined
     try {
-      return e.progress ? (JSON.parse(e.progress) as { position?: number }).position : undefined
+      const pos: unknown = (JSON.parse(e.progress) as { position?: unknown } | null)?.position
+      return typeof pos === 'number' && Number.isFinite(pos) && pos >= 0 ? pos : undefined
     } catch {
       return undefined
     }
@@ -87,6 +89,7 @@ export function useTimeline(
   }
 
   function formatPosition(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) seconds = 0
     const m = Math.floor(seconds / 60)
     const s = Math.floor(seconds % 60)
     return `看到 ${m} 分 ${s} 秒`

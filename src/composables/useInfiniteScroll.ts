@@ -1,4 +1,4 @@
-import { onUnmounted } from 'vue'
+import { getCurrentScope, onScopeDispose } from 'vue'
 
 /**
  * 无限滚动哨兵(重构笔 2:七处 IntersectionObserver 手写模式收敛)。
@@ -19,6 +19,19 @@ export interface InfiniteScrollOptions {
 export function useInfiniteScroll(options: InfiniteScrollOptions) {
   let observer: IntersectionObserver | null = null
 
+  /** 触发回调;同步异常与 Promise reject 统一记日志,不留未处理拒绝。
+   *  (不在此加在途锁:调用方会在 onHit 内部重绑哨兵,锁会吞掉重绑后的首次回调) */
+  function hit() {
+    try {
+      const result = options.onHit()
+      if (result instanceof Promise) {
+        result.catch((e: unknown) => console.error('[infinite-scroll] onHit 异常', e))
+      }
+    } catch (e) {
+      console.error('[infinite-scroll] onHit 异常', e)
+    }
+  }
+
   /** 绑定哨兵(幂等:先拆旧再绑新;哨兵缺失或门槛不满足时不绑定) */
   function setup() {
     teardown()
@@ -27,7 +40,8 @@ export function useInfiniteScroll(options: InfiniteScrollOptions) {
     if (options.enabled && !options.enabled()) return
     observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) void options.onHit()
+        // 同一哨兵一批可能含多次进出变化,以最后一条(当前状态)为准
+        if (entries[entries.length - 1]?.isIntersecting) hit()
       },
       { rootMargin: options.rootMargin ?? '200px' },
     )
@@ -39,6 +53,6 @@ export function useInfiniteScroll(options: InfiniteScrollOptions) {
     observer = null
   }
 
-  onUnmounted(teardown)
+  if (getCurrentScope()) onScopeDispose(teardown)
   return { setup, teardown }
 }
