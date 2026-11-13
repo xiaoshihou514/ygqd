@@ -19,7 +19,8 @@
   top: 0;
   left: 0;
   right: 0;
-  height: var(--nav-height);
+  height: var(--nav-total-height);
+  padding-top: var(--nav-safe-top);
   z-index: var(--z-nav);
   background: var(--color-tab-bar-bg);
   -webkit-backdrop-filter: saturate(180%) blur(20px);

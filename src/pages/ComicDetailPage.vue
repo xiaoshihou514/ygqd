@@ -910,7 +910,7 @@ export default {
   flex-wrap: wrap;
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-lg);
-  scroll-margin-top: calc(var(--nav-height) + var(--spacing-sm));
+  scroll-margin-top: calc(var(--nav-total-height) + var(--spacing-sm));
 }
 
 .episode-pill {

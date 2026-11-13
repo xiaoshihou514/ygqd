@@ -119,6 +119,8 @@
   /* ---- Layout ---- */
   --max-width: 1440px;
   --nav-height: 44px;
+  --nav-safe-top: env(safe-area-inset-top, 0px);
+  --nav-total-height: calc(var(--nav-height) + var(--nav-safe-top));
   --sub-nav-height: 52px;
   --tab-bar-height: 50px;
   --tab-bar-safe-bottom: env(safe-area-inset-bottom, 0px);

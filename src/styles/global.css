@@ -122,7 +122,7 @@ textarea {
 }
 
 .main-content {
-  padding-top: calc(var(--nav-height) + var(--spacing-sm));
+  padding-top: calc(var(--nav-total-height) + var(--spacing-sm));
   padding-bottom: calc(var(--tab-bar-total-height) + var(--spacing-sm));
   min-height: 100vh;
 }
