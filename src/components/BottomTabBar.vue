@@ -62,7 +62,7 @@ const tabs = [
 </script>
 
 <template>
-  <nav class="bottom-tab-bar">
+  <nav class="bottom-tab-bar" aria-label="主导航">
     <div class="tab-bar-inner">
       <RouterLink
         v-for="tab in tabs"
@@ -80,6 +80,7 @@ const tabs = [
           stroke-width="2"
           stroke-linecap="round"
           stroke-linejoin="round"
+          aria-hidden="true"
         >
           <path :d="tab.icon" />
         </svg>
@@ -90,6 +91,7 @@ const tabs = [
 </template>
 
 <style scoped>
+/* 毛玻璃底栏:与顶部 NavHeader 同一材质(tab-bar-bg 半透明 + 背景模糊 + 发丝线) */
 .bottom-tab-bar {
   position: fixed;
   bottom: 0;
@@ -97,48 +99,75 @@ const tabs = [
   right: 0;
   height: var(--tab-bar-total-height);
   background: var(--color-tab-bar-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
   border-top: 1px solid var(--color-hairline);
-  z-index: 100;
+  z-index: var(--z-nav);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   padding-bottom: var(--tab-bar-safe-bottom);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
 }
 
 .tab-bar-inner {
   flex: 1;
   display: flex;
-  justify-content: space-around;
-  align-items: center;
+  align-items: stretch;
   height: var(--tab-bar-height);
   max-width: var(--max-width);
   margin: 0 auto;
 }
 
+/* 整列可点(热区 = 1/5 宽 × 50px),不止图标+文字那一小块 */
 .tab-item {
+  flex: 1;
+  min-width: 48px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  padding: 4px 0;
   color: var(--color-text-muted);
   text-decoration: none;
-  transition: color 0.2s;
-  min-width: 48px;
+  transition: color var(--duration-base) var(--ease-standard);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .tab-item.active {
   color: var(--color-accent);
 }
 
+.tab-item:focus-visible {
+  outline: 2px solid var(--color-primary-focus);
+  outline-offset: -4px;
+  border-radius: var(--radius-sm);
+}
+
 .tab-icon {
   width: 24px;
   height: 24px;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.tab-item.active .tab-icon {
+  transform: scale(1.06);
+}
+
+/* 按压反馈:图标与文字一起轻微收缩 */
+.tab-item:active .tab-icon,
+.tab-item:active .tab-label {
+  transform: scale(var(--press-scale));
+  transition-duration: var(--duration-fast);
 }
 
 .tab-label {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
   letter-spacing: 0.2px;
+  transition: transform var(--duration-base) var(--ease-out);
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref, computed, watch, onMounted, nextTick } from 'vue'
+import { reactive, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import type { SearchParams } from '@/types'
 import type { SearchScope } from '@/config/sources'
@@ -11,7 +11,6 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
-
 
 const CATEGORIES = [
   { id: 9, label: 'A漫' },
@@ -46,14 +45,15 @@ const form = reactive({
   sortOrder: 'default',
 })
 
-
-
-
-
-
 watch(() => route.query.keyword, (kw) => {
   if (kw && typeof kw === 'string') form.keyword = kw
 })
+
+/** v-model.number 在输入框清空时给出 '',负数/小数也可能被手输进来 */
+function normalizedMinLikes(): number {
+  const n = Math.floor(Number(form.minLikes))
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
 
 function handleSubmit() {
   if (!form.keyword.trim()) return
@@ -63,7 +63,7 @@ function handleSubmit() {
     classid: form.classid,
     show: form.show,
     tempid: '1',
-  }, form.minLikes, form.sortOrder)
+  }, normalizedMinLikes(), form.sortOrder)
 }
 
 onMounted(() => {
@@ -93,8 +93,8 @@ onMounted(() => {
       />
 
       <div class="search-options">
-        <div class="option-group">
-          <span class="option-label">分类</span>
+        <div class="option-group" role="group" aria-label="分类">
+          <span class="option-label" aria-hidden="true">分类</span>
           <div class="option-tags">
             <button
               v-for="cat in CATEGORIES"
@@ -102,6 +102,7 @@ onMounted(() => {
               type="button"
               class="option-tag"
               :class="{ active: form.classid === cat.id }"
+              :aria-pressed="form.classid === cat.id"
               @click="form.classid = cat.id"
             >
               {{ cat.label }}
@@ -109,8 +110,8 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="option-group">
-          <span class="option-label">范围</span>
+        <div class="option-group" role="group" aria-label="范围">
+          <span class="option-label" aria-hidden="true">范围</span>
           <div class="option-tags">
             <button
               v-for="scope in SCOPE_OPTIONS"
@@ -118,6 +119,7 @@ onMounted(() => {
               type="button"
               class="option-tag"
               :class="{ active: form.show === scope.value }"
+              :aria-pressed="form.show === scope.value"
               @click="form.show = scope.value"
             >
               {{ scope.label }}
@@ -125,8 +127,8 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="option-group">
-          <span class="option-label">排序</span>
+        <div class="option-group" role="group" aria-label="排序">
+          <span class="option-label" aria-hidden="true">排序</span>
           <div class="option-tags">
             <button
               v-for="s in SORT_OPTIONS"
@@ -134,6 +136,7 @@ onMounted(() => {
               type="button"
               class="option-tag"
               :class="{ active: form.sortOrder === s.value }"
+              :aria-pressed="form.sortOrder === s.value"
               @click="form.sortOrder = s.value"
             >
               {{ s.label }}
@@ -141,14 +144,19 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="option-group">
-          <span class="option-label">星标</span>
+        <div class="option-group option-group--inline">
+          <label class="option-label" for="search-min-likes">星标</label>
           <input
+            id="search-min-likes"
             v-model.number="form.minLikes"
             type="number"
             class="filter-input"
             placeholder="最低星标数"
             min="0"
+            step="1"
+            inputmode="numeric"
+            enterkeyhint="search"
+            @keydown.enter.prevent="handleSubmit"
           />
         </div>
       </div>
@@ -165,125 +173,35 @@ onMounted(() => {
   margin-bottom: var(--spacing-lg);
 }
 
-.search-input-row {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 20px;
-}
-
-.search-input-wrap {
-  flex: 1;
-  position: relative;
-}
-
-.search-input {
-  width: 100%;
-  height: 44px;
-  padding: 0 44px 0 var(--spacing-lg);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: var(--radius-pill);
-  font-size: var(--font-size-body);
-  outline: none;
-  transition: border-color 0.2s;
-  color: var(--color-text-primary);
-  background: var(--color-canvas);
-  box-sizing: border-box;
-}
-
-.search-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-primary-focus);
-}
-
-.search-clear {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--color-text-muted) 14%, transparent);
-  color: var(--color-text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.search-clear:hover {
-  background: color-mix(in srgb, var(--color-text-muted) 24%, transparent);
-  color: var(--color-text-primary);
-}
-
-.search-btn {
-  height: 44px;
-  padding: 0 var(--spacing-lg);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  border-radius: var(--radius-pill);
-  font-size: var(--font-size-body);
-  font-weight: var(--font-weight-regular);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  transition: background 0.2s;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.search-btn:hover {
-  background: var(--color-primary-focus);
-}
-
-@media (max-width: 640px) {
-  .search-btn {
-    padding: 0 14px;
-    gap: 4px;
-  }
-
-  .search-btn svg {
-    width: 16px;
-    height: 16px;
-  }
-
-  .search-btn span {
-    font-size: 14px;
-  }
-}
-
 @media (max-width: 480px) {
-  .search-btn {
-    padding: 0 12px;
-    min-width: 44px;
-    justify-content: center;
-  }
-
-  .search-btn span {
-    display: none;
+  .search-form-wrapper {
+    padding: var(--spacing-md);
   }
 }
 
 .search-options {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--spacing-sm);
 }
 
 .option-group {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--spacing-sm);
+}
+
+.option-group--inline {
+  align-items: center;
 }
 
 .option-label {
   font-size: var(--font-size-fine-print);
   font-weight: var(--font-weight-semibold);
+  line-height: 28px;
   color: var(--color-text-secondary);
-  padding-top: var(--spacing-xxs);
   min-width: 36px;
+  flex-shrink: 0;
 }
 
 .option-tags {
@@ -292,20 +210,34 @@ onMounted(() => {
   gap: 6px;
 }
 
+/* 选项胶囊:尺寸与视频 scope 的 .sort-chip 对齐;hover 仅限有指针设备,
+   避免触屏点按后残留蓝边看起来像"已选中" */
 .option-tag {
-  padding: 4px 14px;
+  min-height: 28px;
+  padding: var(--spacing-xxs) 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   font-size: var(--font-size-fine-print);
   font-weight: var(--font-weight-regular);
   color: var(--color-text-secondary);
   background: var(--color-canvas);
-  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard),
+    color var(--duration-base) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
 }
 
-.option-tag:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+.option-tag:active {
+  transform: scale(var(--press-scale));
+}
+
+@media (hover: hover) {
+  .option-tag:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
 }
 
 .option-tag.active {
@@ -314,120 +246,32 @@ onMounted(() => {
   border-color: var(--color-primary);
 }
 
-.option-group.muted .option-tag {
-  opacity: 0.45;
-  pointer-events: none;
+.option-tag:focus-visible {
+  outline: 2px solid var(--color-primary-focus);
+  outline-offset: 2px;
 }
 
 .filter-input {
-  height: 30px;
-  width: 120px;
+  height: 32px;
+  width: 128px;
   padding: 0 var(--spacing-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   font-size: var(--font-size-fine-print);
   outline: none;
-  transition: border-color 0.2s;
   color: var(--color-text-primary);
   background: var(--color-canvas);
+  transition:
+    border-color var(--duration-base) var(--ease-standard),
+    box-shadow var(--duration-base) var(--ease-standard);
 }
 
 .filter-input:focus {
-  border-color: var(--color-primary);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
 .filter-input::placeholder {
   color: var(--color-text-muted);
-}
-
-.suggestions-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin-top: 4px;
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  z-index: 100;
-  overflow: hidden;
-  padding: 4px 0;
-  list-style: none;
-}
-
-.suggestion-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px var(--spacing-md);
-  font-size: var(--font-size-body);
-  color: var(--color-text-primary);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.suggestion-item:hover,
-.suggestion-item.highlighted {
-  background: var(--color-primary-focus);
-}
-
-.suggestion-icon {
-  flex-shrink: 0;
-  color: var(--color-text-muted);
-  opacity: 0.5;
-}
-
-.suggestion-text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.suggestion-remove {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
-}
-
-.suggestion-item:hover .suggestion-remove {
-  opacity: 0.7;
-}
-
-.suggestion-remove:hover {
-  opacity: 1 !important;
-  background: rgba(0, 0, 0, 0.08);
-}
-
-.suggestion-clear-row {
-  border-top: 1px solid var(--color-hairline);
-  margin-top: 4px;
-  padding: 6px var(--spacing-md);
-}
-
-.clear-history {
-  width: 100%;
-  padding: 4px 0;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-fine-print);
-  cursor: pointer;
-  text-align: center;
-  transition: color 0.15s;
-}
-
-.clear-history:hover {
-  color: var(--color-text-primary);
 }
 </style>
