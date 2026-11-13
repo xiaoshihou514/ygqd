@@ -4,19 +4,22 @@
  * -uncensored-leak-chinese-subtitle(无码中字)。
  */
 
-/** 剥全部后缀并大写:展示用基础番号(MediaCard 适配器与各页共用) */
+const SUFFIX_CS = '-chinese-subtitle'
+const SUFFIX_LEAK = '-uncensored-leak'
+/** 一次剥净全部变体后缀(组合后缀 = 两段依次出现) */
+const SUFFIX_RE = /-uncensored-leak|-chinese-subtitle/g
+
+/** 剥全部后缀并大写:展示用基础番号(MediaCard 适配器与各页共用)。
+ *  先统一小写再匹配,大写来源的番号同样能剥净后缀 */
 export function videoBaseCode(code: string): string {
-  return code
-    .replace('-uncensored-leak-chinese-subtitle', '')
-    .replace('-uncensored-leak', '')
-    .replace('-chinese-subtitle', '')
-    .toUpperCase()
+  return code.toLowerCase().replace(SUFFIX_RE, '').toUpperCase()
 }
 
 /** base_code 去重优先级(需求 12 归并口径):中字 > 有码 > 无码 */
 function dedupePriority(code: string): number {
-  if (code.includes('-chinese-subtitle')) return 3
-  if (!code.includes('-uncensored-leak')) return 2
+  const c = code.toLowerCase()
+  if (c.includes(SUFFIX_CS)) return 3
+  if (!c.includes(SUFFIX_LEAK)) return 2
   return 1
 }
 
