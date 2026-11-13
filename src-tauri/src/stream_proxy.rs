@@ -318,7 +318,7 @@ impl UpstreamError {
     }
 
     /// 限流/瞬时故障/超时值得重试
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     fn retryable(self) -> bool {
         matches!(self.status(), 429 | 502 | 503 | 504)
     }
@@ -378,20 +378,21 @@ fn io_status(e: &io::Error) -> u16 {
 }
 
 /// `fetch_hls` 失败原因(Display 文案保持原有格式)
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 enum FetchError {
     InvalidUrl,
     NotUtf8,
     Upstream(UpstreamError),
 }
 
+#[cfg(test)]
 impl FetchError {
-    #[cfg_attr(not(test), allow(dead_code))]
     fn retryable(&self) -> bool {
         matches!(self, Self::Upstream(e) if e.retryable())
     }
 }
 
+#[cfg(test)]
 impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -403,9 +404,9 @@ impl std::fmt::Display for FetchError {
 }
 
 /// 拉取 HLS 资源:m3u8 返回重写后的文本;分片返回原始字节。
-/// blocking 网络 IO 经 spawn_blocking,不阻塞异步执行器。
-/// 当前仅 `sources::video` 的联调测试调用(前端 IPC 加载器已下线),非测试构建不报未使用。
-#[cfg_attr(not(test), allow(dead_code))]
+/// 仅供 `sources::video` 的上游联调测试使用(前端 IPC 加载器已下线),
+/// 故只在测试构建中编译。blocking 网络 IO 经 spawn_blocking,不阻塞异步执行器。
+#[cfg(test)]
 pub async fn fetch_hls(url: &str) -> Result<(bool, String, Vec<u8>), String> {
     // CDN 偶发 502(限流/瞬时故障):指数间隔重试 3 次
     let mut last_err: Option<String> = None;
@@ -432,7 +433,7 @@ pub async fn fetch_hls(url: &str) -> Result<(bool, String, Vec<u8>), String> {
 }
 
 /// 阻塞版(供 spawn_blocking)
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 fn fetch_hls_blocking(url: &str) -> Result<(bool, String, Vec<u8>), FetchError> {
     let has_host = url::Url::parse(url)
         .ok()
