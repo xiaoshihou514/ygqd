@@ -12,11 +12,10 @@ import {
   diagRead,
   fetchBikaAddresses,
   getBikaAddress,
-  novelFollowedAuthorsReadonly,
   setBikaAddress,
-  videoFollowList,
 } from '@/services/api'
 import { datedJsonFilename, exportJson, type ExportResult } from '@/utils/exportJson'
+import { applyBackup, buildBackup, describeImport, parseBackup } from '@/utils/backup'
 import type { BlacklistMode } from '@/types'
 
 const { entries, count, add, remove, updateMode } = useTagBlacklist()
@@ -274,9 +273,12 @@ function handleCycleMode(tag: string, mode: BlacklistMode) {
   if (next) updateMode(tag, next)
 }
 
-// ---------- 数据导出 ----------
+// ---------- 数据备份(设置 + 关注,一起导出、一起导入) ----------
 
 const exporting = ref(false)
+const importing = ref(false)
+const importInput = ref<HTMLInputElement | null>(null)
+const backupBusy = computed(() => exporting.value || importing.value)
 
 const EXPORT_MESSAGES: Record<ExportResult, string> = {
   shared: '已发送备份',
@@ -286,39 +288,50 @@ const EXPORT_MESSAGES: Record<ExportResult, string> = {
 }
 
 async function handleExport() {
-  if (exporting.value) return
+  if (backupBusy.value) return
   exporting.value = true
   clearFlash('export')
   try {
-    // 统一导出(用户需求:关注和设置统一用设置的导出按钮导出)
-    const followedApi = useFollowedAuthors()
-    const [, targetsActress, targetsMaker, novelAuthors] = await Promise.all([
-      followedApi.load(),
-      videoFollowList('missav', 'actress').catch(() => []),
-      videoFollowList('missav', 'maker').catch(() => []),
-      novelFollowedAuthorsReadonly().catch(() => []),
-    ])
+    const data = await buildBackup(current.value)
     const result = await exportJson({
       filename: datedJsonFilename('ygqd-backup'),
-      title: 'ygqd 统一备份(黑名单 + 关注数据)',
-      data: {
-        format: 'ygqd.backup',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        blacklist: { entries: entries.value },
-        follows: {
-          comicAuthors: followedApi.followed.value,
-          videoTargetsActress: targetsActress,
-          videoTargetsMaker: targetsMaker,
-          novelAuthors,
-        },
-      },
+      title: 'ygqd 备份(设置 + 关注)',
+      data,
     })
     showFlash('export', EXPORT_MESSAGES[result])
   } catch (e) {
     showFlash('export', `导出失败：${errorMessage(e) || '请稍后重试'}`, 'error')
   } finally {
     exporting.value = false
+  }
+}
+
+function pickImportFile() {
+  if (backupBusy.value) return
+  clearFlash('export')
+  importInput.value?.click()
+}
+
+async function handleImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 允许再次选择同一文件
+  if (!file || backupBusy.value) return
+  importing.value = true
+  try {
+    const payload = parseBackup(await file.text())
+    const summary = await applyBackup(payload, {
+      blacklist: entries.value,
+      addBlacklist: add,
+      updateBlacklistMode: updateMode,
+      setTheme,
+    })
+    void useFollowedAuthors().load()
+    showFlash('export', describeImport(summary), summary.failed ? 'error' : 'success')
+  } catch (e) {
+    showFlash('export', `导入失败：${errorMessage(e) || '请检查备份文件'}`, 'error')
+  } finally {
+    importing.value = false
   }
 }
 
@@ -607,11 +620,26 @@ async function copyDiag() {
             <button
               type="button"
               class="row row-btn accent"
-              :disabled="exporting"
+              :disabled="backupBusy"
               @click="handleExport"
             >
               {{ exporting ? '正在导出…' : '导出备份' }}
             </button>
+            <button
+              type="button"
+              class="row row-btn accent"
+              :disabled="backupBusy"
+              @click="pickImportFile"
+            >
+              {{ importing ? '正在导入…' : '导入备份' }}
+            </button>
+            <input
+              ref="importInput"
+              type="file"
+              accept="application/json,.json"
+              hidden
+              @change="handleImportFile"
+            />
           </div>
           <div class="status-slot" aria-live="polite">
             <Transition name="flash" mode="out-in">
@@ -620,7 +648,7 @@ async function copyDiag() {
               </p>
             </Transition>
           </div>
-          <p class="group-footer">将标签黑名单与关注数据打包为一个 JSON 文件。</p>
+          <p class="group-footer">设置（主题、标签黑名单）与全部关注（漫画作者、视频女优/厂商）打包为一个 JSON 文件；导入时与本机数据合并，不会删除现有内容。</p>
         </section>
 
         <!-- 诊断日志 -->
