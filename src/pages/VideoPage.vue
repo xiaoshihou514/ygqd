@@ -28,13 +28,16 @@ onMounted(feed.ensureLoaded)
 
 <style scoped>
 .video-page-shell {
-  padding: var(--spacing-md) 0 var(--spacing-xl);
+  padding-bottom: var(--spacing-xl);
 }
 
+/* 与历史/关注等列表页标题同一口径 */
 .page-title {
+  padding-top: var(--spacing-lg);
+  margin-bottom: var(--spacing-lg);
   font-size: var(--font-size-headline-title);
   font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-heading);
   color: var(--color-text-primary);
-  margin-bottom: var(--spacing-md);
 }
 </style>
