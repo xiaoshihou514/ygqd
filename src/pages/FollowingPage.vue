@@ -790,7 +790,7 @@ onActivated(async () => {
   padding: 2px;
   margin-bottom: var(--spacing-lg);
   border-radius: var(--radius-pill);
-  background: var(--color-divider-soft);
+  background: var(--color-tag-bg);
 }
 
 .segmented.is-compact {
