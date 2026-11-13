@@ -41,8 +41,9 @@ export const HOME_TABS: HomeTab[] = [
   { key: 'niacg:1', label: 'COS', source: 'niacg', category: '1' },
 ]
 
+/** 源展示名;非漫画源(如视频 fs1/missav)原样返回,不误标为 ACG */
 export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[parseSourceId(source)] ?? source
+  return Object.prototype.hasOwnProperty.call(SOURCE_LABELS, source) ? SOURCE_LABELS[source as SourceId] : source
 }
 
 /** 哔咔分类为繁体,展示时归一化为简体;查询仍用原始值 */
@@ -57,8 +58,13 @@ const T2S_CHARS: Record<string, string> = {
   響: '响', 頁: '页', 頭: '头', 體: '体', 鳥: '鸟', 麗: '丽', 齡: '龄',
 }
 
+const normalizedLabels = new Map<string, string>()
+
 export function normalizeCategoryLabel(label: string): string {
-  return Array.from(label)
-    .map((ch) => T2S_CHARS[ch] ?? ch)
-    .join('')
+  let out = normalizedLabels.get(label)
+  if (out === undefined) {
+    out = Array.from(label, (ch) => T2S_CHARS[ch] ?? ch).join('')
+    normalizedLabels.set(label, out)
+  }
+  return out
 }
