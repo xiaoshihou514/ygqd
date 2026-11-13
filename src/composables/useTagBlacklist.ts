@@ -6,6 +6,7 @@ import {
   updateBlacklistEntry as apiUpdateMode,
 } from '@/services/api'
 import type { BlacklistEntry, BlacklistMode } from '@/types'
+import { errorMessage } from '@/utils/errors'
 
 const BLACKLIST_KEY = 'niacg-tag-blacklist'
 
@@ -95,7 +96,7 @@ const exactTags = computed(() => {
 
 /** 乐观更新后后端写入失败:重新拉取以与数据库对齐,避免界面与实际状态长期不一致 */
 function resyncOnFailure(e: unknown) {
-  console.error('[blacklist] 写入失败,重新同步', e)
+  console.warn('[blacklist] 写入失败,重新同步', errorMessage(e))
   void load()
 }
 
