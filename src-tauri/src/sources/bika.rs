@@ -1,13 +1,31 @@
+use super::shared::{dedup_in_order, http_status_error, net_error, snippet};
 use crate::models::*;
 use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
-use serde::de::DeserializeOwned;
+use reqwest::{Method, StatusCode};
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::Sha256;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::LazyLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const BASE: &str = "https://picaapi.picacomic.com";
+const HOST: &str = "picaapi.picacomic.com";
+/// 用户可见错误里的站点名
+const SITE: &str = "哔咔";
+/// 建连超时:分流 IP 不通时尽快失败,提示用户切换分流
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// 单次读空闲超时(客户端级,同时约束经此客户端下载的大图)
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// API 请求整体超时(JSON 接口,不含图片下载)
+const API_TIMEOUT: Duration = Duration::from_secs(30);
+/// 章节列表最多翻页数(每页 40 章),防服务端分页异常时无限翻页
+const MAX_EPISODE_PAGES: i32 = 100;
+/// 登录影子响应(200 无 data/空 token)的提示
+const LOGIN_REJECTED: &str =
+    "哔咔拒绝了本次登录（风控/防爆破），请切换网络（Wi-Fi 与流量互换）后重试，或稍后再试";
 /// 哔咔官方分流地址列表端点(返回 Cloudflare 边缘 IP,用于绕过
 /// DNS 污染与部分节点的风控,参考 pikapika 的"分流地址"设置)
 const ADDRESS_INIT: &str = "http://68.183.234.72/init";
@@ -28,8 +46,12 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// PicaAPI 请求签名:`path(含 query) + time + nonce + METHOD + api-key`
 /// 直接拼接后整体转小写,再以固定密钥做 HMAC-SHA256(小写 hex)
 pub fn signature(path_and_query: &str, time: &str, nonce: &str, method: &str) -> String {
+    // 密钥固定:预先完成 key schedule,每次签名只克隆状态
+    static SIGNER: LazyLock<Hmac<Sha256>> = LazyLock::new(|| {
+        Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).expect("static hmac key")
+    });
     let raw = format!("{path_and_query}{time}{nonce}{method}{API_KEY}").to_lowercase();
-    let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).expect("static hmac key");
+    let mut mac = SIGNER.clone();
     mac.update(raw.as_bytes());
     hex_lower(&mac.finalize().into_bytes())
 }
@@ -73,6 +95,112 @@ struct Envelope<T> {
     data: Option<T>,
 }
 
+/// 内部错误分类;对外(IPC)经 `From<ApiError> for String` 统一转为简短中文。
+///
+/// 契约:`Unauthorized` 转成的字符串以 "401" 开头——lib.rs 的 `bika_call`
+/// 据此自动重登并重试一次;其余错误不得以 "401" 开头。
+#[derive(Debug)]
+enum ApiError {
+    /// token 失效/未授权(HTTP 401 或 envelope.code 401)
+    Unauthorized,
+    /// 成功响应却无 data(登录风控的影子响应即此形态)
+    MissingData,
+    /// 传输层失败(DNS/连接/超时/读响应体)
+    Network(reqwest::Error),
+    /// 响应体不是预期 JSON(Cloudflare 拦截页、接口结构变更等)
+    Decode { status: StatusCode },
+    /// 业务失败:HTTP 非 2xx 或 envelope.code != 200
+    Api { status: StatusCode, message: String },
+}
+
+impl From<reqwest::Error> for ApiError {
+    fn from(err: reqwest::Error) -> Self {
+        Self::Network(err)
+    }
+}
+
+impl From<ApiError> for String {
+    fn from(err: ApiError) -> String {
+        match err {
+            ApiError::Unauthorized => "401 哔咔登录已失效，请重新登录".into(),
+            ApiError::MissingData => "哔咔返回了空数据，请稍后重试".into(),
+            ApiError::Network(e) => {
+                let msg = net_error(SITE, &e);
+                if e.is_timeout() || e.is_connect() {
+                    // 国内网络下最常见原因是线路/DNS 污染,分流是现成解法
+                    format!("{msg}，或在设置中切换分流")
+                } else {
+                    msg
+                }
+            }
+            ApiError::Decode { status } if status.is_success() => {
+                "哔咔返回了无法识别的数据，请稍后重试".into()
+            }
+            ApiError::Decode { status } => http_status_error(SITE, status),
+            ApiError::Api { status, message } => api_message(status, &message),
+        }
+    }
+}
+
+/// 业务错误文案:常见英文 message 译为中文,未知 message 原样附带便于反馈
+fn api_message(status: StatusCode, message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("too many requests") {
+        "哔咔请求过于频繁，请稍后再试".into()
+    } else if lower.contains("invalid email or password") {
+        "哔咔账号或密码错误".into()
+    } else if lower.contains("under review") {
+        "该漫画正在审核中，暂时无法查看".into()
+    } else if lower.contains("not found") {
+        "哔咔内容不存在或已被删除".into()
+    } else if message.is_empty() {
+        http_status_error(SITE, status)
+    } else {
+        format!("哔咔请求失败：{message}（{}）", status.as_u16())
+    }
+}
+
+/// 解析 PicaAPI 响应信封(纯函数,便于单测)。
+/// 401 先于 JSON 解码判定:401 响应体不一定是合法信封
+fn parse_envelope<T: DeserializeOwned>(
+    status: StatusCode,
+    text: &str,
+) -> Result<Option<T>, ApiError> {
+    if status == StatusCode::UNAUTHORIZED {
+        return Err(ApiError::Unauthorized);
+    }
+    let envelope: Envelope<T> = serde_json::from_str(text).map_err(|e| {
+        eprintln!(
+            "[bika] decode error ({status}): {e}; body: {}",
+            snippet(text, 200)
+        );
+        ApiError::Decode { status }
+    })?;
+    if envelope.code == 401 {
+        return Err(ApiError::Unauthorized);
+    }
+    if !status.is_success() || envelope.code != 200 {
+        eprintln!(
+            "[bika] api error: http {status}, code {}, message {:?}",
+            envelope.code, envelope.message
+        );
+        return Err(ApiError::Api {
+            status,
+            message: envelope.message,
+        });
+    }
+    Ok(envelope.data)
+}
+
+/// 分流地址 → TCP 目标:支持 "IP"、"IP:PORT"、"[IPv6]:PORT",缺端口补 443
+fn parse_address(address: &str) -> Result<SocketAddr, String> {
+    let address = address.trim();
+    address
+        .parse::<SocketAddr>()
+        .or_else(|_| address.parse::<IpAddr>().map(|ip| SocketAddr::new(ip, 443)))
+        .map_err(|_| format!("分流地址格式无效：{address}（应为 IP 或 IP:端口）"))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Page<T> {
@@ -102,6 +230,16 @@ impl<T> Page<T> {
             total: pages as i32,
             has_next: page < pages,
             has_prev: page > 1,
+        }
+    }
+}
+
+impl Page<ComicDoc> {
+    /// 漫画分页 → 前端列表结果
+    fn into_list(self) -> CategoryListResult {
+        CategoryListResult {
+            pagination: self.pagination(),
+            items: self.docs.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -168,15 +306,12 @@ impl From<ComicDoc> for ComicItem {
 
 impl From<ComicDoc> for ComicDetail {
     fn from(doc: ComicDoc) -> Self {
-        let mut tags = doc.categories.clone();
-        for tag in &doc.tags {
-            if !tags.contains(tag) {
-                tags.push(tag.clone());
-            }
-        }
+        let category = doc.categories.first().cloned().unwrap_or_default();
+        // 分类在前、标签在后,合并去重
+        let tags = dedup_in_order(doc.categories.into_iter().chain(doc.tags));
         ComicDetail {
             source: Source::Bika,
-            category: doc.categories.first().cloned().unwrap_or_default(),
+            category,
             thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
             id: doc.id,
             title: doc.title,
@@ -311,23 +446,18 @@ impl BikaApi {
             HeaderValue::from_static("application/json; charset=UTF-8"),
         );
         headers.insert(USER_AGENT, HeaderValue::from_static("okhttp/3.8.1"));
-        let mut builder = reqwest::Client::builder().default_headers(headers);
+        let mut builder = reqwest::Client::builder()
+            .default_headers(headers)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(READ_TIMEOUT);
         if let Some(address) = address {
-            // 补默认端口;resolve 只影响 TCP 层目标,TLS 的 SNI 仍为域名
-            let full = if address.contains(':') {
-                address.to_string()
-            } else {
-                format!("{address}:443")
-            };
-            let socket = full
-                .parse()
-                .map_err(|e| format!("无效的分流地址 {full:?}: {e}"))?;
-            builder = builder.resolve("picaapi.picacomic.com", socket);
+            // resolve 只影响 TCP 层目标,TLS 的 SNI 仍为域名
+            builder = builder.resolve(HOST, parse_address(address)?);
         }
-        let client = builder
-            .cookie_store(true)
-            .build()
-            .map_err(|e| e.to_string())?;
+        let client = builder.cookie_store(true).build().map_err(|e| {
+            eprintln!("[bika] client build failed: {e:?}");
+            "哔咔客户端初始化失败".to_string()
+        })?;
         Ok(Self { client })
     }
 
@@ -338,17 +468,18 @@ impl BikaApi {
             #[serde(default)]
             addresses: Vec<String>,
         }
+        let fail = |e: reqwest::Error| format!("获取分流地址失败：{}", net_error(SITE, &e));
         let doc: InitDoc = self
             .client
             .get(ADDRESS_INIT)
+            .timeout(API_TIMEOUT)
             .send()
             .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(fail)?
             .json()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(fail)?;
         Ok(doc
             .addresses
             .into_iter()
@@ -356,39 +487,32 @@ impl BikaApi {
             .collect())
     }
 
-    /// 发送请求并返回 (HTTP 状态, 响应体文本)
+    /// 发送签名请求并返回 (HTTP 状态, 响应体文本)
     async fn send(
         &self,
-        method: &str,
+        method: Method,
         path: &str,
         query: Option<String>,
         body: Option<Value>,
         token: Option<&str>,
-    ) -> Result<(reqwest::StatusCode, String), String> {
-        let url = match &query {
-            Some(query) => format!("{BASE}{path}?{query}"),
-            None => format!("{BASE}{path}"),
-        };
+    ) -> Result<(StatusCode, String), ApiError> {
         // 签名的路径不带前导斜杠(实测:带斜杠的签名会被服务端以
         // 200 假 success 静默吞掉;与 PicaComic url.replaceAll(apiUrl+"/","") 行为一致)
-        let path_and_query = {
-            let trimmed = path.strip_prefix('/').unwrap_or(path);
-            match &query {
-                Some(query) => format!("{trimmed}?{query}"),
-                None => trimmed.to_string(),
-            }
-        };
+        let mut path_and_query = path.strip_prefix('/').unwrap_or(path).to_owned();
+        if let Some(query) = query.as_deref().filter(|q| !q.is_empty()) {
+            path_and_query.push('?');
+            path_and_query.push_str(query);
+        }
+        let url = format!("{BASE}/{path_and_query}");
         let time = now_secs();
         let nonce = nonce();
-        let signature = signature(&path_and_query, &time, &nonce, method);
-        let method = method
-            .parse::<reqwest::Method>()
-            .map_err(|e| e.to_string())?;
+        let signature = signature(&path_and_query, &time, &nonce, method.as_str());
         let mut request = self
             .client
-            .request(method, &url)
-            .header("time", &time)
-            .header("nonce", &nonce)
+            .request(method, url)
+            .timeout(API_TIMEOUT)
+            .header("time", time)
+            .header("nonce", nonce)
             .header("signature", signature);
         if let Some(token) = token {
             // 官方客户端 authorization 为裸 JWT,不带 "Bearer " 前缀;
@@ -398,89 +522,74 @@ impl BikaApi {
         if let Some(body) = body {
             // 不能用 .json():它会把 Content-Type 覆盖为不带 charset 的版本,
             // 哔咔风控会以 "too many requests" 拒绝(实测,见对照测试)
-            let serialized = serde_json::to_string(&body).map_err(|e| e.to_string())?;
             request = request
                 .header(CONTENT_TYPE, "application/json; charset=UTF-8")
-                .body(serialized);
+                .body(body.to_string());
         }
-        let response = request.send().await.map_err(|e| e.to_string())?;
+        let response = request.send().await?;
         let status = response.status();
-        let text = response.text().await.map_err(|e| e.to_string())?;
+        let text = response.text().await?;
         Ok((status, text))
     }
 
-    /// 返回 Err 以 "401" 开头表示 token 失效,调用方应重新登录后重试
+    /// 签名请求 + 信封解析,要求 data 存在。
+    /// 401 归为 `ApiError::Unauthorized`(转字符串后以 "401" 开头,见 ApiError)
     async fn request<T: DeserializeOwned>(
         &self,
-        method: &str,
+        method: Method,
         path: &str,
         query: Option<String>,
         body: Option<Value>,
         token: Option<&str>,
-    ) -> Result<T, String> {
+    ) -> Result<T, ApiError> {
         let (status, text) = self.send(method, path, query, body, token).await?;
-        let envelope: Envelope<T> = serde_json::from_str(&text)
-            .map_err(|e| format!("decode error: {e}; body: {}", &text[..text.len().min(200)]))?;
-        if status.as_u16() == 401 {
-            return Err(format!("401 {}", envelope.message));
-        }
-        if !status.is_success() || envelope.code != 200 {
-            return Err(format!("{} ({})", envelope.message, status.as_u16()));
-        }
-        envelope
-            .data
-            .ok_or_else(|| "bika response missing data".to_string())
+        parse_envelope::<T>(status, &text)?.ok_or(ApiError::MissingData)
     }
 
     /// toggle 类端点(点赞/收藏):code 200 即成功,不要求 data 存在
-    async fn request_toggle(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<Value>,
-        token: Option<&str>,
-    ) -> Result<(), String> {
-        let (status, text) = self.send(method, path, None, body, token).await?;
-        let envelope: Envelope<serde::de::IgnoredAny> = serde_json::from_str(&text)
-            .map_err(|e| format!("decode error: {e}; body: {}", &text[..text.len().min(200)]))?;
-        if status.as_u16() == 401 {
-            return Err(format!("401 {}", envelope.message));
-        }
-        if !status.is_success() || envelope.code != 200 {
-            return Err(format!("{} ({})", envelope.message, status.as_u16()));
-        }
+    async fn request_toggle(&self, path: &str, token: &str) -> Result<(), String> {
+        let (status, text) = self
+            .send(Method::POST, path, None, Some(json!({})), Some(token))
+            .await?;
+        parse_envelope::<IgnoredAny>(status, &text)?;
         Ok(())
     }
 
+    /// 带 token 的 GET 并解析 data
+    async fn get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: Option<String>,
+        token: &str,
+    ) -> Result<T, String> {
+        Ok(self
+            .request(Method::GET, path, query, None, Some(token))
+            .await?)
+    }
+
     pub async fn sign_in(&self, email: &str, password: &str) -> Result<String, String> {
-        let data: TokenDoc = match self
-            .request(
-                "POST",
+        let result = self
+            .request::<TokenDoc>(
+                Method::POST,
                 "/auth/sign-in",
                 None,
                 Some(json!({ "email": email, "password": password })),
                 None,
             )
-            .await
-        {
-            Ok(data) => data,
-            // 登录接口返回 200 但不带 data:哔咔在风控/防爆破时返回这种影子响应,
-            // 错误密码同样如此,无法区分具体原因;社区经验是切换网络后重试
-            Err(e) if e.contains("missing data") => {
-                return Err("哔咔拒绝了本次登录（风控/防爆破），请切换网络（Wi-Fi 与流量互换）后重试，或稍后再试".into())
-            }
-            Err(e) => return Err(e),
-        };
-        if data.token.is_empty() {
-            return Err("哔咔拒绝了本次登录（风控/防爆破），请切换网络（Wi-Fi 与流量互换）后重试，或稍后再试".into());
+            .await;
+        match result {
+            Ok(data) if !data.token.is_empty() => Ok(data.token),
+            // 登录接口返回 200 但不带 data/空 token:哔咔在风控/防爆破时返回这种
+            // 影子响应,错误密码同样如此,无法区分具体原因;社区经验是切换网络后重试
+            Ok(_) | Err(ApiError::MissingData) => Err(LOGIN_REJECTED.into()),
+            // 登录阶段的 401 是凭据被拒,不能以 "401" 开头(否则会被当作 token 失效)
+            Err(ApiError::Unauthorized) => Err("哔咔登录被拒绝，请检查邮箱和密码".into()),
+            Err(e) => Err(e.into()),
         }
-        Ok(data.token)
     }
 
     pub async fn categories(&self, token: String) -> Result<Vec<String>, String> {
-        let docs: CategoriesDoc = self
-            .request("GET", "/categories", None, None, Some(token.as_str()))
-            .await?;
+        let docs: CategoriesDoc = self.get("/categories", None, &token).await?;
         Ok(docs
             .categories
             .into_iter()
@@ -493,15 +602,7 @@ impl BikaApi {
     /// 参考 pikapika 的 RankingsScreen,ct 固定 "VC"(按观看数),无分页
     pub async fn leaderboard(&self, token: String, tt: &str) -> Result<CategoryListResult, String> {
         let query = encode_query(&[("tt", tt), ("ct", "VC")]);
-        let doc = self
-            .request::<LeaderboardDoc>(
-                "GET",
-                "/comics/leaderboard",
-                Some(query),
-                None,
-                Some(token.as_str()),
-            )
-            .await?;
+        let doc: LeaderboardDoc = self.get("/comics/leaderboard", Some(query), &token).await?;
         Ok(CategoryListResult {
             items: doc.comics.into_iter().map(Into::into).collect(),
             pagination: PaginationInfo {
@@ -515,24 +616,14 @@ impl BikaApi {
 
     /// 点赞/取消点赞(toggle,服务器端按当前状态翻转)
     pub async fn switch_like(&self, token: String, id: &str) -> Result<(), String> {
-        self.request_toggle(
-            "POST",
-            &format!("/comics/{id}/like"),
-            Some(json!({})),
-            Some(token.as_str()),
-        )
-        .await
+        self.request_toggle(&format!("/comics/{id}/like"), &token)
+            .await
     }
 
     /// 收藏/取消收藏(toggle)
     pub async fn switch_favourite(&self, token: String, id: &str) -> Result<(), String> {
-        self.request_toggle(
-            "POST",
-            &format!("/comics/{id}/favourite"),
-            Some(json!({})),
-            Some(token.as_str()),
-        )
-        .await
+        self.request_toggle(&format!("/comics/{id}/favourite"), &token)
+            .await
     }
 
     /// 服务器端收藏列表(用于同步到本地),page 为 1-based
@@ -542,20 +633,8 @@ impl BikaApi {
         page: i32,
     ) -> Result<CategoryListResult, String> {
         let query = encode_query(&[("s", "dd"), ("page", &page.to_string())]);
-        let page_docs = self
-            .request::<ComicsPageDoc>(
-                "GET",
-                "/users/favourite",
-                Some(query),
-                None,
-                Some(token.as_str()),
-            )
-            .await?
-            .comics;
-        Ok(CategoryListResult {
-            pagination: page_docs.pagination(),
-            items: page_docs.docs.into_iter().map(Into::into).collect(),
-        })
+        let doc: ComicsPageDoc = self.get("/users/favourite", Some(query), &token).await?;
+        Ok(doc.comics.into_list())
     }
 
     /// 分类/标签/作者浏览,page 为 1-based
@@ -574,14 +653,8 @@ impl BikaApi {
             ("s", "dd"),
             ("page", &page.to_string()),
         ]);
-        let page_docs = self
-            .request::<ComicsPageDoc>("GET", "/comics", Some(query), None, Some(token.as_str()))
-            .await?
-            .comics;
-        Ok(CategoryListResult {
-            pagination: page_docs.pagination(),
-            items: page_docs.docs.into_iter().map(Into::into).collect(),
-        })
+        let doc: ComicsPageDoc = self.get("/comics", Some(query), &token).await?;
+        Ok(doc.comics.into_list())
     }
 
     pub async fn search(
@@ -591,57 +664,44 @@ impl BikaApi {
         page: i32,
     ) -> Result<CategoryListResult, String> {
         let query = encode_query(&[("page", &page.to_string())]);
-        let page_docs = self
-            .request::<ComicsPageDoc>(
-                "POST",
+        let doc: ComicsPageDoc = self
+            .request(
+                Method::POST,
                 // 旧的 /comics/search 已下线(Method Not Allowed),改用 advanced-search
                 "/comics/advanced-search",
                 Some(query),
                 Some(json!({ "keyword": keyword, "sort": "dd" })),
                 Some(token.as_str()),
             )
-            .await?
-            .comics;
-        Ok(CategoryListResult {
-            pagination: page_docs.pagination(),
-            items: page_docs.docs.into_iter().map(Into::into).collect(),
-        })
+            .await?;
+        Ok(doc.comics.into_list())
     }
 
     pub async fn detail(&self, token: String, id: &str) -> Result<ComicDetail, String> {
-        self.request::<ComicDetailDoc>(
-            "GET",
-            &format!("/comics/{id}"),
-            None,
-            None,
-            Some(token.as_str()),
-        )
-        .await
-        .map(|doc| doc.comic.into())
+        let doc: ComicDetailDoc = self.get(&format!("/comics/{id}"), None, &token).await?;
+        Ok(doc.comic.into())
     }
 
     /// 循环拉取全部章节,order 升序
     pub async fn episodes(&self, token: String, id: &str) -> Result<Vec<Episode>, String> {
+        let path = format!("/comics/{id}/eps");
         let mut result = Vec::new();
         let mut page = 1;
         loop {
             let query = encode_query(&[("page", &page.to_string())]);
-            let page_docs = self
-                .request::<EpsPageDoc>(
-                    "GET",
-                    &format!("/comics/{id}/eps"),
-                    Some(query),
-                    None,
-                    Some(token.as_str()),
-                )
+            let eps = self
+                .get::<EpsPageDoc>(&path, Some(query), &token)
                 .await?
                 .eps;
-            let has_next = page_docs.pagination().has_next;
-            result.extend(page_docs.docs.into_iter().map(|doc| Episode {
+            let pages = eps.pages;
+            let empty = eps.docs.is_empty();
+            result.extend(eps.docs.into_iter().map(|doc| Episode {
                 order: doc.order as i32,
                 title: doc.title,
             }));
-            if !has_next {
+            // 以「请求的页号」对比总页数(而非响应回显的 page),并以空页与
+            // 页数上限兜底:服务端忽略 page 参数或分页字段异常时不会死循环
+            if empty || i64::from(page) >= pages || page >= MAX_EPISODE_PAGES {
                 break;
             }
             page += 1;
@@ -659,19 +719,17 @@ impl BikaApi {
         page: i32,
     ) -> Result<ComicImagesResult, String> {
         let query = encode_query(&[("page", &page.to_string())]);
-        let page_docs = self
-            .request::<PicturesPageDoc>(
-                "GET",
+        let pages = self
+            .get::<PicturesPageDoc>(
                 &format!("/comics/{id}/order/{order}/pages"),
                 Some(query),
-                None,
-                Some(token.as_str()),
+                &token,
             )
             .await?
             .pages;
         Ok(ComicImagesResult {
-            pagination: page_docs.pagination(),
-            images: page_docs
+            pagination: pages.pagination(),
+            images: pages
                 .docs
                 .into_iter()
                 .filter_map(|doc| doc.media.map(|media| media.url()))
@@ -758,6 +816,111 @@ mod tests {
         assert_eq!(pagination.current, 1);
         assert_eq!(pagination.total, 5);
         assert!(pagination.has_next && pagination.has_prev);
+    }
+
+    fn err_text<T: std::fmt::Debug>(result: Result<T, ApiError>) -> String {
+        String::from(result.expect_err("should fail"))
+    }
+
+    #[test]
+    fn envelope_ok_returns_data() {
+        let data: Option<TokenDoc> = parse_envelope(
+            StatusCode::OK,
+            r#"{"code":200,"message":"success","data":{"token":"t"}}"#,
+        )
+        .unwrap();
+        assert_eq!(data.unwrap().token, "t");
+    }
+
+    #[test]
+    fn unauthorized_maps_to_401_prefix_even_with_non_json_body() {
+        // 401 先于解码判定:HTML/空响应体也要触发自动重登
+        let msg = err_text(parse_envelope::<IgnoredAny>(
+            StatusCode::UNAUTHORIZED,
+            "<html>401</html>",
+        ));
+        assert!(msg.starts_with("401"), "{msg}");
+        assert!(msg.contains("登录"), "前端据此提示登录: {msg}");
+        // HTTP 200 但信封 code 401 同样视为 token 失效
+        let msg = err_text(parse_envelope::<IgnoredAny>(
+            StatusCode::OK,
+            r#"{"code":401,"message":"unauthorized"}"#,
+        ));
+        assert!(msg.starts_with("401"), "{msg}");
+    }
+
+    #[test]
+    fn non_401_errors_never_start_with_401() {
+        let cases = [
+            (StatusCode::BAD_GATEWAY, "<html>bad gateway</html>"),
+            (StatusCode::OK, "not json"),
+            (
+                StatusCode::BAD_REQUEST,
+                r#"{"code":400,"message":"invalid email or password"}"#,
+            ),
+            (
+                StatusCode::OK,
+                r#"{"code":400,"message":"too many requests"}"#,
+            ),
+        ];
+        for (status, body) in cases {
+            let msg = err_text(parse_envelope::<IgnoredAny>(status, body));
+            assert!(!msg.starts_with("401"), "{msg}");
+            assert!(!msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn api_errors_are_translated() {
+        let msg = err_text(parse_envelope::<IgnoredAny>(
+            StatusCode::BAD_REQUEST,
+            r#"{"code":400,"message":"invalid email or password"}"#,
+        ));
+        assert_eq!(msg, "哔咔账号或密码错误");
+        let msg = err_text(parse_envelope::<IgnoredAny>(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "<html>cf</html>",
+        ));
+        assert_eq!(msg, "哔咔服务器暂时不可用（503），请稍后重试");
+        // 长中文响应体截断不得 panic(旧实现按字节切片会在字符中间 panic)
+        let body = "错".repeat(300);
+        let msg = err_text(parse_envelope::<IgnoredAny>(StatusCode::OK, &body));
+        assert_eq!(msg, "哔咔返回了无法识别的数据，请稍后重试");
+    }
+
+    #[test]
+    fn missing_data_is_reported() {
+        let data: Option<TokenDoc> =
+            parse_envelope(StatusCode::OK, r#"{"code":200,"message":"success"}"#).unwrap();
+        assert!(data.is_none());
+    }
+
+    #[test]
+    fn parses_address_variants() {
+        assert_eq!(
+            parse_address("104.21.1.1").unwrap(),
+            "104.21.1.1:443".parse().unwrap()
+        );
+        assert_eq!(
+            parse_address(" 104.21.1.1:8443 ").unwrap(),
+            "104.21.1.1:8443".parse().unwrap()
+        );
+        assert_eq!(
+            parse_address("2606:4700::1").unwrap(),
+            "[2606:4700::1]:443".parse().unwrap()
+        );
+        assert!(parse_address("not-an-ip").is_err());
+    }
+
+    #[test]
+    fn detail_merges_categories_and_tags_without_duplicates() {
+        let doc: ComicDoc = serde_json::from_str(
+            r#"{ "_id": "x", "categories": ["短篇", "全彩"], "tags": ["全彩", "纯爱"] }"#,
+        )
+        .unwrap();
+        let detail = ComicDetail::from(doc);
+        assert_eq!(detail.category, "短篇");
+        assert_eq!(detail.tags, vec!["短篇", "全彩", "纯爱"]);
     }
 
     #[test]
