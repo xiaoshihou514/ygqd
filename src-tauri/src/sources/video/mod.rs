@@ -1591,7 +1591,7 @@ mod missav_tests {
                 for kw in ["giga", "中文字幕"] {
                     let fs1 = api.search_fs1(kw, 1, None).await;
                     let missav = api.search_missav(kw, 1, None).await;
-                    let full = api.search(kw, 1).await.expect("search");
+                    let full = api.search(kw, 1, None).await.expect("search");
                     println!(
                         "[{kw}] fs1={} missav={} search()={} has_next={}",
                         fs1.as_ref().map(|r| r.items.len()).unwrap_or(999),
@@ -1611,7 +1611,7 @@ mod missav_tests {
                     }
                 }
                 // 首个结果的详情链路(fs1 或 missav 兜底)
-                let first = api.search("giga", 1).await.expect("search").items;
+                let first = api.search("giga", 1, None).await.expect("search").items;
                 if let Some(card) = first.first() {
                     let detail = api.detail(&card.code).await.expect("detail");
                     println!(
