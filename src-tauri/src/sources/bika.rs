@@ -1,4 +1,4 @@
-use super::shared::{dedup_in_order, http_status_error, net_error, snippet};
+use super::shared::{dedup_in_order, http_status_error, snippet};
 use crate::models::*;
 use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
@@ -122,19 +122,11 @@ impl From<reqwest::Error> for ApiError {
 impl From<ApiError> for String {
     fn from(err: ApiError) -> String {
         match err {
-            ApiError::Unauthorized => "401 哔咔登录已失效，请重新登录".into(),
-            ApiError::MissingData => "哔咔返回了空数据，请稍后重试".into(),
-            ApiError::Network(e) => {
-                let msg = net_error(SITE, &e);
-                if e.is_timeout() || e.is_connect() {
-                    // 国内网络下最常见原因是线路/DNS 污染,分流是现成解法
-                    format!("{msg}，或在设置中切换分流")
-                } else {
-                    msg
-                }
-            }
+            ApiError::Unauthorized => "401 哔咔登录已失效,请重新登录".into(),
+            ApiError::MissingData => "哔咔返回了空数据,请稍后重试".into(),
+            ApiError::Network(e) => network_error(e),
             ApiError::Decode { status } if status.is_success() => {
-                "哔咔返回了无法识别的数据，请稍后重试".into()
+                "哔咔返回了无法识别的数据,请稍后重试".into()
             }
             ApiError::Decode { status } => http_status_error(SITE, status),
             ApiError::Api { status, message } => api_message(status, &message),
@@ -142,21 +134,34 @@ impl From<ApiError> for String {
     }
 }
 
+/// 传输层错误:复用全局 `crate::reqwest_error` 文案并冠以站点名;
+/// 超时/连不上时追加分流提示(国内最常见原因是线路/DNS 污染)。完整错误链写 stderr
+fn network_error(e: reqwest::Error) -> String {
+    eprintln!("[bika] request error: {e:?}");
+    let hint = e.is_timeout() || e.is_connect();
+    let msg = format!("{SITE}{}", crate::reqwest_error(e));
+    if hint {
+        format!("{msg},或在设置中切换分流")
+    } else {
+        msg
+    }
+}
+
 /// 业务错误文案:常见英文 message 译为中文,未知 message 原样附带便于反馈
 fn api_message(status: StatusCode, message: &str) -> String {
     let lower = message.to_ascii_lowercase();
     if lower.contains("too many requests") {
-        "哔咔请求过于频繁，请稍后再试".into()
+        "哔咔请求过于频繁,请稍后再试".into()
     } else if lower.contains("invalid email or password") {
         "哔咔账号或密码错误".into()
     } else if lower.contains("under review") {
-        "该漫画正在审核中，暂时无法查看".into()
+        "该漫画正在审核中,暂时无法查看".into()
     } else if lower.contains("not found") {
         "哔咔内容不存在或已被删除".into()
     } else if message.is_empty() {
         http_status_error(SITE, status)
     } else {
-        format!("哔咔请求失败：{message}（{}）", status.as_u16())
+        format!("哔咔请求失败:{message}(HTTP {})", status.as_u16())
     }
 }
 
@@ -198,7 +203,7 @@ fn parse_address(address: &str) -> Result<SocketAddr, String> {
     address
         .parse::<SocketAddr>()
         .or_else(|_| address.parse::<IpAddr>().map(|ip| SocketAddr::new(ip, 443)))
-        .map_err(|_| format!("分流地址格式无效：{address}（应为 IP 或 IP:端口）"))
+        .map_err(|_| format!("分流地址格式无效:{address}(应为 IP 或 IP:端口)"))
 }
 
 #[derive(Deserialize)]
@@ -468,7 +473,7 @@ impl BikaApi {
             #[serde(default)]
             addresses: Vec<String>,
         }
-        let fail = |e: reqwest::Error| format!("获取分流地址失败：{}", net_error(SITE, &e));
+        let fail = |e: reqwest::Error| format!("获取分流地址失败:{}", network_error(e));
         let doc: InitDoc = self
             .client
             .get(ADDRESS_INIT)
@@ -583,7 +588,7 @@ impl BikaApi {
             // 影子响应,错误密码同样如此,无法区分具体原因;社区经验是切换网络后重试
             Ok(_) | Err(ApiError::MissingData) => Err(LOGIN_REJECTED.into()),
             // 登录阶段的 401 是凭据被拒,不能以 "401" 开头(否则会被当作 token 失效)
-            Err(ApiError::Unauthorized) => Err("哔咔登录被拒绝，请检查邮箱和密码".into()),
+            Err(ApiError::Unauthorized) => Err("哔咔登录被拒绝,请检查邮箱和密码".into()),
             Err(e) => Err(e.into()),
         }
     }
@@ -881,11 +886,11 @@ mod tests {
             StatusCode::SERVICE_UNAVAILABLE,
             "<html>cf</html>",
         ));
-        assert_eq!(msg, "哔咔服务器暂时不可用（503），请稍后重试");
+        assert_eq!(msg, "哔咔服务器暂时不可用(HTTP 503),请稍后重试");
         // 长中文响应体截断不得 panic(旧实现按字节切片会在字符中间 panic)
         let body = "错".repeat(300);
         let msg = err_text(parse_envelope::<IgnoredAny>(StatusCode::OK, &body));
-        assert_eq!(msg, "哔咔返回了无法识别的数据，请稍后重试");
+        assert_eq!(msg, "哔咔返回了无法识别的数据,请稍后重试");
     }
 
     #[test]

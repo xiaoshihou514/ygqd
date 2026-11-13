@@ -26,33 +26,18 @@ pub fn percent_decode_simple(s: &str) -> String {
 }
 
 // ── 错误文案(IPC 边界:前端直接展示 Err 字符串,须简短中文;
-// 调试细节只写 stderr) ──
+// 调试细节只写 stderr)。传输层错误用 lib.rs 的 `crate::reqwest_error` ──
 
-/// HTTP 状态码 → 简短中文提示,`site` 为站点显示名(如 "哔咔")
+/// 已拿到响应但状态异常(响应体非预期 JSON/HTML 拦截页等)时的简短中文提示,
+/// `site` 为站点显示名(如 "哔咔")
 pub fn http_status_error(site: &str, status: reqwest::StatusCode) -> String {
     let code = status.as_u16();
     match code {
-        403 => format!("{site}拒绝了访问（403），请稍后重试"),
-        404 => format!("{site}内容不存在或已被删除（404）"),
-        429 => format!("{site}请求过于频繁，请稍后再试"),
-        500..=599 => format!("{site}服务器暂时不可用（{code}），请稍后重试"),
-        _ => format!("{site}请求失败（{code}）"),
-    }
-}
-
-/// reqwest 错误 → 简短中文提示;完整错误链(含 URL)写 stderr 供调试
-pub fn net_error(site: &str, err: &reqwest::Error) -> String {
-    eprintln!("[{site}] request error: {err:?}");
-    if err.is_timeout() {
-        format!("{site}请求超时，请检查网络后重试")
-    } else if err.is_connect() {
-        format!("无法连接{site}服务器，请检查网络")
-    } else if let Some(status) = err.status() {
-        http_status_error(site, status)
-    } else if err.is_body() || err.is_decode() {
-        format!("{site}响应读取中断，请重试")
-    } else {
-        format!("{site}网络请求失败，请稍后重试")
+        403 => format!("{site}拒绝了访问(403),请稍后重试"),
+        404 => format!("{site}内容不存在或已被删除(404)"),
+        429 => format!("{site}请求过于频繁,请稍后再试"),
+        500..=599 => format!("{site}服务器暂时不可用(HTTP {code}),请稍后重试"),
+        _ => format!("{site}请求失败(HTTP {code})"),
     }
 }
 
@@ -120,11 +105,11 @@ mod tests {
         use reqwest::StatusCode;
         assert_eq!(
             http_status_error("哔咔", StatusCode::BAD_GATEWAY),
-            "哔咔服务器暂时不可用（502），请稍后重试"
+            "哔咔服务器暂时不可用(HTTP 502),请稍后重试"
         );
         assert_eq!(
             http_status_error("niacg", StatusCode::IM_A_TEAPOT),
-            "niacg请求失败（418）"
+            "niacg请求失败(HTTP 418)"
         );
     }
 }
