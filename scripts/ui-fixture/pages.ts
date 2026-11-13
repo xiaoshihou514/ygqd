@@ -86,11 +86,12 @@ async function measureTabs() {
     }
   }
   ;(window as any).__groups = groups
+  // 先测量再挂 groups-result:不折行的 <pre> 长 JSON 会把文档撑宽,污染 docOverflow
+  measure()
   const gpre = document.createElement('pre')
   gpre.id = 'groups-result'
   gpre.textContent = JSON.stringify(Object.values(groups))
   document.body.appendChild(gpre)
-  measure()
 }
 
 /** 页面内任何元素超出视口右缘(含被 overflow 隐藏前的内容宽度)即记为溢出 */
