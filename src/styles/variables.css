@@ -123,6 +123,33 @@
 
   /* ---- Transitions ---- */
   --transition-press: transform 0.15s ease;
+
+  /* ---- Motion (统一动效基线;各组件只用这些,不另写魔法数) ---- */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --press-scale: 0.97;
+
+  /* ---- Feedback surfaces ---- */
+  --color-skeleton: var(--color-divider-soft);
+  --color-skeleton-highlight: var(--color-surface-pearl);
+  --color-overlay: rgba(0, 0, 0, 0.4);
+  --color-on-error: #ffffff;
+  --color-success: #34c759;
+
+  /* ---- Previously referenced but undefined (aliases) ---- */
+  --font-size-headline-title: var(--font-size-tagline);
+  --font-weight-medium: 500;
+
+  /* ---- Layering ---- */
+  --z-sticky: 10;
+  --z-nav: 100;
+  --z-overlay: 200;
+  --z-sheet: 210;
+  --z-toast: 300;
 }
 
 /* ============================================

@@ -230,7 +230,7 @@ function removeSuggestion(text: string) {
   border: none;
   border-radius: var(--radius-pill, 999px);
   background: var(--color-primary);
-  color: var(--on-primary, #fff);
+  color: var(--color-on-primary);
   font-size: var(--font-size-body);
   cursor: pointer;
   flex-shrink: 0;
