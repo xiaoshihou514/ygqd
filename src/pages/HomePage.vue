@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '@/utils/errors'
-import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { fetchCategoryList, fetchBikaCategories, fetchBikaLeaderboard } from '@/services/api'
 import type { ComicItem } from '@/types'
 import { parseLikes } from '@/utils/likes'
@@ -11,7 +11,6 @@ import { useTagBlacklist } from '@/composables/useTagBlacklist'
 import { useComicViewedIds } from '@/composables/useComicViewedIds'
 import MediaCollection from '@/components/MediaCollection.vue'
 import { fromComic } from '@/utils/mediaItem'
-import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { useVideoFeed } from '@/composables/useVideoFeed'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -19,21 +18,32 @@ defineOptions({ name: 'HomePage' })
 
 const HOME_STATE_KEY = 'home_page_state_v2'
 /** 「最新」混合流固定取 niacg 的漫画分类 */
-/** 内容分段:漫画/视频/小说(小说源接入前的占位) */
+const MIX_NIACG_CATEGORY = '9'
+const BIKA_TABS_ERROR_PREFIX = '哔咔分类/榜单加载失败'
+
+const router = useRouter()
+
+// ============ 内容分段:漫画/视频 ============
 type ContentSegment = 'comic' | 'video'
-const segment = ref<ContentSegment>('comic')
-const videoFeed = useVideoFeed()
 const SEGMENTS: { key: ContentSegment; label: string }[] = [
   { key: 'comic', label: '漫画' },
   { key: 'video', label: '视频' },
 ]
+const segment = ref<ContentSegment>('comic')
+const segmentIndex = computed(() => Math.max(0, SEGMENTS.findIndex((s) => s.key === segment.value)))
+const videoFeed = useVideoFeed()
+/** 视频段的滚动位置(漫画段按分类 tab 各自记在 TabState.scrollY) */
+let videoScrollY = 0
+
 function switchSegment(key: ContentSegment) {
+  if (key === segment.value) return
+  rememberScroll()
   segment.value = key
   if (key === 'video') videoFeed.ensureLoaded()
+  restoreScroll()
 }
 
-const MIX_NIACG_CATEGORY = '9'
-
+// ============ 漫画分类 tab 与各 tab 数据 ============
 interface SourcePageState {
   page: number
   hasNext: boolean
@@ -46,8 +56,6 @@ interface TabState {
   scrollY: number
   mix?: { niacg: SourcePageState; bika: SourcePageState }
 }
-
-const router = useRouter()
 
 const tabs = ref<HomeTab[]>([...HOME_TABS])
 const activeKey = ref(HOME_TABS[0]!.key)
@@ -68,16 +76,21 @@ const activeState = computed(() => stateFor(activeKey.value))
 const items = computed(() => activeState.value.items)
 const hasNext = computed(() => activeState.value.hasNext)
 
-const loading = ref(true)
-const loadingMore = ref(false)
-const error = ref('')
+// 加载/错误按 tab 记账:快速切 tab 时,旧 tab 的迟到响应只写回它自己的状态,
+// 不会把新 tab 的骨架/错误条状态带乱
+const loadingKeys = ref(new Set<string>())
+const loadingMoreKeys = ref(new Set<string>())
+const tabErrors = ref<Record<string, string>>({})
+const loading = computed(() => loadingKeys.value.has(activeKey.value))
+const loadingMore = computed(() => loadingMoreKeys.value.has(activeKey.value))
+const error = computed(() => tabErrors.value[activeKey.value] ?? '')
+/** 哔咔分类/榜单 tab 自身的加载失败(与各 tab 列表错误分开展示) */
+const bikaTabsError = ref('')
+
 const minLikes = ref(0)
 const { filterItems } = useTagBlacklist()
 
-const needsLogin = computed(() =>
-  (activeTab.value.source === 'bika' && error.value.includes('登录')) ||
-  error.value.startsWith('哔咔分类/榜单加载失败'),
-)
+const needsLogin = computed(() => activeTab.value.source === 'bika' && error.value.includes('登录'))
 
 const filteredItems = computed(() => {
   let result = items.value
@@ -87,8 +100,7 @@ const filteredItems = computed(() => {
   if (minLikes.value > 0) {
     result = result.filter((item) => parseLikes(item.likes) >= minLikes.value)
   }
-  result = filterItems(result)
-  return result
+  return filterItems(result)
 })
 
 const viewedIds = useComicViewedIds(filteredItems)
@@ -139,44 +151,43 @@ async function loadMixPage(state: TabState, reset: boolean) {
   }
 }
 
-async function loadFirstPage() {
-  loading.value = true
-  error.value = ''
-  if (activeTab.value.key === 'mix:') {
-    mixNotice.value = ''
-  }
+async function loadFirstPage(tab: HomeTab = activeTab.value) {
+  const key = tab.key
+  if (loadingKeys.value.has(key)) return
+  loadingKeys.value.add(key)
+  delete tabErrors.value[key]
+  if (tab.source === 'mix') mixNotice.value = ''
+  const state = stateFor(key)
   try {
-    const tab = activeTab.value
-    const state = stateFor(tab.key)
     if (tab.source === 'mix') {
       state.mix = { niacg: { page: -1, hasNext: true }, bika: { page: -1, hasNext: true } }
       await loadMixPage(state, true)
-      state.page = 0
     } else if (tab.rank) {
       // 排行榜无分页,一次返回整个榜
       const result = await fetchBikaLeaderboard(tab.rank)
       state.items = result.items
       state.hasNext = false
-      state.page = 0
     } else {
       const result = await fetchCategoryList(tab.source, tab.category, 0)
       state.items = result.items
       state.hasNext = result.pagination.hasNext
-      state.page = 0
     }
+    state.page = 0
   } catch (e) {
-    error.value = errorMessage(e)
+    tabErrors.value[key] = errorMessage(e)
   } finally {
-    loading.value = false
+    loadingKeys.value.delete(key)
   }
 }
 
 async function loadNextPage() {
-  if (loadingMore.value || !hasNext.value || loading.value) return
-  loadingMore.value = true
+  const tab = activeTab.value
+  const key = tab.key
+  const state = stateFor(key)
+  if (loadingMoreKeys.value.has(key) || loadingKeys.value.has(key) || !state.hasNext) return
+  loadingMoreKeys.value.add(key)
+  delete tabErrors.value[key]
   try {
-    const tab = activeTab.value
-    const state = stateFor(tab.key)
     if (tab.source === 'mix') {
       await loadMixPage(state, false)
     } else {
@@ -187,24 +198,25 @@ async function loadNextPage() {
       state.page = nextPage
     }
   } catch (e) {
-    error.value = errorMessage(e)
+    tabErrors.value[key] = errorMessage(e)
   } finally {
-    loadingMore.value = false
+    loadingMoreKeys.value.delete(key)
   }
 }
 
 function retry() {
-  loading.value = true
-  error.value = ''
   void loadBikaTabs()
-  loadFirstPage()
+  void loadFirstPage()
 }
 
 function goToSettings() {
   router.push('/settings')
 }
 
+let bikaTabsPending = false
 async function loadBikaTabs() {
+  if (bikaTabsPending || tabs.value.some((tab) => tab.source === 'bika')) return
+  bikaTabsPending = true
   try {
     const categories = await fetchBikaCategories()
     if (tabs.value.some((tab) => tab.source === 'bika')) return
@@ -222,31 +234,84 @@ async function loadBikaTabs() {
         category,
       })),
     )
-    // 成功后清除 loadBikaTabs 自己设置的失败提示(不影响其它 tab 的错误)
-    if (error.value.startsWith('哔咔分类/榜单加载失败')) error.value = ''
+    bikaTabsError.value = ''
   } catch (e) {
     // 失败必弹(用户第二次反馈看不到榜单,静默吞错导致无法定位):
-    // 页级错误条提示 + 诊断日志。「最新」与静态 tab 不受影响。
+    // 页级提示条 + 诊断日志。「最新」与静态 tab 不受影响。
     const msg = errorMessage(e)
-    error.value = `哔咔分类/榜单加载失败:${msg}。请在设置中检查哔咔登录状态后重试`
+    bikaTabsError.value = `${BIKA_TABS_ERROR_PREFIX}:${msg}。请在设置中检查哔咔登录状态后重试`
     console.error('[home] 哔咔分类/榜单 tab 加载失败', msg)
+  } finally {
+    bikaTabsPending = false
   }
 }
 
-async function switchTab(key: string) {
+function switchTab(key: string) {
   if (key === activeKey.value) return
-  activeState.value.scrollY = window.scrollY
+  rememberScroll()
   activeKey.value = key
-  error.value = ''
-  if (stateFor(key).items.length === 0) {
-    await loadFirstPage()
+  // 已有数据的 tab 直接展示缓存,不重抓;空 tab(含上次失败的)才发起首屏加载
+  if (stateFor(key).items.length === 0) void loadFirstPage()
+  restoreScroll()
+}
+
+// ============ 分类 tab 滑动指示器 + 选中项自动滚入可视区 ============
+const tabsEl = ref<HTMLElement | null>(null)
+const indicator = ref({ x: 0, width: 0 })
+/** 首次定位不做过渡,避免指示器从最左侧滑入 */
+const indicatorAnimated = ref(false)
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function syncTabIndicator(scrollIntoView: boolean) {
+  const box = tabsEl.value
+  const btn = box?.querySelector<HTMLElement>('.content-tab.active')
+  if (!box || !btn) {
+    indicator.value = { x: 0, width: 0 }
+    return
   }
-  await nextTick()
-  window.scrollTo(0, stateFor(key).scrollY)
+  // 隐藏状态(keep-alive 失活、段切换中)量不到尺寸,保持原值
+  if (btn.offsetWidth === 0) return
+  indicator.value = { x: btn.offsetLeft, width: btn.offsetWidth }
+  if (scrollIntoView) {
+    const left = btn.offsetLeft - (box.clientWidth - btn.offsetWidth) / 2
+    box.scrollTo({ left: Math.max(0, left), behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+  }
+  if (!indicatorAnimated.value) requestAnimationFrame(() => { indicatorAnimated.value = true })
+}
+
+watch(activeKey, () => nextTick(() => syncTabIndicator(true)))
+watch(() => tabs.value.length, () => nextTick(() => syncTabIndicator(false)))
+
+let tabsResizeObserver: ResizeObserver | null = null
+watch(tabsEl, (el) => {
+  tabsResizeObserver?.disconnect()
+  tabsResizeObserver = null
+  if (!el) return
+  indicatorAnimated.value = false
+  if (typeof ResizeObserver === 'function') {
+    tabsResizeObserver = new ResizeObserver(() => syncTabIndicator(false))
+    tabsResizeObserver.observe(el)
+  }
+  nextTick(() => syncTabIndicator(true))
+})
+
+// ============ 滚动位置记忆(每个分类 tab / 视频段各自一份) ============
+function rememberScroll() {
+  if (segment.value === 'video') videoScrollY = window.scrollY
+  else activeState.value.scrollY = window.scrollY
+}
+
+function restoreScroll() {
+  void nextTick(() => {
+    window.scrollTo(0, segment.value === 'video' ? videoScrollY : activeState.value.scrollY)
+  })
 }
 
 function saveHomeState() {
-  activeState.value.scrollY = window.scrollY
   try {
     sessionStorage.setItem(HOME_STATE_KEY, JSON.stringify({
       activeKey: activeKey.value,
@@ -276,23 +341,24 @@ function restoreHomeState(): boolean {
   }
 }
 
-function restoreHomeScroll() {
-  nextTick(() => window.scrollTo(0, activeState.value.scrollY))
-}
-
+// 离开路由前记下滚动位置:此时旧页面仍在 DOM 中,window.scrollY 准确;
+// 到 onDeactivated 时新页面已替换进来,滚动值可能已被页面高度截断
+onBeforeRouteLeave(() => {
+  rememberScroll()
+})
 
 onMounted(() => {
-  loadBikaTabs()
-  const restored = restoreHomeState()
-  const ready = restored ? Promise.resolve() : loadFirstPage()
-  ready.then(() => {
-    loading.value = false
-    restoreHomeScroll()
-  })
+  void loadBikaTabs()
+  if (restoreHomeState()) restoreScroll()
+  else void loadFirstPage()
 })
 
 onActivated(() => {
-  restoreHomeScroll()
+  restoreScroll()
+  nextTick(() => syncTabIndicator(false))
+  // 从设置页登录回来:失败过的哔咔 tab 与空列表错误态自动重试一次
+  if (bikaTabsError.value) void loadBikaTabs()
+  if (segment.value === 'comic' && error.value && items.value.length === 0) void loadFirstPage()
 })
 
 onDeactivated(() => {
@@ -300,6 +366,7 @@ onDeactivated(() => {
 })
 
 onUnmounted(() => {
+  tabsResizeObserver?.disconnect()
   saveHomeState()
 })
 </script>
@@ -307,11 +374,18 @@ onUnmounted(() => {
 <template>
   <div class="home-page">
     <div class="container">
-      <div class="segment-bar" role="tablist" aria-label="内容板块">
+      <div
+        class="seg-control"
+        role="tablist"
+        aria-label="内容板块"
+        :style="{ '--seg-count': SEGMENTS.length, '--seg-index': segmentIndex }"
+      >
+        <span class="seg-thumb" aria-hidden="true" />
         <button
           v-for="seg in SEGMENTS"
           :key="seg.key"
-          class="segment-btn"
+          type="button"
+          class="seg-btn"
           :class="{ active: segment === seg.key }"
           role="tab"
           :aria-selected="segment === seg.key"
@@ -334,29 +408,25 @@ onUnmounted(() => {
         @retry="videoFeed.items.value.length ? videoFeed.loadMore() : videoFeed.reload()"
       />
 
-
-      <template v-else>
-      <div v-if="loading" class="home-loading">
-        <LoadingSpinner message="正在加载漫画列表..." />
-      </div>
-
-      <div v-else-if="error && items.length === 0" class="home-error">
-        <EmptyState title="加载失败" :message="error">
-          <button v-if="needsLogin" class="retry-btn" @click="goToSettings">
-            去设置连接
-          </button>
-          <button class="retry-btn" @click="retry">
-            重新加载
-          </button>
-        </EmptyState>
-      </div>
-
       <template v-else>
         <div class="page-header">
-          <div class="content-tabs" role="tablist" aria-label="内容分类">
+          <div
+            ref="tabsEl"
+            class="content-tabs"
+            :class="{ animated: indicatorAnimated }"
+            role="tablist"
+            aria-label="内容分类"
+          >
+            <span
+              v-show="indicator.width > 0"
+              class="tab-indicator"
+              aria-hidden="true"
+              :style="{ width: `${indicator.width}px`, transform: `translateX(${indicator.x}px)` }"
+            />
             <button
               v-for="tab in tabs"
               :key="tab.key"
+              type="button"
               class="content-tab"
               :class="{ active: activeKey === tab.key }"
               role="tab"
@@ -365,27 +435,49 @@ onUnmounted(() => {
             >
               {{ tab.label }}
             </button>
-            <span class="tabs-page-count">共 {{ filteredItems.length }} 部</span>
+            <span v-if="!loading" class="tabs-page-count">共 {{ filteredItems.length }} 部</span>
           </div>
           <div class="filter-group">
             <input
               v-model.number="minLikes"
               type="number"
+              inputmode="numeric"
               class="filter-input"
               placeholder="最低星标数"
+              aria-label="最低星标数"
               min="0"
             />
           </div>
         </div>
 
-        <div v-if="activeTab.source === 'mix' && mixNotice" class="mix-notice">
-          <span>{{ mixNotice }}</span>
-          <button class="mix-notice-btn" @click="goToSettings">去设置</button>
+        <div v-if="bikaTabsError" class="home-notice" role="alert">
+          <span class="home-notice-text">{{ bikaTabsError }}</span>
+          <button type="button" class="home-notice-btn" @click="goToSettings">去设置</button>
+          <button type="button" class="home-notice-btn" @click="loadBikaTabs">重试</button>
+        </div>
+        <div v-else-if="activeTab.source === 'mix' && mixNotice" class="home-notice">
+          <span class="home-notice-text">{{ mixNotice }}</span>
+          <button type="button" class="home-notice-btn" @click="goToSettings">去设置</button>
+        </div>
+
+        <div v-if="error && items.length === 0 && !loading" class="home-error">
+          <EmptyState title="加载失败" :message="error">
+            <div class="home-error-actions">
+              <button v-if="needsLogin" type="button" class="retry-btn secondary" @click="goToSettings">
+                去设置连接
+              </button>
+              <button type="button" class="retry-btn" @click="retry">
+                重新加载
+              </button>
+            </div>
+          </EmptyState>
         </div>
 
         <MediaCollection
+          v-else
           :items="comicMediaItems"
           density="comic"
+          :loading="loading"
           :loading-more="loadingMore"
           :has-more="hasNext"
           :error="error"
@@ -396,7 +488,6 @@ onUnmounted(() => {
           @retry="loadNextPage"
         />
       </template>
-      </template>
     </div>
   </div>
 </template>
@@ -406,21 +497,49 @@ onUnmounted(() => {
   padding-bottom: var(--spacing-xl);
 }
 
-.home-loading {
-  padding-top: var(--spacing-xxl);
+/* ---- 内容分段控件(iOS 分段控件:滑块用 transform 平移) ---- */
+.seg-control {
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  max-width: 240px;
+  margin-bottom: var(--spacing-md);
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--color-divider-soft);
 }
 
-.home-error,
-.home-empty {
-  padding-top: var(--spacing-xxl);
+.seg-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--seg-count));
+  border-radius: var(--radius-pill);
+  background: var(--color-card-bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  transform: translateX(calc(var(--seg-index) * 100%));
+  transition: transform var(--duration-base) var(--ease-standard);
 }
 
-.home-error .retry-btn + .retry-btn {
-  margin-left: var(--spacing-sm);
+.seg-btn {
+  position: relative;
+  z-index: 1;
+  min-height: 38px;
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  transition: color var(--duration-base) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
 }
 
-/* 分类 tab(含「共X部」)与星标筛选始终同一行:tab 区可收缩并横滑,
-   筛选框固定宽度不收缩——tab 再多也不会把筛选框挤到下一行 */
+.seg-btn.active {
+  color: var(--color-text-primary);
+}
+
+/* ---- 分类 tab 与星标筛选:始终同一行,tab 区可收缩并横滑,筛选框固定宽度不收缩 ---- */
 .page-header {
   display: flex;
   align-items: center;
@@ -430,6 +549,7 @@ onUnmounted(() => {
 }
 
 .content-tabs {
+  position: relative;
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
@@ -437,6 +557,7 @@ onUnmounted(() => {
   flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: none;
+  overscroll-behavior-x: contain;
   align-items: center;
   padding: 3px;
   border-radius: var(--radius-pill);
@@ -447,81 +568,60 @@ onUnmounted(() => {
   display: none;
 }
 
-.content-tab {
-  flex-shrink: 0;
-  min-width: 66px;
-  padding: 7px 16px;
+.tab-indicator {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
   border-radius: var(--radius-pill);
-  color: var(--color-text-secondary);
-  background: transparent;
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-  transition: color 0.18s, background 0.18s, box-shadow 0.18s;
+  background: var(--color-card-bg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  will-change: transform;
 }
 
-.tabs-page-count {
+.content-tabs.animated .tab-indicator {
+  transition: transform var(--duration-base) var(--ease-standard),
+    width var(--duration-base) var(--ease-standard);
+}
+
+.content-tab {
+  position: relative;
+  z-index: 1;
   flex-shrink: 0;
-  padding: 7px 12px;
-  font-size: var(--font-size-fine-print);
+  min-width: 66px;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
   color: var(--color-text-secondary);
-  white-space: nowrap;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  transition: color var(--duration-base) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
 }
 
 .content-tab.active {
   color: var(--color-text-primary);
-  background: var(--color-card-bg);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
+/* 分段/分类 tab 按下:滑块不随文字缩放,改为文字轻微变淡(iOS 分段控件手感) */
+.seg-btn:active,
+.content-tab:active {
+  transform: none;
+  opacity: 0.6;
+}
+
+.seg-btn:focus-visible,
 .content-tab:focus-visible {
   outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
-.page-count {
-  font-size: var(--font-size-caption);
-  color: var(--color-text-muted);
-}
-
-.mix-notice {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-md);
-  padding: var(--spacing-xs) var(--spacing-md);
-  border-radius: var(--radius-md);
-  background: var(--color-canvas);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-caption);
-}
-
-.mix-notice-btn {
-  flex: none;
-  margin-left: auto;
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  color: var(--color-accent);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-  background: transparent;
-}
-
-
-
-
-
-.retry-btn {
-  padding: var(--spacing-xs) var(--spacing-lg);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  border-radius: var(--radius-pill);
-  font-size: var(--font-size-body);
-  font-weight: var(--font-weight-regular);
-  transition: background 0.2s;
-}
-
-.retry-btn:hover {
-  background: var(--color-primary-focus);
+.tabs-page-count {
+  flex-shrink: 0;
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-fine-print);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
 }
 
 .filter-group {
@@ -529,23 +629,15 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* 窄屏只缩小筛选框,不换行 */
-@media (max-width: 560px) {
-  .filter-input {
-    width: 104px;
-    padding: 0 var(--spacing-sm);
-  }
-}
-
 .filter-input {
-  height: 36px;
+  height: 44px;
   width: 140px;
   padding: 0 var(--spacing-md);
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   font-size: var(--font-size-fine-print);
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color var(--duration-base) var(--ease-standard);
   color: var(--color-text-primary);
   background: var(--color-canvas);
 }
@@ -557,28 +649,87 @@ onUnmounted(() => {
 .filter-input::placeholder {
   color: var(--color-text-muted);
 }
-.segment-bar {
+
+/* 窄屏只缩小筛选框,不换行 */
+@media (max-width: 560px) {
+  .filter-input {
+    width: 104px;
+    padding: 0 var(--spacing-sm);
+  }
+}
+
+/* ---- 提示条(哔咔 tab 加载失败 / 混合流部分源未连接) ---- */
+.home-notice {
   display: flex;
+  align-items: center;
   gap: var(--spacing-xs);
   margin-bottom: var(--spacing-md);
-}
-
-.segment-btn {
-  flex: 1;
-  max-width: 120px;
-  padding: 6px 0;
-  border: 1px solid var(--color-border, var(--color-hairline));
-  border-radius: var(--radius-pill, 999px);
-  background: transparent;
-  color: var(--color-text-secondary);
+  padding: var(--spacing-xxs) var(--spacing-xxs) var(--spacing-xxs) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--color-canvas);
+  color: var(--color-text-muted);
   font-size: var(--font-size-caption);
-  cursor: pointer;
-  transition: all 0.15s ease;
+  animation: notice-in var(--duration-base) var(--ease-out);
 }
 
-.segment-btn.active {
-  border-color: var(--color-primary);
+.home-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-notice-btn {
+  flex: none;
+  min-height: 44px;
+  padding: 0 var(--spacing-sm);
+  border-radius: var(--radius-pill);
+  color: var(--color-accent);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* ---- 整块错误态 ---- */
+.home-error {
+  padding-top: var(--spacing-xxl);
+}
+
+.home-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-sm);
+}
+
+.retry-btn {
+  min-height: 44px;
+  padding: 0 var(--spacing-lg);
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-regular);
+  transition: background-color var(--duration-base) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.retry-btn.secondary {
+  background: var(--color-canvas);
+  color: var(--color-primary);
+}
+
+.retry-btn:active {
+  transform: scale(var(--press-scale));
+}
+
+@media (hover: hover) {
+  .retry-btn:not(.secondary):hover {
+    background: var(--color-primary-focus);
+  }
 }
 </style>
