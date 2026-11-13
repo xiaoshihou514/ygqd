@@ -117,7 +117,8 @@ function observeNear(el: Element, onNear: () => void): () => void {
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps<{ src: string; source?: ImageSource; alt?: string; loading?: 'eager' | 'lazy' }>()
-const emit = defineEmits<{ error: [] }>()
+/** load:图片已解码并显示(含缓存命中);error:重试后仍失败 */
+const emit = defineEmits<{ error: []; load: [] }>()
 const objectUrl = ref('')
 const failed = ref(false)
 /** 经网络取回的图淡入;缓存命中直接显示(返回列表时不闪) */
@@ -158,6 +159,7 @@ async function load(current: number, url: string, source: ImageSource | undefine
       cachePut(key, blob)
       fadeIn.value = true
       objectUrl.value = nextUrl
+      emit('load')
       return
     } catch {
       if (current !== generation) return
@@ -178,6 +180,7 @@ watch(() => [props.src, props.source] as const, async ([url, source]) => {
   const cached = cacheGet(key)
   if (cached) {
     objectUrl.value = URL.createObjectURL(cached)
+    emit('load')
     return
   }
   if (props.loading === 'lazy') {
