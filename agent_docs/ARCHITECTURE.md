@@ -71,17 +71,23 @@ Vue 页面/组件 ──invoke──▶ Rust commands ──▶ sources/* 抓取
 
 - `lib.rs`：全部 command 入口与 `AppState`（niacg 共享 reqwest client、
   video 抓取器、哔咔客户端 `RwLock`（切换分流时整体重建）、哔咔 token、
-  SQLite 连接 `Mutex`、300 秒 TTL 进程内缓存、niacg 搜索限速闸）。
+  SQLite 连接 `Mutex`（统一经 `with_db` 访问，锁中毒自动恢复）、niacg 搜索限速闸）。
+  纯 DB 命令均为 `#[tauri::command(async)]`，不占主线程。
+- `cache.rs`：有界 TTL 缓存（300 秒、上限 256 条，过期优先、再淘汰最旧），
+  同参并发请求合并为一次上游调用（`get_or_fetch`）；错误不缓存。
 - `sources/` 按源分模块：`niacg.rs`（scraper 解析 HTML）、`bika.rs`
-  （PicaAPI 客户端，HMAC-SHA256 请求签名）、`video.rs`（fs1 + missav，
-  详情页 Dean Edwards packer 解码提取 m3u8）。
+  （PicaAPI 客户端，HMAC-SHA256 请求签名）、`video/`（fs1 + missav；`mod.rs` 仅含
+  `VideoApi`、HTTP 层与 list/search/detail 入口，子模块 `models`/`fs1`/`missav`/
+  `follow`/`codes`/`packer`/`html`/`error`；详情页 Dean Edwards packer 解码提取 m3u8）。
+  正则与 `scraper::Selector` 一律 `LazyLock` 预编译，不在循环里现编。
   新增源在此目录加模块，并在 `lib.rs` 命令里加分发分支、前端 `api.ts` 加封装。
-- `stream_proxy.rs`：本地回环 HTTP 代理（仅 127.0.0.1）。三个职责：
+- `stream_proxy.rs`：本地回环 HTTP 代理（仅 127.0.0.1；进程级共享上游 client，
+  分片边收边转发，完整/Range 响应分键缓存）。两个职责：
   ① HLS 转发（m3u8 文本重写子地址为代理地址；分片带站点 Referer 转发；
   Range 透传；已取分片缓存为插入序，超限约 96MB 时批量淘汰最旧一半，
   频繁快进零重复下载）；
   ② 图片防盗链转发（`/img/` 端点保留，当前无调用方——封面统一走
-  `fetch_image` IPC 取回二进制）；③ 网关回传端点。播放器只接触本地代理
+  `fetch_image` IPC 取回二进制）。播放器只接触本地代理
   地址，永不直连上游 CDN（其校验 Referer 且拒绝浏览器 TLS 栈）；封面组件
   经 IPC 取回二进制，不走代理 URL。
 - `models.rs` / `db.rs`：IPC 数据模型；建表与迁移。
@@ -104,9 +110,10 @@ Vue 页面/组件 ──invoke──▶ Rust commands ──▶ sources/* 抓取
 3. 新增后端功能三处同步：`#[tauri::command]`、`generate_handler!`、`api.ts` 封装。
 4. 网络请求复用共享 `reqwest::Client`（保留 cookie 与统一请求头）；
    wreq 仅用于 missav 的 TLS 指纹直连，不要混用。
-5. SQLite 操作必须经过共享连接的互斥锁。
+5. SQLite 操作必须经过共享连接的互斥锁（`with_db`）；schema 变更以
+   `PRAGMA user_version` 版本化迁移追加，只增不删。
 6. 修改解析逻辑后优先增加基于固定 HTML fixture 的单元测试
-   （`video.rs` 的 packer 解码、meta-refresh 均有真实样本单测）。
+   （`sources/video/` 的 packer 解码、fs1 卡片/详情，`niacg.rs` 列表/搜索均有样本单测）。
 7. Android 优先，同时支持 Linux 桌面；不要引入 macOS/Windows 特定行为或
    localhost 对外 API 服务。
 8. TypeScript 开启 `noUncheckedIndexedAccess`，索引访问必须处理 `undefined`。
@@ -136,7 +143,12 @@ CI 为 GitHub Actions 双流水线（`.github/workflows/`）：Android Nightly�
 
 ## 已登记技术债
 
-### T-1 video.rs 单文件过大（1736 行，重构搁置）
+### T-1 video.rs 单文件过大 —— **已解决（2026-11-13）**
+
+已按下述路径拆分为 `sources/video/` 子模块（`mod.rs` 368 行），外部路径经
+re-export 保持不变。以下为历史记录。
+
+#### 原记录
 
 **现状**：`src/sources/video.rs` 单文件承载 fs1/missav 双源的全部解析、
 抓取与 VideoApi（68 函数）。两次拆分尝试（脚本批量/手工批量迁移）
