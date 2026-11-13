@@ -247,7 +247,6 @@ pub fn run() {
                 Some(&address)
             })?;
             let proxy_port = stream_proxy::spawn()?;
-            stream_proxy::set_app(app.handle().clone());
             diagnostics::diag(app.handle(), &format!("app setup done, proxy port={proxy_port}"));
             app.manage(AppState {
                 niacg,

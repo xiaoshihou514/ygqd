@@ -271,10 +271,10 @@ mod tests {
                     .path()
                     .ends_with(".m3u8"));
 
-                // 验证上游清单可读,且 hls_fetch 能正确改写相对地址。
+                // 验证上游清单可读,且 fetch_hls 能正确改写相对地址。
                 let (is_playlist, playlist, _bytes) = crate::stream_proxy::fetch_hls(&detail.m3u8)
                     .await
-                    .expect("hls_fetch");
+                    .expect("fetch_hls");
                 assert!(is_playlist);
                 assert!(playlist.starts_with("#EXTM3U"));
                 assert!(!playlist.contains("\n1280x"), "相对地址应解析为绝对");

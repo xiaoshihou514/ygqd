@@ -72,14 +72,7 @@ const CORS_HEADERS: &str = "Access-Control-Allow-Origin: *\r\n\
 // 全局状态
 // ---------------------------------------------------------------------------
 
-static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 static PORT: OnceLock<u16> = OnceLock::new();
-
-/// setup 时注入 AppHandle(原供网关回传端点使用;该端点已随小说板块
-/// 删除,保留注入口以免 lib.rs 侧改动)
-pub fn set_app(app: tauri::AppHandle) {
-    let _ = APP.set(app);
-}
 
 /// 代理实际监听端口(未启动时为 0)
 pub fn port() -> u16 {
