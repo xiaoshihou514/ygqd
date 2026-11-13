@@ -4,6 +4,9 @@
    ============================================ */
 
 :root {
+  /* 原生控件/滚动条/默认画布跟随主题(显式主题见下方 .light/.dark) */
+  color-scheme: light dark;
+
   /* ---- Brand & Accent ---- */
   --color-primary: #0066cc;
   --color-primary-focus: #0071e3;
@@ -122,7 +125,7 @@
   --tab-bar-total-height: calc(var(--tab-bar-height) + var(--tab-bar-safe-bottom));
 
   /* ---- Transitions ---- */
-  --transition-press: transform 0.15s ease;
+  --transition-press: transform var(--duration-fast) var(--ease-standard);
 
   /* ---- Motion (统一动效基线;各组件只用这些,不另写魔法数) ---- */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
@@ -154,9 +157,16 @@
 
 /* ============================================
    Dark Mode
+   下面两块(显式 .dark 与跟随系统)内容必须逐行一致:
+   CSS 无法把类选择器与媒体查询合并成同一规则块,改一处务必同步另一处。
    ============================================ */
 
+:root.light {
+  color-scheme: light;
+}
+
 :root.dark {
+  color-scheme: dark;
   --color-canvas: #1c1c1e;
   --color-canvas-parchment: #121212;
   --color-surface-pearl: #1c1c1e;
@@ -190,10 +200,13 @@
   --color-tag-text: var(--color-ink-muted-48);
   --color-border: var(--color-hairline);
   --color-like: #ff4757;
+  /* 骨架高光须比底色亮:暗色下 pearl 比 divider-soft 更暗,改用 tile-2 */
+  --color-skeleton-highlight: var(--color-surface-tile-2);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
+    color-scheme: dark;
     --color-canvas: #1c1c1e;
     --color-canvas-parchment: #121212;
     --color-surface-pearl: #1c1c1e;
@@ -227,5 +240,7 @@
     --color-tag-text: var(--color-ink-muted-48);
     --color-border: var(--color-hairline);
     --color-like: #ff4757;
+    /* 骨架高光须比底色亮:暗色下 pearl 比 divider-soft 更暗,改用 tile-2 */
+    --color-skeleton-highlight: var(--color-surface-tile-2);
   }
 }
