@@ -35,27 +35,27 @@ const COMPLETE_MARKERS = /(完本|全篇|END|\(完\)|完全版|全本|(?<!\w)完
 
 const EXTRA_MARKERS = /(番外|特别篇)/
 
+/**
+ * 章节信息起点候选模式(模块级预编译,不随每个标题重建)。
+ * 非全局正则:exec 从左扫描,首个匹配即该模式的最早位置,无需遍历全部匹配。
+ */
+const CHAPTER_START_PATTERNS: readonly RegExp[] = [
+  /第(?:\d+\s*-\s*\d+|\d+|[零一二三四五六七八九十百]+)[话回章卷集]/,
+  /[话回章卷集](\d+)/,
+  /S2\s*(\d+)/,
+  /第二部\s*(\d+)/,
+  /续集\s*(\d+)/,
+  /([零一二三四五六七八九十百]+)(?:$|\s|-|,|，|、|\.)/,
+  /(\d+-\d+(?:-\d+)?)/,
+  /(?<!\w)(\d+)(?!\w|年|月|日|岁)/,
+]
+
 function findChapterSeparator(s: string): number {
-  const patterns: RegExp[] = [
-    /第(?:\d+\s*-\s*\d+|\d+|[零一二三四五六七八九十百]+)[话回章卷集]/g,
-    /[话回章卷集](\d+)/g,
-    /S2\s*(\d+)/g,
-    /第二部\s*(\d+)/g,
-    /续集\s*(\d+)/g,
-    /([零一二三四五六七八九十百]+)(?:$|\s|-|,|，|、|\.)/g,
-    /(\d+-\d+(?:-\d+)?)/g,
-    /(?<!\w)(\d+)(?!\w|年|月|日|岁)/g,
-  ]
-
   let earliest = s.length
-  for (const regex of patterns) {
-    regex.lastIndex = 0
-    let match: RegExpExecArray | null
-    while ((match = regex.exec(s)) !== null) {
-      earliest = Math.min(earliest, match.index)
-    }
+  for (const regex of CHAPTER_START_PATTERNS) {
+    const match = regex.exec(s)
+    if (match && match.index < earliest) earliest = match.index
   }
-
   return earliest < s.length ? earliest : -1
 }
 
@@ -145,17 +145,18 @@ function groupParsed(parsed: ParsedTitle[]): SplitGroup[] {
 
   for (const p of parsed) {
     const key = `${p.author}|${p.workName}`
-    if (!groupMap.has(key)) {
-      groupMap.set(key, {
+    let g = groupMap.get(key)
+    if (!g) {
+      g = {
         author: p.author,
         workName: p.workName,
         items: [],
         chapters: new Set(),
         hasExtra: false,
         hasCompleteMark: false,
-      })
+      }
+      groupMap.set(key, g)
     }
-    const g = groupMap.get(key)!
     g.items.push(p.item)
     for (const ch of p.chapters) {
       g.chapters.add(ch)
@@ -165,19 +166,16 @@ function groupParsed(parsed: ParsedTitle[]): SplitGroup[] {
   }
 
   const groups: SplitGroup[] = []
-  for (const [, g] of groupMap) {
+  for (const g of groupMap.values()) {
     const knownChapters = [...g.chapters].sort((a, b) => a - b)
     const isStandalone = knownChapters.length === 0
 
-    let missingChapters: number[] = []
-    if (!isStandalone && knownChapters.length > 0) {
+    // 假定从第 1 话起连载:[1, max] 内未出现的整数即缺失
+    const missingChapters: number[] = []
+    if (!isStandalone) {
       const max = knownChapters[knownChapters.length - 1]!
-      const knownSet = new Set(knownChapters)
-      const expectedStart = 1
-      for (let i = expectedStart; i <= max; i++) {
-        if (!knownSet.has(i)) {
-          missingChapters.push(i)
-        }
+      for (let i = 1; i <= max; i++) {
+        if (!g.chapters.has(i)) missingChapters.push(i)
       }
     }
 
