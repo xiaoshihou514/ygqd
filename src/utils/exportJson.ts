@@ -1,4 +1,14 @@
-export type ExportResult = 'shared' | 'downloaded' | 'copied' | 'cancelled'
+import { isTauri } from '@tauri-apps/api/core'
+import { open, save } from '@tauri-apps/plugin-dialog'
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
+
+export type ExportResult = 'saved' | 'shared' | 'downloaded' | 'copied' | 'cancelled'
+
+export interface ExportOutcome {
+  result: ExportResult
+  /** 'saved' 时为用户所选位置(桌面为文件路径,Android 为 content:// URI) */
+  path?: string
+}
 
 interface JsonExportOptions {
   filename: string
@@ -77,27 +87,61 @@ function canShareFiles(shareData: ShareData): boolean {
 }
 
 /**
- * 导出 JSON:优先系统分享(Android),其次浏览器下载,最后复制到剪贴板。
- * 用户主动取消分享返回 'cancelled';全部失败时抛错,由调用方提示。
+ * 导出 JSON:Tauri 内弹系统原生「另存为」(Android 走 SAF,由用户选文件夹与文件名)并写入;
+ * 非 Tauri 环境(浏览器调试)依次退回系统分享 → 浏览器下载 → 复制到剪贴板。
+ * 用户取消返回 'cancelled';写入失败抛错,由调用方提示。
  */
-export async function exportJson({ filename, title, data }: JsonExportOptions): Promise<ExportResult> {
+export async function exportJson({ filename, title, data }: JsonExportOptions): Promise<ExportOutcome> {
   const json = `${JSON.stringify(data, null, 2)}\n`
-  const file = new File([json], filename, { type: 'application/json' })
 
+  if (isTauri()) {
+    const path = await save({
+      title,
+      defaultPath: filename,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (!path) return { result: 'cancelled' }
+    await writeTextFile(path, json)
+    return { result: 'saved', path }
+  }
+
+  const file = new File([json], filename, { type: 'application/json' })
   const shareData: ShareData = { title, files: [file] }
   if (canShareFiles(shareData)) {
     try {
       await navigator.share(shareData)
-      return 'shared'
+      return { result: 'shared' }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return 'cancelled'
+      if (error instanceof DOMException && error.name === 'AbortError') return { result: 'cancelled' }
       // 其他错误(如用户激活已过期 NotAllowedError)继续走下载兜底
     }
   }
 
-  if (downloadFile(file)) return 'downloaded'
+  if (downloadFile(file)) return { result: 'downloaded' }
   await copyText(json)
-  return 'copied'
+  return { result: 'copied' }
+}
+
+/**
+ * 选择并读取一个 JSON 文件:Tauri 内弹系统原生「打开」并经 fs 插件读取(兼容 Android content:// URI);
+ * 非 Tauri 环境退回 `<input type=file>`。用户取消返回 null。
+ */
+export async function pickJsonText(title: string): Promise<string | null> {
+  if (isTauri()) {
+    const path = await open({ title, multiple: false, directory: false, filters: [{ name: 'JSON', extensions: ['json'] }] })
+    return typeof path === 'string' ? readTextFile(path) : null
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'application/json,.json'
+    input.addEventListener('change', () => {
+      const file = input.files?.[0]
+      resolve(file ? file.text() : null)
+    }, { once: true })
+    input.addEventListener('cancel', () => resolve(null), { once: true })
+    input.click()
+  })
 }
 
 const pad2 = (n: number) => String(n).padStart(2, '0')

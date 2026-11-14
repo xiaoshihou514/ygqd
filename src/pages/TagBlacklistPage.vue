@@ -14,7 +14,7 @@ import {
   getBikaAddress,
   setBikaAddress,
 } from '@/services/api'
-import { datedJsonFilename, exportJson, type ExportResult } from '@/utils/exportJson'
+import { datedJsonFilename, exportJson, pickJsonText, type ExportResult } from '@/utils/exportJson'
 import { applyBackup, buildBackup, describeImport, parseBackup } from '@/utils/backup'
 import type { BlacklistMode } from '@/types'
 
@@ -277,10 +277,10 @@ function handleCycleMode(tag: string, mode: BlacklistMode) {
 
 const exporting = ref(false)
 const importing = ref(false)
-const importInput = ref<HTMLInputElement | null>(null)
 const backupBusy = computed(() => exporting.value || importing.value)
 
 const EXPORT_MESSAGES: Record<ExportResult, string> = {
+  saved: '备份已保存',
   shared: '已发送备份',
   downloaded: '备份已下载',
   copied: '无法保存文件，备份 JSON 已复制到剪贴板',
@@ -293,12 +293,13 @@ async function handleExport() {
   clearFlash('export')
   try {
     const data = await buildBackup(current.value)
-    const result = await exportJson({
+    const { result, path } = await exportJson({
       filename: datedJsonFilename('ygqd-backup'),
-      title: 'ygqd 备份(设置 + 关注)',
+      title: '保存 ygqd 备份(设置 + 关注)',
       data,
     })
-    showFlash('export', EXPORT_MESSAGES[result])
+    const message = EXPORT_MESSAGES[result]
+    if (message) showFlash('export', path && !path.startsWith('content://') ? `${message}:${path}` : message)
   } catch (e) {
     showFlash('export', `导出失败：${errorMessage(e) || '请稍后重试'}`, 'error')
   } finally {
@@ -306,20 +307,14 @@ async function handleExport() {
   }
 }
 
-function pickImportFile() {
+async function handleImport() {
   if (backupBusy.value) return
   clearFlash('export')
-  importInput.value?.click()
-}
-
-async function handleImportFile(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = '' // 允许再次选择同一文件
-  if (!file || backupBusy.value) return
   importing.value = true
   try {
-    const payload = parseBackup(await file.text())
+    const text = await pickJsonText('选择 ygqd 备份文件')
+    if (text === null) return
+    const payload = parseBackup(text)
     const summary = await applyBackup(payload, {
       blacklist: entries.value,
       addBlacklist: add,
@@ -629,17 +624,10 @@ async function copyDiag() {
               type="button"
               class="row row-btn accent"
               :disabled="backupBusy"
-              @click="pickImportFile"
+              @click="handleImport"
             >
               {{ importing ? '正在导入…' : '导入备份' }}
             </button>
-            <input
-              ref="importInput"
-              type="file"
-              accept="application/json,.json"
-              hidden
-              @change="handleImportFile"
-            />
           </div>
           <div class="status-slot" aria-live="polite">
             <Transition name="flash" mode="out-in">

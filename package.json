@@ -22,6 +22,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.11",
+    "@tauri-apps/plugin-dialog": "~2.7.0",
+    "@tauri-apps/plugin-fs": "~2.5.0",
     "@videojs/hlsjs-video": "^10.2.0",
     "@videojs/html": "^10.2.0",
     "is-mobile": "^5.0.0",

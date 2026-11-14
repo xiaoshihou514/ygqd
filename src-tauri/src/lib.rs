@@ -220,6 +220,9 @@ pub(crate) async fn fetch_image_with_wreq(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 备份导出/导入:系统原生「另存为/打开」(Android 走 SAF)+ 读写所选文件
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;

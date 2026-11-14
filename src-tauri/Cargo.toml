@@ -28,6 +28,8 @@ tokio = { version = "1", features = ["sync", "time", "macros"] }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.23.1"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 
 # 发布构建:单编译单元 + thin LTO 换更小更快的 .so/可执行文件;
 # strip 去符号表(JNI 导出在 .dynsym,不受影响);panic 维持默认 unwind
