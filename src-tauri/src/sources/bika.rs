@@ -1,4 +1,4 @@
-use super::shared::{dedup_in_order, http_status_error, snippet};
+use super::shared::{comic_author, dedup_in_order, http_status_error, snippet};
 use crate::models::*;
 use hmac::{Hmac, Mac};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
@@ -299,8 +299,8 @@ impl From<ComicDoc> for ComicItem {
             category: doc.categories.first().cloned().unwrap_or_default(),
             thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
             id: doc.id,
+            author: comic_author(&doc.title, &doc.author),
             title: doc.title,
-            author: doc.author,
             category_id: 0,
             tags: doc.categories,
             likes: doc.likes_count.to_string(),
@@ -319,9 +319,9 @@ impl From<ComicDoc> for ComicDetail {
             category,
             thumbnail: doc.thumb.map(|thumb| thumb.url()).unwrap_or_default(),
             id: doc.id,
+            author: comic_author(&doc.title, &doc.author),
             title: doc.title,
             category_id: 0,
-            author: doc.author,
             works: vec![],
             characters: vec![],
             tags,

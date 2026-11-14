@@ -113,3 +113,61 @@ mod tests {
         );
     }
 }
+
+// ── 漫画作者归一(niacg/bika 统一口径) ──
+
+/// 从标题开头的方括号取作者:`[作者 (别名/社团)]作品名` → `作者`,`[作者]作品名` → `作者`。
+/// 允许前置活动标记如 `(C99) [作者] …`;也接受全角 `【】`/`（）`。取不到返回 None。
+pub fn author_from_title(title: &str) -> Option<String> {
+    let mut s = title.trim_start();
+    // 跳过前置的 (C99) / （同人誌） 之类括号组
+    while let Some(rest) = s.strip_prefix('(').or_else(|| s.strip_prefix('（')) {
+        let end = rest.find([')', '）'])?;
+        s = rest[end..].trim_start_matches([')', '）']).trim_start();
+    }
+    let (inner, _) = s
+        .strip_prefix('[')
+        .and_then(|r| r.split_once(']'))
+        .or_else(|| s.strip_prefix('【').and_then(|r| r.split_once('】')))?;
+    let name = inner.split(['(', '（']).next().unwrap_or("").trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// 统一作者:优先标题里的原文名(上游 author 字段常为拉丁化/罗马音),取不到再用上游字段。
+pub fn comic_author(title: &str, upstream: &str) -> String {
+    author_from_title(title).unwrap_or_else(|| upstream.trim().to_string())
+}
+
+#[cfg(test)]
+mod author_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_author_from_title_brackets() {
+        let cases = [
+            ("[ほげ (Hoge)] 作品名", Some("ほげ")),
+            ("[ほげ(Hoge)]作品名", Some("ほげ")),
+            ("[作者]作品名", Some("作者")),
+            (
+                "(C99) [サークル (作者)] タイトル [中国翻訳]",
+                Some("サークル"),
+            ),
+            ("【作者（别名）】作品", Some("作者")),
+            ("  [ 作者 ] 作品", Some("作者")),
+            ("作品名 [中国翻訳]", None),
+            ("[(Hoge)] 作品", None),
+            ("(C99 未闭合 [作者] 作品", None),
+            ("", None),
+        ];
+        for (title, want) in cases {
+            assert_eq!(author_from_title(title).as_deref(), want, "{title}");
+        }
+    }
+
+    #[test]
+    fn falls_back_to_upstream_author() {
+        assert_eq!(comic_author("[ほげ (Hoge)] 作品", "Hoge"), "ほげ");
+        assert_eq!(comic_author("无方括号标题", " Hoge "), "Hoge");
+        assert_eq!(comic_author("无方括号标题", ""), "");
+    }
+}

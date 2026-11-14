@@ -3,7 +3,7 @@
 //! 约定:选择器/正则全部为 `LazyLock` 静态量(列表页每个卡片都会命中,
 //! 逐次编译曾是解析热点);节点缺失一律跳过或给空值,不 panic。
 
-use super::shared::dedup_in_order;
+use super::shared::{comic_author, dedup_in_order};
 use crate::models::*;
 use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
@@ -128,11 +128,12 @@ fn item(el: ElementRef<'_>) -> Option<ComicItem> {
     let caps = ITEM_HREF_RE.captures(href)?;
     let category_id = caps[1].parse().ok()?;
     let id = caps[2].to_string();
+    let title = first_text(el, &ITEM_TITLE);
     Some(ComicItem {
         source: Source::Niacg,
         id,
-        title: first_text(el, &ITEM_TITLE),
-        author: String::new(),
+        author: comic_author(&title, ""),
+        title,
         thumbnail: attr(el.select(&IMG).next(), IMG_ATTRS),
         category: category_label(el, category_id),
         category_id,
@@ -213,10 +214,12 @@ pub fn detail(html: &str, category_id: i32, id: String) -> ComicDetail {
         .next()
         .map(|block| texts(block.select(&BTN_LINK)).join(", "))
         .unwrap_or_default();
+    let title = first_text(root, &DETAIL_TITLE);
+    let author = comic_author(&title, &author);
     ComicDetail {
         source: Source::Niacg,
         id,
-        title: first_text(root, &DETAIL_TITLE),
+        title,
         thumbnail: attr(doc.select(&DETAIL_COVER).next(), IMG_ATTRS),
         category: category_label(root, category_id),
         category_id,
