@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { errorMessage } from '@/utils/errors'
 import { formatCount } from '@/utils/formatCount'
@@ -474,6 +474,21 @@ onBeforeRouteLeave(() => {
   tabScroll[activeTab.value] = window.scrollY
 })
 
+// 关注对象单行横滑:选中项(含首次/切换分组后)滚进可视区
+const pageRoot = ref<HTMLElement | null>(null)
+function revealActiveChips() {
+  void nextTick(() => {
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    pageRoot.value?.querySelectorAll<HTMLElement>('.follow-chips .follow-chip.active').forEach((el) => {
+      const strip = el.parentElement
+      if (!strip) return
+      const left = el.offsetLeft - (strip.clientWidth - el.offsetWidth) / 2
+      strip.scrollTo({ left: Math.max(0, left), behavior: smooth ? 'smooth' : 'auto' })
+    })
+  })
+}
+watch([selectedComicAuthor, () => selectedVideoTarget.value?.targetId, activeTab], revealActiveChips)
+
 // keep-alive 返回:恢复滚动 + 静默刷新(首次挂载也会触发 activated,跳过)
 let activatedOnce = false
 onActivated(async () => {
@@ -490,7 +505,7 @@ onActivated(async () => {
 </script>
 
 <template>
-  <div class="following-page">
+  <div ref="pageRoot" class="following-page">
     <div class="container">
       <div class="page-heading">
         <h2 class="page-title">关注</h2>
@@ -852,17 +867,34 @@ onActivated(async () => {
 }
 
 /* —— 关注对象芯片(漫画作者 / 厂商·女优统一):点选看作品,× 二次确认取关 —— */
+/* 单行横向滚动:关注再多也只占一行;上下留 4px 让 44px 命中区不被裁切,两端渐隐提示可滑动 */
 .follow-chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-md);
+  /* 出血到 .container 两侧内边距,滑动区贴屏幕边缘 */
+  margin: calc(-1 * var(--spacing-xxs)) calc(-1 * var(--spacing-lg)) calc(var(--spacing-md) - var(--spacing-xxs));
+  padding: var(--spacing-xxs) var(--spacing-lg);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--spacing-lg);
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  -webkit-mask-image: linear-gradient(to right, transparent, black var(--spacing-lg), black calc(100% - var(--spacing-lg)), transparent);
+  mask-image: linear-gradient(to right, transparent, black var(--spacing-lg), black calc(100% - var(--spacing-lg)), transparent);
+}
+
+.follow-chips::-webkit-scrollbar {
+  display: none;
 }
 
 .follow-chip {
+  flex: 0 0 auto;
+  max-width: 12em;
+  scroll-snap-align: start;
   display: inline-flex;
   align-items: center;
-  max-width: 100%;
   min-width: 0;
   min-height: 36px;
   border: 1px solid var(--color-border);
